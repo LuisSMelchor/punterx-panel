@@ -3,13 +3,32 @@ exports.handler = async function(event, context) {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
+  // Seguridad: solo permitir desde tu dominio Netlify
+  const validOrigins = ['https://punterx-panel-vip.netlify.app'];
+  const origin = event.headers.origin || event.headers.referer || '';
+  if (!validOrigins.some(valid => origin.includes(valid))) {
+    return {
+      statusCode: 403,
+      body: JSON.stringify({ error: 'Origen no autorizado.' })
+    };
+  }
+
   const data = JSON.parse(event.body);
   const {
-    sport, event: match, date, bettype,
+    authCode, sport, event: match, date, bettype,
     odds, confidence, brief,
     detailed, alternatives, bookie,
     value, timing, notes
   } = data;
+
+  // Seguridad: validación del código secreto
+  const secretCode = 'PunterX2025';
+  if (authCode !== secretCode) {
+    return {
+      statusCode: 401,
+      body: JSON.stringify({ error: 'Código de acceso incorrecto.' })
+    };
+  }
 
   let message = `📌 *${sport||'-'}*\n🏟️ *Evento:* ${match||'-'}\n🗓️ *Fecha:* ${date||'-'}\n🎯 *Apuesta:* ${bettype||'-'}\n💸 *Cuota:* ${odds||'-'}\n📈 *Confianza:* ${confidence||'-'}\n📝 *Resumen:* ${brief||'-'}\n`;
 
