@@ -18,14 +18,19 @@ exports.handler = async function(event, context) {
       };
     }
 
-    const validOrigins = ['https://punterx-panel-vip.netlify.app'];
-    const origin = event.headers.origin || event.headers.referer || '';
-    if (!validOrigins.some(valid => origin.includes(valid))) {
-      return {
-        statusCode: 403,
-        body: JSON.stringify({ error: 'Origen no autorizado.' })
-      };
-    }
+    const validOrigins = [
+  'https://punterx-panel-vip.netlify.app',
+  undefined,
+  '', // permite funciones internas sin origen explícito
+];
+const origin = event.headers.origin || event.headers.referer || '';
+
+if (!validOrigins.some(valid => origin?.includes?.(valid))) {
+  return {
+    statusCode: 403,
+    body: JSON.stringify({ error: 'Origen no autorizado.' })
+  };
+}
 
     const {
       authCode, sport, event: match, date, bettype,
