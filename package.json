@@ -1,8 +1,10 @@
-
 {
   "name": "punterx-panel",
   "version": "1.0.0",
   "scripts": {
     "build": "echo 'Build step (dummy)'"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.7"
   }
 }
