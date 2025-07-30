@@ -1,9 +1,8 @@
-const fetch = require("node-fetch");
 const crypto = require("crypto");
 
 exports.handler = async function (event, context) {
-  const API_KEY = "f832d44689c32ddc03f7ccc23a1e1076";
-  const SECRET = "X9$Gtp#zD3@LP82mR*vWj5Q!7bCk%N0y";
+  const API_KEY = process.env.API_FOOTBALL_KEY;
+  const SECRET = process.env.PUNTERX_SECRET;
   const PANEL_ENDPOINT = "https://punterx-panel-vip.netlify.app/.netlify/functions/send";
 
   const sportParam = event.queryStringParameters?.sport || "football";
@@ -46,7 +45,6 @@ exports.handler = async function (event, context) {
 
     const confidence = "Alta";
     const brief = "Partido con ritmo ofensivo y tendencia reciente a superar las líneas establecidas por el mercado.";
-
     const detailed = `🔎 *Análisis VIP:*
 El enfrentamiento entre ${match} tiene varios factores que nos permiten detectar un valor oculto.
 
@@ -111,11 +109,7 @@ El enfrentamiento entre ${match} tiene varios factores que nos permiten detectar
   } catch (error) {
     return {
       statusCode: 500,
-      body: `❌ Error interno: ${error.message}`
+      body: `❌ Error interno en autopick: ${error.message}`
     };
   }
 };
-
-
-
-
