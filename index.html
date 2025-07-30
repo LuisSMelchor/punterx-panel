@@ -124,7 +124,7 @@
       return;
     }
 
-    // ⚠️ Validación de campos obligatorios (gratuitos)
+    // ⚠️ Validación de campos obligatorios
     const requiredFields = ["sport", "event", "date", "bettype", "odds", "confidence"];
     for (let id of requiredFields) {
       const el = document.getElementById(id);
@@ -147,6 +147,7 @@
       document.getElementById("authCode").style.borderColor = "#1DB954";
     }
 
+    // Construcción de datos
     const data = {
       authCode,
       honeypot,
@@ -165,10 +166,24 @@
       notes: document.getElementById("notes").value.trim()
     };
 
+    // 🔒 Generar firma HMAC SHA256 para validación avanzada
+    const secret = "X9$Gtp#zD3@LP82mR*vWj5Q!7bCk%N0y";
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    );
+    const encoded = encoder.encode(JSON.stringify(data));
+    const signature = await crypto.subtle.sign("HMAC", key, encoded);
+    const hashArray = Array.from(new Uint8Array(signature));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
     try {
       const response = await fetch('/.netlify/functions/send', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-PX-Signature': hashHex
+        },
         body: JSON.stringify(data)
       });
 
