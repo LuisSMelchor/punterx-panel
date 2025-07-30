@@ -1,38 +1,18 @@
-const fetch = require('node-fetch');
-
 exports.handler = async function(event, context) {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
   const data = JSON.parse(event.body);
-
   const {
-    sport,
-    event: match,
-    date,
-    bettype,
-    odds,
-    confidence,
-    brief,
-    detailed,
-    alternatives,
-    bookie,
-    value,
-    timing,
-    notes
+    sport, event: match, date, bettype,
+    odds, confidence, brief,
+    detailed, alternatives, bookie,
+    value, timing, notes
   } = data;
 
-  // Construcción del mensaje base
-  let message = `📌 *${sport || '-'}*\n`;
-  message += `🏟️ *Evento:* ${match || '-'}\n`;
-  message += `🗓️ *Fecha:* ${date || '-'}\n`;
-  message += `🎯 *Apuesta:* ${bettype || '-'}\n`;
-  message += `💸 *Cuota:* ${odds || '-'}\n`;
-  message += `📈 *Confianza:* ${confidence || '-'}\n`;
-  message += `📝 *Resumen:* ${brief || '-'}\n`;
+  let message = `📌 *${sport||'-'}*\n🏟️ *Evento:* ${match||'-'}\n🗓️ *Fecha:* ${date||'-'}\n🎯 *Apuesta:* ${bettype||'-'}\n💸 *Cuota:* ${odds||'-'}\n📈 *Confianza:* ${confidence||'-'}\n📝 *Resumen:* ${brief||'-'}\n`;
 
-  // Comprobamos si hay campos VIP llenos
   const isVIP = !!(detailed || alternatives || bookie || value || timing || notes);
 
   if (isVIP) {
