@@ -88,8 +88,8 @@ exports.handler = async function(event, context) {
       `📝 *Notas:* ${notes || '-'}`;
 
     // 📤 Enviar a Telegram
-    const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-    const TELEGRAM_CHAT_ID = process.env.TELEGRAM_GROUP_ID;
+    const TELEGRAM_TOKEN = `${process.env.TELEGRAM_BOT_TOKEN}`.trim();
+    const TELEGRAM_CHAT_ID = `${process.env.TELEGRAM_CHAT_ID}`.trim();
 
     const payload = JSON.stringify({
       chat_id: TELEGRAM_CHAT_ID,
