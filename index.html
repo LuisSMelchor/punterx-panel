@@ -1,0 +1,53 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PunterX | Enviar Pronóstico</title>
+</head>
+<body>
+  <h1>Formulario de Pronóstico</h1>
+  <form id="prediction-form">
+    <input name="sport" placeholder="Deporte" required /><br />
+    <input name="event" placeholder="Evento" required /><br />
+    <input name="date" placeholder="Fecha" required /><br />
+    <input name="bettype" placeholder="Tipo de apuesta" required /><br />
+    <input name="odds" placeholder="Cuota" required /><br />
+    <input name="confidence" placeholder="Confianza" required /><br />
+    <textarea name="brief" placeholder="Análisis breve"></textarea><br />
+    <textarea name="detailed" placeholder="Análisis detallado"></textarea><br />
+    <textarea name="alternatives" placeholder="Apuestas alternativas"></textarea><br />
+    <input name="bookie" placeholder="Bookie recomendada" /><br />
+    <input name="value" placeholder="Valor" /><br />
+    <input name="timing" placeholder="Consejo de timing" /><br />
+    <textarea name="notes" placeholder="Notas adicionales"></textarea><br />
+    <button type="submit">Enviar Pronóstico</button>
+  </form>
+
+  <p id="response"></p>
+
+  <script>
+    const form = document.getElementById("prediction-form");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const formData = new FormData(form);
+      const data = Object.fromEntries(formData.entries());
+
+      const responseEl = document.getElementById("response");
+      responseEl.textContent = "Enviando...";
+
+      try {
+        const res = await fetch("/.netlify/functions/send", {
+          method: "POST",
+          body: JSON.stringify(data),
+        });
+        const result = await res.json();
+        responseEl.textContent = result.message || result.error;
+      } catch (err) {
+        responseEl.textContent = "Error al enviar pronóstico.";
+      }
+    });
+  </script>
+</body>
+</html>
