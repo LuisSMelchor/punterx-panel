@@ -107,42 +107,55 @@
   <footer>PunterX - Predicciones Profesionales en Tiempo Real</footer>
 
   <script>
-    document.getElementById('submitBtn').addEventListener('click', async () => {
-      const authCode = document.getElementById("authCode").value.trim();
+  document.getElementById('submitBtn').addEventListener('click', async () => {
+    const authCode = document.getElementById("authCode").value.trim();
+    const sport = document.getElementById("sport").value.trim();
+    const match = document.getElementById("event").value.trim();
+    const date = document.getElementById("date").value.trim();
+    const bettype = document.getElementById("bettype").value.trim();
+    const odds = document.getElementById("odds").value.trim();
+    const confidence = document.getElementById("confidence").value.trim();
+    const brief = document.getElementById("brief").value.trim();
+    const detailed = document.getElementById("detailed").value.trim();
+    const alternatives = document.getElementById("alternatives").value.trim();
+    const bookie = document.getElementById("bookie").value.trim();
+    const value = document.getElementById("value").value.trim();
+    const timing = document.getElementById("timing").value.trim();
+    const notes = document.getElementById("notes").value.trim();
 
-const data = {
-  authCode,
-  sport,
-  match,
-  date,
-  bettype,
-  odds,
-  confidence,
-  brief,
-  detailed,
-  alternatives,
-  bookie,
-  value,
-  timing,
-  notes
-};
+    const data = {
+      authCode,
+      sport,
+      match,
+      date,
+      bettype,
+      odds,
+      confidence,
+      brief,
+      detailed,
+      alternatives,
+      bookie,
+      value,
+      timing,
+      notes
+    };
 
-      try {
-        const response = await fetch('/.netlify/functions/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data)
-        });
+    try {
+      const response = await fetch('/.netlify/functions/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
 
-        if (response.ok) {
-          alert('✅ Pronóstico enviado correctamente');
-        } else {
-          alert('❌ Error al enviar pronóstico');
-        }
-      } catch (error) {
-        alert('❌ Error de conexión al servidor');
+      if (response.ok) {
+        alert('✅ Pronóstico enviado correctamente');
+      } else {
+        alert('❌ Error al enviar pronóstico');
       }
-    });
-  </script>
+    } catch (error) {
+      alert('❌ Error de conexión al servidor');
+    }
+  });
+</script>
 </body>
 </html>
