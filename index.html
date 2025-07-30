@@ -116,12 +116,26 @@
     const authCode = document.getElementById("authCode").value.trim();
     const honeypot = document.getElementById("honeypot").value.trim();
 
-    // ⏱️ Bloquear si el temporizador aún está activo
+    // Temporizador anti-spam
     const lastSent = localStorage.getItem("lastSent");
     const now = Date.now();
     if (lastSent && now - parseInt(lastSent) < 60000) {
       alert("⏳ Por favor espera unos segundos antes de enviar otro pronóstico.");
       return;
+    }
+
+    // Validación de campos obligatorios
+    const requiredFields = ["sport", "event", "date", "bettype", "odds", "confidence"];
+    for (let id of requiredFields) {
+      const el = document.getElementById(id);
+      if (!el.value.trim()) {
+        el.style.borderColor = "red";
+        el.focus();
+        alert("⚠️ Por favor completa todos los campos obligatorios de la sección gratuita.");
+        return;
+      } else {
+        el.style.borderColor = "#1DB954"; // Restaurar color si está bien
+      }
     }
 
     const data = {
@@ -151,7 +165,7 @@
 
       if (response.ok) {
         alert('✅ Pronóstico enviado correctamente');
-        localStorage.setItem("lastSent", Date.now()); // ⏱️ Actualiza el tiempo del último envío
+        localStorage.setItem("lastSent", Date.now());
       } else {
         alert('❌ Error al enviar pronóstico');
       }
