@@ -3,6 +3,18 @@ exports.handler = async function(event, context) {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
+  const body = JSON.parse(event.body);
+
+  // 🛑 Verificar si el campo honeypot fue llenado
+  if (body.honeypot && body.honeypot.length > 0) {
+    return {
+      statusCode: 403,
+      body: JSON.stringify({ error: "Bot detectado (honeypot)" })
+    };
+  }
+
+  // ... aquí continúa el resto de tu código (validación, mensaje a Telegram, etc.)
+
   // Seguridad: solo permitir desde tu dominio Netlify
   const validOrigins = ['https://punterx-panel-vip.netlify.app'];
   const origin = event.headers.origin || event.headers.referer || '';
