@@ -100,6 +100,7 @@
     <label for="notes">Notas adicionales</label>
     <textarea id="notes" placeholder="Cualquier recomendación o detalle adicional..."></textarea>
 
+    <input type="password" id="authCode" placeholder="Código de acceso" required>
     <button id="submitBtn">Enviar Pronóstico</button>
   </div>
 
@@ -107,21 +108,24 @@
 
   <script>
     document.getElementById('submitBtn').addEventListener('click', async () => {
-      const data = {
-        sport: document.getElementById('sport').value,
-        event: document.getElementById('event').value,
-        date: document.getElementById('date').value,
-        bettype: document.getElementById('bettype').value,
-        odds: document.getElementById('odds').value,
-        confidence: document.getElementById('confidence').value,
-        brief: document.getElementById('brief').value,
-        detailed: document.getElementById('detailed').value,
-        alternatives: document.getElementById('alternatives').value,
-        bookie: document.getElementById('bookie').value,
-        value: document.getElementById('value').value,
-        timing: document.getElementById('timing').value,
-        notes: document.getElementById('notes').value
-      };
+      const authCode = document.getElementById("authCode").value.trim();
+
+const data = {
+  authCode,
+  sport,
+  match,
+  date,
+  bettype,
+  odds,
+  confidence,
+  brief,
+  detailed,
+  alternatives,
+  bookie,
+  value,
+  timing,
+  notes
+};
 
       try {
         const response = await fetch('/.netlify/functions/send', {
