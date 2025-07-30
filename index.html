@@ -114,9 +114,9 @@
   <script>
   document.getElementById('submitBtn').addEventListener('click', async () => {
     const authCode = document.getElementById("authCode").value.trim();
-    const honeypot = document.getElementById("honeypot").value.trim();
+    const honeypot = document.getElementById("honeypot")?.value.trim() || "";
 
-    // Temporizador anti-spam
+    // ⏱ Temporizador anti-spam
     const lastSent = localStorage.getItem("lastSent");
     const now = Date.now();
     if (lastSent && now - parseInt(lastSent) < 60000) {
@@ -124,7 +124,7 @@
       return;
     }
 
-    // Validación de campos obligatorios
+    // ⚠️ Validación de campos obligatorios (gratuitos)
     const requiredFields = ["sport", "event", "date", "bettype", "odds", "confidence"];
     for (let id of requiredFields) {
       const el = document.getElementById(id);
@@ -134,8 +134,17 @@
         alert("⚠️ Por favor completa todos los campos obligatorios de la sección gratuita.");
         return;
       } else {
-        el.style.borderColor = "#1DB954"; // Restaurar color si está bien
+        el.style.borderColor = "#1DB954";
       }
+    }
+
+    // 🔐 Validación del código de acceso
+    if (!authCode || authCode !== "PunterX2025") {
+      document.getElementById("authCode").style.borderColor = "red";
+      alert("🚫 Código de acceso incorrecto");
+      return;
+    } else {
+      document.getElementById("authCode").style.borderColor = "#1DB954";
     }
 
     const data = {
