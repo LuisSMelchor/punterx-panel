@@ -19,15 +19,6 @@
       text-align: center;
       font-size: 24px;
       font-weight: bold;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-    header img {
-      max-width: 120px;
-      margin-bottom: 10px;
-      border-radius: 12px;
-      box-shadow: 0 0 8px rgba(0, 0, 0, 0.2);
     }
     .container {
       padding: 20px;
@@ -57,13 +48,6 @@
       border-bottom: 2px solid #1DB954;
       padding-bottom: 5px;
     }
-    .vip-logo {
-      display: block;
-      margin: 30px auto 10px auto;
-      max-width: 140px;
-      border-radius: 10px;
-      box-shadow: 0 0 8px rgba(0, 0, 0, 0.2);
-    }
     footer {
       margin-top: 30px;
       text-align: center;
@@ -81,13 +65,31 @@
       cursor: pointer;
       width: 100%;
     }
+
+    /* 🔧 Estilos adicionales SOLO para logos */
+    .logo-canal {
+      display: block;
+      margin: 0 auto 10px auto;
+      max-width: 120px;
+      border-radius: 10px;
+    }
+
+    .logo-vip {
+      display: block;
+      margin: 30px auto 10px auto;
+      max-width: 140px;
+      border-radius: 10px;
+    }
   </style>
 </head>
 <body>
+
+  <!-- ✅ Logo del canal antes del texto del encabezado -->
   <header>
-    <img src="assets/punterx-canal.png" alt="Logo PunterX">
+    <img src="assets/punterx-canal.png" alt="Logo canal" class="logo-canal">
     PunterX | Panel de Pronósticos Deportivos
   </header>
+
   <div class="container">
     <div class="section-title">Información Gratuita</div>
     <label for="sport">Deporte</label>
@@ -105,7 +107,8 @@
     <label for="brief">Análisis breve</label>
     <textarea id="brief" placeholder="Resumen breve del pronóstico..."></textarea>
 
-    <img src="assets/punterx-vip.png" alt="Logo VIP" class="vip-logo">
+    <!-- ✅ Logo VIP justo antes del título -->
+    <img src="assets/punterx-vip.png" alt="Logo VIP" class="logo-vip">
     <div class="section-title">Información Exclusiva VIP</div>
     <label for="detailed">Análisis detallado</label>
     <textarea id="detailed" placeholder="Incluye estadísticas, motivación, alineaciones, contexto psicológico, etc."></textarea>
@@ -121,15 +124,96 @@
     <textarea id="notes" placeholder="Cualquier recomendación o detalle adicional..."></textarea>
 
     <input type="password" id="authCode" placeholder="Código de acceso" required>
+
+    <!-- Honeypot: campo invisible para bots -->
     <input type="text" id="honeypot" name="honeypot" style="display:none" autocomplete="off">
+
     <button id="submitBtn">Enviar Pronóstico</button>
   </div>
 
   <footer>PunterX - Predicciones Profesionales en Tiempo Real</footer>
 
-  <!-- Tu script original permanece intacto -->
   <script>
-    // Código JS original aquí (sin cambios)
+  document.getElementById('submitBtn').addEventListener('click', async () => {
+    const authCode = document.getElementById("authCode").value.trim();
+    const honeypot = document.getElementById("honeypot")?.value.trim() || "";
+
+    const lastSent = localStorage.getItem("lastSent");
+    const now = Date.now();
+    if (lastSent && now - parseInt(lastSent) < 60000) {
+      alert("⏳ Por favor espera unos segundos antes de enviar otro pronóstico.");
+      return;
+    }
+
+    const requiredFields = ["sport", "event", "date", "bettype", "odds", "confidence"];
+    for (let id of requiredFields) {
+      const el = document.getElementById(id);
+      if (!el.value.trim()) {
+        el.style.borderColor = "red";
+        el.focus();
+        alert("⚠️ Por favor completa todos los campos obligatorios de la sección gratuita.");
+        return;
+      } else {
+        el.style.borderColor = "#1DB954";
+      }
+    }
+
+    if (!authCode || authCode !== "PunterX2025") {
+      document.getElementById("authCode").style.borderColor = "red";
+      alert("🚫 Código de acceso incorrecto");
+      return;
+    } else {
+      document.getElementById("authCode").style.borderColor = "#1DB954";
+    }
+
+    const data = {
+      authCode,
+      honeypot,
+      sport: document.getElementById("sport").value.trim(),
+      match: document.getElementById("event").value.trim(),
+      date: document.getElementById("date").value.trim(),
+      bettype: document.getElementById("bettype").value.trim(),
+      odds: document.getElementById("odds").value.trim(),
+      confidence: document.getElementById("confidence").value.trim(),
+      brief: document.getElementById("brief").value.trim(),
+      detailed: document.getElementById("detailed").value.trim(),
+      alternatives: document.getElementById("alternatives").value.trim(),
+      bookie: document.getElementById("bookie").value.trim(),
+      value: document.getElementById("value").value.trim(),
+      timing: document.getElementById("timing").value.trim(),
+      notes: document.getElementById("notes").value.trim()
+    };
+
+    const secret = "X9$Gtp#zD3@LP82mR*vWj5Q!7bCk%N0y";
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    );
+    const encoded = encoder.encode(JSON.stringify(data));
+    const signature = await crypto.subtle.sign("HMAC", key, encoded);
+    const hashArray = Array.from(new Uint8Array(signature));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+    try {
+      const response = await fetch('/.netlify/functions/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-PX-Signature': hashHex
+        },
+        body: JSON.stringify(data)
+      });
+
+      if (response.ok) {
+        alert('✅ Pronóstico enviado correctamente');
+        localStorage.setItem("lastSent", Date.now());
+      } else {
+        alert('❌ Error al enviar pronóstico');
+      }
+    } catch (error) {
+      alert('❌ Error de conexión al servidor');
+    }
+  });
   </script>
 </body>
 </html>
