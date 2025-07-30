@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8"/>
-  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PunterX Panel - VIP y Gratuito</title>
   <style>
     body {
@@ -17,6 +17,15 @@
       color: white;
       padding: 20px;
       text-align: center;
+    }
+    header img {
+      max-height: 60px;
+      vertical-align: middle;
+      margin-right: 10px;
+    }
+    .header-text {
+      display: inline-block;
+      vertical-align: middle;
       font-size: 24px;
       font-weight: bold;
     }
@@ -30,7 +39,7 @@
       margin-top: 15px;
       font-weight: bold;
     }
-    input[type="text"], textarea {
+    input[type="text"], textarea, input[type="password"] {
       width: 100%;
       padding: 10px;
       margin-top: 5px;
@@ -48,11 +57,19 @@
       border-bottom: 2px solid #1DB954;
       padding-bottom: 5px;
     }
+    .vip-logo {
+      margin-top: 20px;
+      text-align: center;
+    }
+    .vip-logo img {
+      max-height: 80px;
+    }
     footer {
       margin-top: 30px;
       text-align: center;
       font-size: 14px;
       color: #777;
+      padding-bottom: 20px;
     }
     button {
       margin-top: 30px;
@@ -68,7 +85,11 @@
   </style>
 </head>
 <body>
-  <header>PunterX | Panel de Pronósticos Deportivos</header>
+  <header>
+    <img src="punterx-canal.png" alt="Logo PunterX">
+    <span class="header-text">PunterX | Panel de Pronósticos Deportivos</span>
+  </header>
+
   <div class="container">
     <div class="section-title">Información Gratuita</div>
     <label for="sport">Deporte</label>
@@ -87,6 +108,9 @@
     <textarea id="brief" placeholder="Resumen breve del pronóstico..."></textarea>
 
     <div class="section-title">Información Exclusiva VIP</div>
+    <div class="vip-logo">
+      <img src="punterx-vip.png" alt="Logo VIP">
+    </div>
     <label for="detailed">Análisis detallado</label>
     <textarea id="detailed" placeholder="Incluye estadísticas, motivación, alineaciones, contexto psicológico, etc."></textarea>
     <label for="alternatives">Apuestas Alternativas (si las hay)</label>
@@ -101,102 +125,84 @@
     <textarea id="notes" placeholder="Cualquier recomendación o detalle adicional..."></textarea>
 
     <input type="password" id="authCode" placeholder="Código de acceso" required>
-
-<!-- Honeypot: campo invisible para bots -->
-<input type="text" id="honeypot" name="honeypot" style="display:none" autocomplete="off">
-
-<button id="submitBtn">Enviar Pronóstico</button>
-
+    <input type="text" id="honeypot" name="honeypot" style="display:none" autocomplete="off">
+    <button id="submitBtn">Enviar Pronóstico</button>
   </div>
 
   <footer>PunterX - Predicciones Profesionales en Tiempo Real</footer>
 
   <script>
-  document.getElementById('submitBtn').addEventListener('click', async () => {
-    const authCode = document.getElementById("authCode").value.trim();
-    const honeypot = document.getElementById("honeypot")?.value.trim() || "";
-
-    // ⏱ Temporizador anti-spam
-    const lastSent = localStorage.getItem("lastSent");
-    const now = Date.now();
-    if (lastSent && now - parseInt(lastSent) < 60000) {
-      alert("⏳ Por favor espera unos segundos antes de enviar otro pronóstico.");
-      return;
-    }
-
-    // ⚠️ Validación de campos obligatorios
-    const requiredFields = ["sport", "event", "date", "bettype", "odds", "confidence"];
-    for (let id of requiredFields) {
-      const el = document.getElementById(id);
-      if (!el.value.trim()) {
-        el.style.borderColor = "red";
-        el.focus();
-        alert("⚠️ Por favor completa todos los campos obligatorios de la sección gratuita.");
+    document.getElementById('submitBtn').addEventListener('click', async () => {
+      const authCode = document.getElementById("authCode").value.trim();
+      const honeypot = document.getElementById("honeypot")?.value.trim() || "";
+      const lastSent = localStorage.getItem("lastSent");
+      const now = Date.now();
+      if (lastSent && now - parseInt(lastSent) < 60000) {
+        alert("⏳ Por favor espera unos segundos antes de enviar otro pronóstico.");
+        return;
+      }
+      const requiredFields = ["sport", "event", "date", "bettype", "odds", "confidence"];
+      for (let id of requiredFields) {
+        const el = document.getElementById(id);
+        if (!el.value.trim()) {
+          el.style.borderColor = "red";
+          el.focus();
+          alert("⚠️ Por favor completa todos los campos obligatorios de la sección gratuita.");
+          return;
+        } else {
+          el.style.borderColor = "#1DB954";
+        }
+      }
+      if (!authCode || authCode !== "PunterX2025") {
+        document.getElementById("authCode").style.borderColor = "red";
+        alert("🚫 Código de acceso incorrecto");
         return;
       } else {
-        el.style.borderColor = "#1DB954";
+        document.getElementById("authCode").style.borderColor = "#1DB954";
       }
-    }
-
-    // 🔐 Validación del código de acceso
-    if (!authCode || authCode !== "PunterX2025") {
-      document.getElementById("authCode").style.borderColor = "red";
-      alert("🚫 Código de acceso incorrecto");
-      return;
-    } else {
-      document.getElementById("authCode").style.borderColor = "#1DB954";
-    }
-
-    // Construcción de datos
-    const data = {
-      authCode,
-      honeypot,
-      sport: document.getElementById("sport").value.trim(),
-      match: document.getElementById("event").value.trim(),
-      date: document.getElementById("date").value.trim(),
-      bettype: document.getElementById("bettype").value.trim(),
-      odds: document.getElementById("odds").value.trim(),
-      confidence: document.getElementById("confidence").value.trim(),
-      brief: document.getElementById("brief").value.trim(),
-      detailed: document.getElementById("detailed").value.trim(),
-      alternatives: document.getElementById("alternatives").value.trim(),
-      bookie: document.getElementById("bookie").value.trim(),
-      value: document.getElementById("value").value.trim(),
-      timing: document.getElementById("timing").value.trim(),
-      notes: document.getElementById("notes").value.trim()
-    };
-
-    // 🔒 Generar firma HMAC SHA256 para validación avanzada
-    const secret = "X9$Gtp#zD3@LP82mR*vWj5Q!7bCk%N0y";
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-    );
-    const encoded = encoder.encode(JSON.stringify(data));
-    const signature = await crypto.subtle.sign("HMAC", key, encoded);
-    const hashArray = Array.from(new Uint8Array(signature));
-    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-    try {
-      const response = await fetch('/.netlify/functions/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-PX-Signature': hashHex
-        },
-        body: JSON.stringify(data)
-      });
-
-      if (response.ok) {
-        alert('✅ Pronóstico enviado correctamente');
-        localStorage.setItem("lastSent", Date.now());
-      } else {
-        alert('❌ Error al enviar pronóstico');
+      const data = {
+        authCode,
+        honeypot,
+        sport: document.getElementById("sport").value.trim(),
+        match: document.getElementById("event").value.trim(),
+        date: document.getElementById("date").value.trim(),
+        bettype: document.getElementById("bettype").value.trim(),
+        odds: document.getElementById("odds").value.trim(),
+        confidence: document.getElementById("confidence").value.trim(),
+        brief: document.getElementById("brief").value.trim(),
+        detailed: document.getElementById("detailed").value.trim(),
+        alternatives: document.getElementById("alternatives").value.trim(),
+        bookie: document.getElementById("bookie").value.trim(),
+        value: document.getElementById("value").value.trim(),
+        timing: document.getElementById("timing").value.trim(),
+        notes: document.getElementById("notes").value.trim()
+      };
+      const secret = "X9$Gtp#zD3@LP82mR*vWj5Q!7bCk%N0y";
+      const encoder = new TextEncoder();
+      const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+      const encoded = encoder.encode(JSON.stringify(data));
+      const signature = await crypto.subtle.sign("HMAC", key, encoded);
+      const hashArray = Array.from(new Uint8Array(signature));
+      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      try {
+        const response = await fetch('/.netlify/functions/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-PX-Signature': hashHex
+          },
+          body: JSON.stringify(data)
+        });
+        if (response.ok) {
+          alert('✅ Pronóstico enviado correctamente');
+          localStorage.setItem("lastSent", Date.now());
+        } else {
+          alert('❌ Error al enviar pronóstico');
+        }
+      } catch (error) {
+        alert('❌ Error de conexión al servidor');
       }
-    } catch (error) {
-      alert('❌ Error de conexión al servidor');
-    }
-  });
-</script>
+    });
+  </script>
 </body>
 </html>
