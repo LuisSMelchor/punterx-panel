@@ -1,3 +1,5 @@
+const crypto = require("crypto");
+
 exports.handler = async function(event, context) {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
@@ -5,7 +7,7 @@ exports.handler = async function(event, context) {
 
   const body = JSON.parse(event.body);
 
-  // 🛑 Verificar si el campo honeypot fue llenado
+  // 🛑 Honeypot: detectar bots
   if (body.honeypot && body.honeypot.length > 0) {
     return {
       statusCode: 403,
@@ -13,9 +15,7 @@ exports.handler = async function(event, context) {
     };
   }
 
-  // ... aquí continúa el resto de tu código (validación, mensaje a Telegram, etc.)
-
-  // Seguridad: solo permitir desde tu dominio Netlify
+  // 🛑 Origen válido
   const validOrigins = ['https://punterx-panel-vip.netlify.app'];
   const origin = event.headers.origin || event.headers.referer || '';
   if (!validOrigins.some(valid => origin.includes(valid))) {
@@ -30,11 +30,14 @@ exports.handler = async function(event, context) {
     authCode, sport, event: match, date, bettype,
     odds, confidence, brief,
     detailed, alternatives, bookie,
-    value, timing, notes
+    value, timing, notes,
+    timestamp, signature
   } = data;
 
-  // Seguridad: validación del código secreto
+  // 🔐 Código secreto para el panel
   const secretCode = 'PunterX2025';
+
+  // 🔒 Validación de código de acceso
   if (authCode !== secretCode) {
     return {
       statusCode: 401,
@@ -42,48 +45,28 @@ exports.handler = async function(event, context) {
     };
   }
 
-  let message = `📌 *${sport||'-'}*\n🏟️ *Evento:* ${match||'-'}\n🗓️ *Fecha:* ${date||'-'}\n🎯 *Apuesta:* ${bettype||'-'}\n💸 *Cuota:* ${odds||'-'}\n📈 *Confianza:* ${confidence||'-'}\n📝 *Resumen:* ${brief||'-'}\n`;
+  // 🔐 Firma HMAC de tiempo (protección anti-scripts)
+  const SECRET_KEY = 'X9$Gtp#zD3@LP82mR*vWj5Q!7bCk%N0y'; // No olvidar
 
-  const isVIP = !!(detailed || alternatives || bookie || value || timing || notes);
-
-  if (isVIP) {
-    message += `\n🔒 *ANÁLISIS VIP*\n`;
-    if (detailed) message += `📊 *Análisis:* ${detailed}\n`;
-    if (alternatives) message += `➕ *Alternativas:* ${alternatives}\n`;
-    if (bookie) message += `🏦 *Bookie:* ${bookie}\n`;
-    if (value) message += `💎 *Valor:* ${value}\n`;
-    if (timing) message += `⏱️ *Timing:* ${timing}\n`;
-    if (notes) message += `📌 *Notas:* ${notes}\n`;
+  if (!timestamp || !signature) {
+    return { statusCode: 400, body: 'Falta timestamp o firma' };
   }
 
-  const botToken = '8494607323:AAHjK3wF_lk4EFojFyoaoOcVbhVrn3_OdCQ';
-  const chatId = isVIP ? '-1002861902996' : '@punterxpicks';
-  const sendUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  const now = Date.now();
+  const MAX_DELAY = 30000; // 30 segundos
 
-  try {
-    const response = await fetch(sendUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: message,
-        parse_mode: 'Markdown'
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Telegram error: ${response.statusText}`);
-    }
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ message: 'Mensaje enviado correctamente.' })
-    };
-  } catch (error) {
-    console.error('Error al enviar mensaje:', error);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Error al enviar mensaje a Telegram.' })
-    };
+  if (Math.abs(now - parseInt(timestamp)) > MAX_DELAY) {
+    return { statusCode: 403, body: 'Solicitud expirada' };
   }
-};
+
+  const expectedSignature = crypto
+    .createHmac("sha256", SECRET_KEY)
+    .update(timestamp.toString())
+    .digest("hex");
+
+  if (signature !== expectedSignature) {
+    return { statusCode: 401, body: 'Firma inválida' };
+  }
+
+  // 🧠 Generar el mensaje
+  let message = `📌 *${sport||'-'}*\n🏟️ *Evento:* ${match||'-'}\n🗓️ *Fecha:* ${date||'-'}\n🎯 *Apuesta:* ${bettype||'-'}\n
