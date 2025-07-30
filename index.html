@@ -141,7 +141,7 @@
 
     const lastSent = localStorage.getItem("lastSent");
     const now = Date.now();
-    if (lastSent && now - parseInt(lastSent) < 60000) {
+    if (lastSent && now - parseInt(lastSent) < 30000) {
       alert("⏳ Por favor espera unos segundos antes de enviar otro pronóstico.");
       return;
     }
