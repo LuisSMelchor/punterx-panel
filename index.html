@@ -133,7 +133,8 @@
 
   <footer>PunterX - Predicciones Profesionales en Tiempo Real</footer>
 
-  <script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+<script>
   document.getElementById('submitBtn').addEventListener('click', async () => {
     const authCode = document.getElementById("authCode").value.trim();
     const honeypot = document.getElementById("honeypot")?.value.trim() || "";
@@ -166,9 +167,16 @@
       document.getElementById("authCode").style.borderColor = "#1DB954";
     }
 
+    // 🔐 Seguridad: generar timestamp y firma HMAC
+    const secret = "X9$Gtp#zD3@LP82mR*vWj5Q!7bCk%N0y"; // PUNTERX_SECRET (sí, va visible aquí)
+    const timestamp = Date.now().toString();
+    const signature = CryptoJS.HmacSHA256(timestamp, secret).toString();
+
     const data = {
       authCode,
       honeypot,
+      timestamp,
+      signature,
       sport: document.getElementById("sport").value.trim(),
       match: document.getElementById("event").value.trim(),
       date: document.getElementById("date").value.trim(),
@@ -184,22 +192,12 @@
       notes: document.getElementById("notes").value.trim()
     };
 
-    const secret = "X9$Gtp#zD3@LP82mR*vWj5Q!7bCk%N0y";
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-    );
-    const encoded = encoder.encode(JSON.stringify(data));
-    const signature = await crypto.subtle.sign("HMAC", key, encoded);
-    const hashArray = Array.from(new Uint8Array(signature));
-    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
     try {
       const response = await fetch('/.netlify/functions/send', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-PX-Signature': hashHex
+          'X-PX-Signature': signature
         },
         body: JSON.stringify(data)
       });
@@ -214,6 +212,6 @@
       alert('❌ Error de conexión al servidor');
     }
   });
-  </script>
+</script>
 </body>
 </html>
