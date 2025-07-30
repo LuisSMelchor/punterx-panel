@@ -45,22 +45,30 @@ exports.handler = async function (event, context) {
     }
 
     const confidence = "Alta";
-    const brief = "Partido con ritmo ofensivo y tendencia reciente a superar las líneas de puntos/goles.";
-    const detailed = `🔐 *Análisis VIP:*
-Este pick se apoya en el rendimiento reciente ofensivo de ambos equipos. ${match} presenta una oportunidad clara de valor.
+    const brief = "Partido con ritmo ofensivo y tendencia reciente a superar las líneas establecidas por el mercado.";
 
-Las estadísticas muestran que ambos equipos han superado esta línea en 4 de sus últimos 5 partidos. Además, la presión por sumar puntos y el estilo de juego abierto favorecen el Over.
+    const detailed = `🔎 *Análisis VIP:*
+El enfrentamiento entre ${match} tiene varios factores que nos permiten detectar un valor oculto.
 
-💡 El mercado no ha ajustado completamente la línea, lo que representa una ventana de valor aprovechable.
+📊 *Estadísticas recientes:* Ambos equipos han superado la línea propuesta en al menos 4 de sus últimos 5 juegos.
 
-⚠️ *Ojo:* Revisa alineaciones o descansos antes del inicio.`;
-    const alternatives = sportParam === "nba" ? "Ambos equipos +105.5 puntos individuales" : "Ambos marcan (BTTS)";
-    const bookie = "Bet365";
-    const value = "El mercado no refleja totalmente la tendencia ofensiva reciente.";
-    const timing = "Apostar antes del cierre de cuotas para mantener el valor.";
-    const notes = "Ideal para combinar en parlays de alto valor o como apuesta principal si hay rotaciones mínimas.";
+🎯 *Tendencia táctica:* El estilo ofensivo y la necesidad de puntos generan contextos ideales para apuestas en altas.
 
-    // Construir cuerpo de datos
+🧠 *Aspectos psicológicos:* La presión por sumar victorias, unido a la fatiga defensiva acumulada, favorece un ritmo abierto.
+
+💡 *Valor detectado:* Las casas de apuestas no ajustaron completamente sus líneas, lo que deja una ventana de oportunidad que podemos aprovechar.
+
+⚠️ *Recomendación:* Verifica posibles bajas o rotaciones antes de realizar la apuesta para confirmar que el valor se mantiene.`;
+
+    const alternatives = sportParam === "nba"
+      ? "Ambos equipos superan los 105.5 puntos"
+      : "Ambos anotan (BTTS)";
+
+    const bookie = "Bet365, Pinnacle";
+    const value = "Línea inflada no ajustada al contexto actual de los equipos.";
+    const timing = "Apostar antes del movimiento brusco de cuota en las próximas horas.";
+    const notes = "Buena opción para combinar con otras selecciones de alto valor en parlays.";
+
     const timestamp = Date.now().toString();
     const signature = crypto.createHmac("sha256", SECRET).update(timestamp).digest("hex");
 
@@ -84,7 +92,6 @@ Las estadísticas muestran que ambos equipos han superado esta línea en 4 de su
       notes
     };
 
-    // Enviar al endpoint de tu backend
     const result = await fetch(PANEL_ENDPOINT, {
       method: "POST",
       headers: {
@@ -100,6 +107,7 @@ Las estadísticas muestran que ambos equipos han superado esta línea en 4 de su
       statusCode: 200,
       body: `✅ Pick automático enviado para ${match}: ${responseText}`
     };
+
   } catch (error) {
     return {
       statusCode: 500,
@@ -107,4 +115,3 @@ Las estadísticas muestran que ambos equipos han superado esta línea en 4 de su
     };
   }
 };
-
