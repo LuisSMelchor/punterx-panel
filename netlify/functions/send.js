@@ -12,7 +12,7 @@ exports.handler = async function (event, context) {
 
     const body = JSON.parse(bodyRaw);
 
-    // 🚫 Honeypot (anti-bot)
+    // 🚫 Honeypot
     if (body.honeypot && body.honeypot.length > 0) {
       return {
         statusCode: 403,
@@ -20,7 +20,7 @@ exports.handler = async function (event, context) {
       };
     }
 
-    // 🌐 Validación de origen
+    // 🌐 Origen
     const validOrigins = [
       'https://punterx-panel-vip.netlify.app',
       undefined,
@@ -43,7 +43,7 @@ exports.handler = async function (event, context) {
       timestamp, signature
     } = body;
 
-    // 🔐 Validación del código de acceso
+    // 🔐 Código de acceso
     if (authCode !== 'PunterX2025') {
       return {
         statusCode: 401,
@@ -51,7 +51,7 @@ exports.handler = async function (event, context) {
       };
     }
 
-    // 🔐 Validación de firma HMAC
+    // 🔐 Validación HMAC
     const SECRET_KEY = process.env.PUNTERX_SECRET;
     if (!timestamp || !signature) {
       return { statusCode: 400, body: 'Falta timestamp o firma' };
@@ -72,13 +72,19 @@ exports.handler = async function (event, context) {
       return { statusCode: 401, body: 'Firma inválida' };
     }
 
-    // 🧠 Lógica para distinguir VIP vs gratuito
+    // 🧠 Lógica VIP vs Gratuito
     const hasVIP = [detailed, alternatives, bookie, value, timing, notes].some(v => v && v.trim());
     const chatId = hasVIP
       ? process.env.TELEGRAM_GROUP_ID
       : process.env.TELEGRAM_CHANNEL_ID;
 
-    // 🧾 Construir el mensaje según tipo
+    // 📋 LOGS para depuración
+    console.log("✅ Tipo de pick:", hasVIP ? "VIP" : "Gratuito");
+    console.log("📤 chatId usado:", chatId);
+    console.log("📦 process.env.TELEGRAM_GROUP_ID:", process.env.TELEGRAM_GROUP_ID);
+    console.log("📦 process.env.TELEGRAM_CHANNEL_ID:", process.env.TELEGRAM_CHANNEL_ID);
+
+    // 🧾 Construcción del mensaje
     let message =
       `📌 *${sport || '-'}*\n` +
       `🏟️ *Evento:* ${match || '-'}\n` +
@@ -98,7 +104,6 @@ exports.handler = async function (event, context) {
         `📝 *Notas:* ${notes || '-'}`;
     }
 
-    // 🚀 Enviar mensaje a Telegram
     const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
     const payload = JSON.stringify({
