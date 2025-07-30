@@ -1,11 +1,7 @@
-// ✅ ARCHIVO: netlify/functions/send.js
-// ✅ Funcional: SOLO envía al grupo VIP
-// ⚠️ NO TOCAR esto hasta tener todo estable
-
 const crypto = require("crypto");
 const https = require("https");
 
-exports.handler = async function(event, context) {
+exports.handler = async function (event, context) {
   try {
     if (event.httpMethod !== 'POST') {
       return { statusCode: 405, body: 'Method Not Allowed' };
@@ -16,6 +12,7 @@ exports.handler = async function(event, context) {
 
     const body = JSON.parse(bodyRaw);
 
+    // 🚫 Honeypot (anti-bot)
     if (body.honeypot && body.honeypot.length > 0) {
       return {
         statusCode: 403,
@@ -23,6 +20,7 @@ exports.handler = async function(event, context) {
       };
     }
 
+    // 🌐 Validación de origen
     const validOrigins = [
       'https://punterx-panel-vip.netlify.app',
       undefined,
@@ -37,21 +35,23 @@ exports.handler = async function(event, context) {
     }
 
     const {
-      authCode, sport, match, date, bettype,
+      authCode,
+      sport, match, date, bettype,
       odds, confidence, brief,
       detailed, alternatives, bookie,
       value, timing, notes,
       timestamp, signature
     } = body;
 
-    const secretCode = 'PunterX2025';
-    if (authCode !== secretCode) {
+    // 🔐 Validación del código de acceso
+    if (authCode !== 'PunterX2025') {
       return {
         statusCode: 401,
         body: JSON.stringify({ error: 'Código de acceso incorrecto.' })
       };
     }
 
+    // 🔐 Validación de firma HMAC
     const SECRET_KEY = process.env.PUNTERX_SECRET;
     if (!timestamp || !signature) {
       return { statusCode: 400, body: 'Falta timestamp o firma' };
@@ -72,25 +72,37 @@ exports.handler = async function(event, context) {
       return { statusCode: 401, body: 'Firma inválida' };
     }
 
-    const message = `\ud83d\udccc *${sport || '-'}*\n` +
-      `\ud83c\udfdf\ufe0f *Evento:* ${match || '-'}\n` +
-      `\ud83d\uddd3\ufe0f *Fecha:* ${date || '-'}\n` +
-      `\ud83c\udfaf *Apuesta:* ${bettype || '-'}\n` +
-      `\ud83d\udcb5 *Cuota:* ${odds || '-'}\n` +
-      `\ud83d\udcc8 *Confianza:* ${confidence || '-'}\n\n` +
-      `\ud83e\udde0 *Resumen:* ${brief || '-'}\n\n` +
-      `${detailed || '-'}\n\n` +
-      `\ud83d\udd01 *Alternativa:* ${alternatives || '-'}\n` +
-      `\ud83d\udcda *Bookie:* ${bookie || '-'}\n` +
-      `\ud83d\udccd *Valor:* ${value || '-'}\n` +
-      `\u23f1\ufe0f *Timing:* ${timing || '-'}\n` +
-      `\ud83d\udcdd *Notas:* ${notes || '-'}`;
+    // 🧠 Lógica para distinguir VIP vs gratuito
+    const hasVIP = [detailed, alternatives, bookie, value, timing, notes].some(v => v && v.trim());
+    const chatId = hasVIP
+      ? process.env.TELEGRAM_GROUP_ID
+      : process.env.TELEGRAM_CHANNEL_ID;
 
+    // 🧾 Construir el mensaje según tipo
+    let message =
+      `📌 *${sport || '-'}*\n` +
+      `🏟️ *Evento:* ${match || '-'}\n` +
+      `📅 *Fecha:* ${date || '-'}\n` +
+      `🎯 *Apuesta:* ${bettype || '-'}\n` +
+      `💵 *Cuota:* ${odds || '-'}\n` +
+      `📈 *Confianza:* ${confidence || '-'}\n\n` +
+      `🧠 *Resumen:* ${brief || '-'}\n\n`;
+
+    if (hasVIP) {
+      message +=
+        `${detailed || '-'}\n\n` +
+        `🔁 *Alternativa:* ${alternatives || '-'}\n` +
+        `📚 *Bookie:* ${bookie || '-'}\n` +
+        `📍 *Valor:* ${value || '-'}\n` +
+        `⏱️ *Timing:* ${timing || '-'}\n` +
+        `📝 *Notas:* ${notes || '-'}`;
+    }
+
+    // 🚀 Enviar mensaje a Telegram
     const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-    const TELEGRAM_CHAT_ID = process.env.TELEGRAM_GROUP_ID; // ⚠️ SOLO GRUPO VIP
 
     const payload = JSON.stringify({
-      chat_id: TELEGRAM_CHAT_ID,
+      chat_id: chatId,
       text: message,
       parse_mode: "Markdown"
     });
@@ -118,13 +130,13 @@ exports.handler = async function(event, context) {
 
     return {
       statusCode: 200,
-      body: `\u2705 Mensaje enviado a Telegram: ${telegramResponse}`
+      body: `✅ Mensaje enviado a Telegram: ${telegramResponse}`
     };
 
   } catch (err) {
     return {
       statusCode: 500,
-      body: `\u274c Error interno en send: ${err.message}`
+      body: `❌ Error interno en send: ${err.message}`
     };
   }
 };
