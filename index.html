@@ -1,51 +1,136 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>PunterX | Enviar Pronóstico</title>
+  <title>PunterX | Panel de Pronósticos</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap">
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      margin: 0;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      color: #58a6ff;
+      margin-bottom: 2rem;
+    }
+    form {
+      width: 100%;
+      max-width: 700px;
+      background: #161b22;
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    }
+    label {
+      display: block;
+      margin: 1rem 0 0.3rem;
+      color: #c9d1d9;
+    }
+    input, textarea, select {
+      width: 100%;
+      padding: 0.75rem;
+      border: none;
+      border-radius: 8px;
+      background: #0d1117;
+      color: #f0f6fc;
+      font-size: 1rem;
+    }
+    button {
+      margin-top: 2rem;
+      background-color: #238636;
+      color: white;
+      border: none;
+      padding: 1rem 2rem;
+      font-size: 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    button:hover {
+      background-color: #2ea043;
+    }
+    .status {
+      margin-top: 1.5rem;
+      font-weight: bold;
+      color: #58a6ff;
+    }
+  </style>
 </head>
 <body>
-  <h1>Formulario de Pronóstico</h1>
-  <form id="prediction-form">
-    <input name="sport" placeholder="Deporte" required /><br />
-    <input name="event" placeholder="Evento" required /><br />
-    <input name="date" placeholder="Fecha" required /><br />
-    <input name="bettype" placeholder="Tipo de apuesta" required /><br />
-    <input name="odds" placeholder="Cuota" required /><br />
-    <input name="confidence" placeholder="Confianza" required /><br />
-    <textarea name="brief" placeholder="Análisis breve"></textarea><br />
-    <textarea name="detailed" placeholder="Análisis detallado"></textarea><br />
-    <textarea name="alternatives" placeholder="Apuestas alternativas"></textarea><br />
-    <input name="bookie" placeholder="Bookie recomendada" /><br />
-    <input name="value" placeholder="Valor" /><br />
-    <input name="timing" placeholder="Consejo de timing" /><br />
-    <textarea name="notes" placeholder="Notas adicionales"></textarea><br />
+  <h1>PunterX | Enviar Pronóstico</h1>
+  <form id="betForm">
+    <label for="sport">Deporte</label>
+    <input type="text" id="sport" name="sport" required />
+
+    <label for="event">Evento / Partido</label>
+    <input type="text" id="event" name="event" required />
+
+    <label for="date">Fecha</label>
+    <input type="text" id="date" name="date" required />
+
+    <label for="bettype">Tipo de Apuesta</label>
+    <input type="text" id="bettype" name="bettype" required />
+
+    <label for="odds">Cuota</label>
+    <input type="text" id="odds" name="odds" required />
+
+    <label for="confidence">Confianza</label>
+    <input type="text" id="confidence" name="confidence" required />
+
+    <label for="brief">Análisis Breve</label>
+    <textarea id="brief" name="brief" rows="2"></textarea>
+
+    <label for="detailed">Análisis Detallado</label>
+    <textarea id="detailed" name="detailed" rows="4"></textarea>
+
+    <label for="alternatives">Apuestas Alternativas</label>
+    <textarea id="alternatives" name="alternatives" rows="2"></textarea>
+
+    <label for="bookie">Bookie Sugerida</label>
+    <input type="text" id="bookie" name="bookie" />
+
+    <label for="value">Valor Detectado</label>
+    <input type="text" id="value" name="value" />
+
+    <label for="timing">Consejo de Timing</label>
+    <input type="text" id="timing" name="timing" />
+
+    <label for="notes">Notas Adicionales</label>
+    <textarea id="notes" name="notes" rows="2"></textarea>
+
     <button type="submit">Enviar Pronóstico</button>
+    <div class="status" id="status"></div>
   </form>
 
-  <p id="response"></p>
-
   <script>
-    const form = document.getElementById("prediction-form");
-    form.addEventListener("submit", async (e) => {
+    const form = document.getElementById('betForm');
+    const statusDiv = document.getElementById('status');
+
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const formData = new FormData(form);
-      const data = Object.fromEntries(formData.entries());
-
-      const responseEl = document.getElementById("response");
-      responseEl.textContent = "Enviando...";
-
+      const data = Object.fromEntries(new FormData(form));
       try {
-        const res = await fetch("/.netlify/functions/send", {
-          method: "POST",
-          body: JSON.stringify(data),
+        const response = await fetch('/.netlify/functions/send', {
+          method: 'POST',
+          body: JSON.stringify(data)
         });
-        const result = await res.json();
-        responseEl.textContent = result.message || result.error;
+        const result = await response.json();
+        if (response.ok) {
+          statusDiv.textContent = '✅ Pronóstico enviado correctamente';
+          form.reset();
+        } else {
+          throw new Error(result.error || 'Error al enviar');
+        }
       } catch (err) {
-        responseEl.textContent = "Error al enviar pronóstico.";
+        statusDiv.textContent = '❌ Error al enviar pronóstico';
+        console.error(err);
       }
     });
   </script>
