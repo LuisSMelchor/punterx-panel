@@ -35,7 +35,7 @@ exports.handler = async function(event, context) {
     }
 
     const {
-      authCode, sport, event: match, date, bettype,
+      authCode, sport, match, date, bettype,
       odds, confidence, brief,
       detailed, alternatives, bookie,
       value, timing, notes,
@@ -73,23 +73,30 @@ exports.handler = async function(event, context) {
     }
 
     // 🧠 Generar mensaje para Telegram
-    const message = `📌 *${sport || '-'}*\n` +
+    let message = `📌 *${sport || '-'}*\n` +
       `🏟️ *Evento:* ${match || '-'}\n` +
       `🗓️ *Fecha:* ${date || '-'}\n` +
       `🎯 *Apuesta:* ${bettype || '-'}\n` +
       `💵 *Cuota:* ${odds || '-'}\n` +
       `📈 *Confianza:* ${confidence || '-'}\n\n` +
-      `🧠 *Resumen:* ${brief || '-'}\n\n` +
-      `${detailed || '-'}\n\n` +
-      `🔁 *Alternativa:* ${alternatives || '-'}\n` +
-      `📚 *Bookie:* ${bookie || '-'}\n` +
-      `📍 *Valor:* ${value || '-'}\n` +
-      `⏱️ *Timing:* ${timing || '-'}\n` +
-      `📝 *Notas:* ${notes || '-'}`;
+      `🧠 *Resumen:* ${brief || '-'}`;
 
-    // 📤 Enviar a Telegram
-    const TELEGRAM_TOKEN = `${process.env.TELEGRAM_BOT_TOKEN}`.trim();
-    const TELEGRAM_CHAT_ID = `${process.env.TELEGRAM_CHAT_ID}`.trim();
+    // Si incluye campos VIP, añadirlos al mensaje
+    const tieneVIP = detailed || alternatives || bookie || value || timing || notes;
+    if (tieneVIP) {
+      message += `\n\n${detailed || '-'}\n\n` +
+        `🔁 *Alternativa:* ${alternatives || '-'}\n` +
+        `📚 *Bookie:* ${bookie || '-'}\n` +
+        `📍 *Valor:* ${value || '-'}\n` +
+        `⏱️ *Timing:* ${timing || '-'}\n` +
+        `📝 *Notas:* ${notes || '-'}`;
+    }
+
+    // 📤 Enviar a Telegram (VIP o Canal según campos)
+    const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+    const TELEGRAM_CHAT_ID = tieneVIP
+      ? process.env.TELEGRAM_CHAT_ID        // grupo VIP
+      : process.env.TELEGRAM_CHANNEL_ID;    // canal gratuito
 
     const payload = JSON.stringify({
       chat_id: TELEGRAM_CHAT_ID,
