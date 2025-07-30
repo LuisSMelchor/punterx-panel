@@ -1,65 +1,78 @@
+const fetch = require('node-fetch');
 
-exports.handler = async (event, context) => {
+exports.handler = async function(event, context) {
+  if (event.httpMethod !== 'POST') {
+    return { statusCode: 405, body: 'Method Not Allowed' };
+  }
+
+  const data = JSON.parse(event.body);
+
+  const {
+    sport,
+    event: match,
+    date,
+    bettype,
+    odds,
+    confidence,
+    brief,
+    detailed,
+    alternatives,
+    bookie,
+    value,
+    timing,
+    notes
+  } = data;
+
+  // Construcción del mensaje base
+  let message = `📌 *${sport || '-'}*\n`;
+  message += `🏟️ *Evento:* ${match || '-'}\n`;
+  message += `🗓️ *Fecha:* ${date || '-'}\n`;
+  message += `🎯 *Apuesta:* ${bettype || '-'}\n`;
+  message += `💸 *Cuota:* ${odds || '-'}\n`;
+  message += `📈 *Confianza:* ${confidence || '-'}\n`;
+  message += `📝 *Resumen:* ${brief || '-'}\n`;
+
+  // Comprobamos si hay campos VIP llenos
+  const isVIP = !!(detailed || alternatives || bookie || value || timing || notes);
+
+  if (isVIP) {
+    message += `\n🔒 *ANÁLISIS VIP*\n`;
+    if (detailed) message += `📊 *Análisis:* ${detailed}\n`;
+    if (alternatives) message += `➕ *Alternativas:* ${alternatives}\n`;
+    if (bookie) message += `🏦 *Bookie:* ${bookie}\n`;
+    if (value) message += `💎 *Valor:* ${value}\n`;
+    if (timing) message += `⏱️ *Timing:* ${timing}\n`;
+    if (notes) message += `📌 *Notas:* ${notes}\n`;
+  }
+
+  const botToken = '8494607323:AAHjK3wF_lk4EFojFyoaoOcVbhVrn3_OdCQ';
+  const chatId = isVIP ? '-1002861902996' : '@punterxpicks';
+  const sendUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
   try {
-    const data = JSON.parse(event.body);
-
-    const message = `
-📢 *Nuevo Pronóstico Enviado*
-
-🎯 *Deporte:* ${data.sport}
-⚽ *Evento:* ${data.event}
-🗓️ *Fecha:* ${data.date}
-🎲 *Tipo de Apuesta:* ${data.bettype}
-💰 *Cuota:* ${data.odds}
-📊 *Confianza:* ${data.confidence}
-
-📝 *Análisis Breve:*
-${data.brief}
-
-🔒 *EXCLUSIVO VIP*
-
-📚 *Análisis Detallado:*
-${data.detailed}
-
-🎯 *Apuestas Alternativas:*
-${data.alternatives}
-
-🏦 *Bookie Sugerida:* ${data.bookie}
-📈 *Valor Detectado:* ${data.value}
-🕐 *Consejo de Timing:* ${data.timing}
-
-🧾 *Notas:*
-${data.notes}
-`;
-
-    const telegramUrl = `https://api.telegram.org/bot8494607323:AAHjK3wF_lk4EFojFyoaoOcVbhVrn3_OdCQ/sendMessage`;
-
-    const response = await fetch(telegramUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    const response = await fetch(sendUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: "-1002861902996",
+        chat_id: chatId,
         text: message,
-        parse_mode: "Markdown"
-      }),
+        parse_mode: 'Markdown'
+      })
     });
 
-    const result = await response.json();
-
-    if (!result.ok) {
-      throw new Error("Telegram error: " + result.description);
+    if (!response.ok) {
+      throw new Error(`Telegram error: ${response.statusText}`);
     }
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ message: "Pronóstico enviado correctamente" })
+      body: JSON.stringify({ message: 'Mensaje enviado correctamente.' })
     };
-
   } catch (error) {
-    console.error("Error:", error);
+    console.error('Error al enviar mensaje:', error);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: "Error interno: " + error.message })
+      body: JSON.stringify({ error: 'Error al enviar mensaje a Telegram.' })
     };
   }
 };
