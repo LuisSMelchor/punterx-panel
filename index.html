@@ -101,7 +101,12 @@
     <textarea id="notes" placeholder="Cualquier recomendación o detalle adicional..."></textarea>
 
     <input type="password" id="authCode" placeholder="Código de acceso" required>
-    <button id="submitBtn">Enviar Pronóstico</button>
+
+<!-- Honeypot: campo invisible para bots -->
+<input type="text" id="honeypot" name="honeypot" style="display:none" autocomplete="off">
+
+<button id="submitBtn">Enviar Pronóstico</button>
+
   </div>
 
   <footer>PunterX - Predicciones Profesionales en Tiempo Real</footer>
@@ -109,6 +114,7 @@
   <script>
   document.getElementById('submitBtn').addEventListener('click', async () => {
     const authCode = document.getElementById("authCode").value.trim();
+    const honeypot = document.getElementById("honeypot").value.trim();
     const sport = document.getElementById("sport").value.trim();
     const match = document.getElementById("event").value.trim();
     const date = document.getElementById("date").value.trim();
@@ -125,6 +131,7 @@
 
     const data = {
       authCode,
+      honeypot,
       sport,
       match,
       date,
