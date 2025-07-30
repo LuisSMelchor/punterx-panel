@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const https = require("https");
 
 exports.handler = async function(event, context) {
   try {
@@ -11,6 +12,7 @@ exports.handler = async function(event, context) {
 
     const body = JSON.parse(bodyRaw);
 
+    // 🛑 Honeypot: detectar bots
     if (body.honeypot && body.honeypot.length > 0) {
       return {
         statusCode: 403,
@@ -18,19 +20,19 @@ exports.handler = async function(event, context) {
       };
     }
 
+    // ✅ Validar origen
     const validOrigins = [
-  'https://punterx-panel-vip.netlify.app',
-  undefined,
-  '', // permite funciones internas sin origen explícito
-];
-const origin = event.headers.origin || event.headers.referer || '';
-
-if (!validOrigins.some(valid => origin?.includes?.(valid))) {
-  return {
-    statusCode: 403,
-    body: JSON.stringify({ error: 'Origen no autorizado.' })
-  };
-}
+      'https://punterx-panel-vip.netlify.app',
+      undefined,
+      ''
+    ];
+    const origin = event.headers.origin || event.headers.referer || '';
+    if (!validOrigins.some(valid => origin?.includes?.(valid))) {
+      return {
+        statusCode: 403,
+        body: JSON.stringify({ error: 'Origen no autorizado.' })
+      };
+    }
 
     const {
       authCode, sport, event: match, date, bettype,
@@ -40,6 +42,7 @@ if (!validOrigins.some(valid => origin?.includes?.(valid))) {
       timestamp, signature
     } = body;
 
+    // ✅ Validar authCode
     const secretCode = 'PunterX2025';
     if (authCode !== secretCode) {
       return {
@@ -48,8 +51,8 @@ if (!validOrigins.some(valid => origin?.includes?.(valid))) {
       };
     }
 
+    // 🔐 Validar firma HMAC
     const SECRET_KEY = process.env.PUNTERX_SECRET;
-
     if (!timestamp || !signature) {
       return { statusCode: 400, body: 'Falta timestamp o firma' };
     }
@@ -69,14 +72,55 @@ if (!validOrigins.some(valid => origin?.includes?.(valid))) {
       return { statusCode: 401, body: 'Firma inválida' };
     }
 
-    let message = `📌 *${sport||'-'}*\n🏟️ *Evento:* ${match||'-'}\n🗓️ *Fecha:* ${date||'-'}\n🎯 *Apuesta:* ${bettype||'-'}\n💵 *Cuota:* ${odds||'-'}\n📈 *Confianza:* ${confidence||'-'}\n\n🧠 *Resumen:* ${brief||'-'}\n\n${detailed}\n\n🔁 *Alternativa:* ${alternatives||'-'}\n📚 *Bookie:* ${bookie||'-'}\n📍 *Valor:* ${value||'-'}\n⏱️ *Timing:* ${timing||'-'}\n📝 *Notas:* ${notes||'-'}`;
+    // 🧠 Generar mensaje para Telegram
+    const message = `📌 *${sport || '-'}*\n` +
+      `🏟️ *Evento:* ${match || '-'}\n` +
+      `🗓️ *Fecha:* ${date || '-'}\n` +
+      `🎯 *Apuesta:* ${bettype || '-'}\n` +
+      `💵 *Cuota:* ${odds || '-'}\n` +
+      `📈 *Confianza:* ${confidence || '-'}\n\n` +
+      `🧠 *Resumen:* ${brief || '-'}\n\n` +
+      `${detailed || '-'}\n\n` +
+      `🔁 *Alternativa:* ${alternatives || '-'}\n` +
+      `📚 *Bookie:* ${bookie || '-'}\n` +
+      `📍 *Valor:* ${value || '-'}\n` +
+      `⏱️ *Timing:* ${timing || '-'}\n` +
+      `📝 *Notas:* ${notes || '-'}`;
 
-    console.log("✅ Mensaje listo para Telegram:");
-    console.log(message);
+    // 📤 Enviar a Telegram
+    const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+    const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+    const payload = JSON.stringify({
+      chat_id: TELEGRAM_CHAT_ID,
+      text: message,
+      parse_mode: "Markdown"
+    });
+
+    const telegramOptions = {
+      hostname: "api.telegram.org",
+      path: `/bot${TELEGRAM_TOKEN}/sendMessage`,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload)
+      }
+    };
+
+    const telegramResponse = await new Promise((resolve, reject) => {
+      const req = https.request(telegramOptions, res => {
+        let data = '';
+        res.on("data", chunk => data += chunk);
+        res.on("end", () => resolve(data));
+      });
+      req.on("error", reject);
+      req.write(payload);
+      req.end();
+    });
 
     return {
       statusCode: 200,
-      body: "Mensaje validado correctamente. Listo para enviar (simulado)."
+      body: `✅ Mensaje enviado a Telegram: ${telegramResponse}`
     };
 
   } catch (err) {
