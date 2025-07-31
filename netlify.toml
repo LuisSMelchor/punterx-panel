@@ -12,6 +12,3 @@
 [functions."autopick-evening"]
   schedule = "0 0 * * *"  # 6:00 p.m. CDMX
 
-# 🔬 OPCIONAL: función de prueba (la puedes eliminar o dejar comentada)
-[functions."autopick-test"]
-  schedule = "0 16 * * *" # 10:00 a.m. CDMX (usada para pruebas)
