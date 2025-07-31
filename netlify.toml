@@ -2,10 +2,10 @@
   directory = "netlify/functions"
 
 [functions."autopick-test"]
-  schedule = "30 14 * * *" # 8:08 a.m. hora CDMX
+  schedule = "30 14 * * *" # 8:20 a.m. hora CDMX
 
 [functions."autopick-europe"]
-  schedule = "0 13 * * *" # 8:13 a.m. hora CDMX
+  schedule = "0 13 * * *" # 7:00 a.m. hora CDMX
 
 [functions."autopick-pre-mx"]
   schedule = "0 18 * * *" # 12:00 p.m. hora CDMX
