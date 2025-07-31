@@ -97,3 +97,10 @@ El enfrentamiento entre ${match} tiene varios factores que nos permiten detectar
     };
   }
 };
+// 🔧 Test manual desde el navegador
+if (require.main === module) {
+  exports.handler({ queryStringParameters: {} }, {})
+    .then(res => console.log("✅ Resultado manual:", res))
+    .catch(err => console.error("❌ Error manual:", err));
+}
+
