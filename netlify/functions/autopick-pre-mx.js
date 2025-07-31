@@ -1,5 +1,6 @@
 // 🔁 autopick-pre-mx.js
 const crypto = require("crypto");
+const { buscarPartidoPrioritario } = require("./utils/filtrarPartido");
 
 exports.handler = async function (event, context) {
   console.log("🚀 Ejecutando autopick-pre-mx.js");
@@ -16,86 +17,59 @@ exports.handler = async function (event, context) {
     });
 
     const json = await response.json();
-    const game = json.response?.[1]; // Cambia el índice si quieres otro evento diferente al europeo
+
+    // ⚽ Buscar partido en el rango 12:00 - 17:00 CDMX, priorizando México y CONMEBOL
+    const game = buscarPartidoPrioritario(json.response, "12:00", "17:00");
 
     if (!game) {
-      return { statusCode: 404, body: "No se encontró partido para hoy." };
+      return { statusCode: 404, body: "No se encontró partido prioritario para este rango." };
     }
 
-    const home = game.teams.home.name;
-    const away = game.teams.away.name;
-    const league = game.league.name;
-    const eventDate = game.fixture.date.split("T")[0];
-    const odds = "1.85";
-
-    const match = `${home} vs ${away} (${league})`;
+    const match = `${game.teams.home.name} vs ${game.teams.away.name} (${game.league.name})`;
     const timestamp = Date.now().toString();
     const signature = crypto.createHmac("sha256", SECRET).update(timestamp).digest("hex");
 
-    const basicBody = {
+    const body = {
       authCode: "PunterX2025",
       honeypot: "",
       timestamp,
       signature,
       sport: "Fútbol",
       event: match,
-      date: eventDate,
-      bettype: "Ambos anotan",
-      odds,
-      confidence: "Alta",
-      brief: `${home} y ${away} tienen estadísticas ofensivas fuertes y defensas vulnerables.`,
-      detailed: "",
-      alternatives: "",
-      bookie: "",
-      value: "",
-      timing: "",
-      notes: ""
+      date: "-",
+      bettype: "-",
+      odds: "1.80",
+      confidence: "-",
+      brief: "-",
+      detailed: "-",
+      alternatives: "-",
+      bookie: "-",
+      value: "-",
+      timing: "-",
+      notes: "-"
     };
 
-    const vipBody = {
-      ...basicBody,
-      detailed: `${home} ha anotado en 9 de sus últimos 10 partidos. ${away} ha recibido goles en 8 de sus últimos 10. Esta combinación es ideal para esperar goles de ambos lados.`,
-      alternatives: "Over 2.5",
-      bookie: "1XBET / Bet365",
-      value: "Comparando probabilidades y goles esperados, esta línea está ligeramente inflada.",
-      timing: "Jugar 30 min antes del inicio con alineaciones confirmadas.",
-      notes: "Verifica condiciones climatológicas si es juego en césped natural."
-    };
-
-    const sendBasic = await fetch(PANEL_ENDPOINT, {
+    const result = await fetch(PANEL_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-PX-Signature": signature
       },
-      body: JSON.stringify(basicBody)
+      body: JSON.stringify(body)
     });
 
-    const basicResult = await sendBasic.text();
-    console.log("✅ Enviado al canal gratuito:", basicResult);
-
-    const sendVIP = await fetch(PANEL_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-PX-Signature": signature
-      },
-      body: JSON.stringify(vipBody)
-    });
-
-    const vipResult = await sendVIP.text();
-    console.log("✅ Enviado al grupo VIP:", vipResult);
+    const responseText = await result.text();
+    console.log("✅ Resultado del envío:", responseText);
 
     return {
       statusCode: 200,
-      body: `✅ Pick medio día enviado. Canal: ${basicResult} | VIP: ${vipResult}`
+      body: `✅ Pick pre-mx enviado: ${match} | Resultado: ${responseText}`,
     };
-
   } catch (error) {
-    console.error("❌ Error en autopick-pre-mx.js:", error);
+    console.error("❌ Error en autopick-pre-mx:", error);
     return {
       statusCode: 500,
-      body: `❌ Error interno: ${error.message}`
+      body: `❌ Error interno: ${error.message}`,
     };
   }
 };
