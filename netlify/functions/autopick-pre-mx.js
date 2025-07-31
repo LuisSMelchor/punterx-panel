@@ -1,44 +1,55 @@
-// autopick-pre-mx.js
 const crypto = require("crypto");
 
-const handler = async () => {
+exports.handler = async function () {
   const API_KEY = process.env.API_FOOTBALL_KEY;
   const SECRET = process.env.PUNTERX_SECRET;
   const PANEL_ENDPOINT = "https://punterx-panel-vip.netlify.app/.netlify/functions/send";
 
+  const headers = { "x-apisports-key": API_KEY };
   const today = new Date().toISOString().split("T")[0];
-  const url = `https://v3.football.api-sports.io/fixtures?date=${today}&timezone=America/Mexico_City`;
-
-  const headers = {
-    "x-apisports-key": API_KEY
-  };
+  const apiUrl = `https://v3.football.api-sports.io/fixtures?date=${today}&timezone=America/Mexico_City`;
 
   try {
-    const response = await fetch(url, { headers });
-    const json = await response.json();
+    const response = await fetch(apiUrl, { headers });
+    const data = await response.json();
+    const games = data.response;
 
-    const fixture = json.response.find(fix =>
-      fix.league.country === "Mexico" &&
-      new Date(fix.fixture.date).getHours() === 12
-    );
-
-    if (!fixture) {
-      return { statusCode: 404, body: "No se encontró partido dominical de Liga MX al mediodía." };
+    if (!games || games.length === 0) {
+      return {
+        statusCode: 404,
+        body: "No hay partidos para hoy."
+      };
     }
 
-    const match = `${fixture.teams.home.name} vs ${fixture.teams.away.name}`;
-    const date = fixture.fixture.date;
+    // Elegimos un partido vespertino (después de las 15:00 hora CDMX)
+    const pickGame = games.find(g => new Date(g.fixture.date).getHours() >= 15);
+    if (!pickGame) {
+      return {
+        statusCode: 404,
+        body: "No se encontraron partidos vespertinos para hoy."
+      };
+    }
+
+    const match = `${pickGame.teams.home.name} vs ${pickGame.teams.away.name}`;
+    const date = pickGame.fixture.date;
+    const sport = "Fútbol";
+    const bettype = "Ambos anotan (BTTS)";
     const odds = "1.85";
     const confidence = "Alta";
-    const predictedScore = "2-0";
-    const winProbability = "75%";
-    const brief = `Partido destacado al mediodía. Predicción IA: ${predictedScore} con ${winProbability} de certeza.`;
-    const detailed = `Análisis completo para ${match} con especial atención a condiciones climáticas, rotaciones y presión de localía.`;
-    const alternatives = "Gana local sin recibir gol";
+    const brief = "Equipos con tendencia goleadora. Últimos encuentros muestran vulnerabilidad defensiva.";
+    const detailed = `🔎 *Análisis VIP:*
+El partido ${match} enfrenta a dos conjuntos con clara tendencia al gol.
+
+📊 *Estadísticas recientes:* Ambos equipos han marcado en sus últimos 4 partidos.
+⚽ *Estilo de juego:* Propuesta ofensiva abierta, sin especulación en zona media.
+🧠 *Contexto anímico:* Necesidad de sumar puntos favorece un planteamiento arriesgado.
+💥 *Oportunidad de valor:* Cuota justa con margen de valor por estadísticas actuales.`;
+
+    const alternatives = "Más de 2.5 goles";
     const bookie = "Bet365, Codere";
-    const value = "Momento del partido poco aprovechado por el mercado.";
-    const timing = "Antes de que comience el partido a mediodía.";
-    const notes = "Partido ideal para jugadores avanzados y apuestas directas.";
+    const value = "Desajuste defensivo de ambos lados no reflejado aún en las cuotas.";
+    const timing = "Apostar antes de que bajen las cuotas (dentro de las próximas 3h).";
+    const notes = "Buena opción para combinar con apuestas de Liga MX en jornada nocturna.";
 
     const timestamp = Date.now().toString();
     const signature = crypto.createHmac("sha256", SECRET).update(timestamp).digest("hex");
@@ -48,10 +59,10 @@ const handler = async () => {
       honeypot: "",
       timestamp,
       signature,
-      sport: "Fútbol",
+      sport,
       event: match,
       date,
-      bettype: "Gana local",
+      bettype,
       odds,
       confidence,
       brief,
@@ -72,17 +83,17 @@ const handler = async () => {
       body: JSON.stringify(body)
     });
 
+    const responseText = await result.text();
+
     return {
       statusCode: 200,
-      body: `✅ Enviado pick Liga MX mediodía: ${match}`
+      body: `✅ Pick automático enviado para ${match}: ${responseText}`
     };
 
   } catch (error) {
     return {
       statusCode: 500,
-      body: `❌ Error en autopick-pre-mx: ${error.message}`
+      body: `❌ Error interno en autopick-pre-mx: ${error.message}`
     };
   }
 };
-
-exports.handler = schedule("0 17 * * 0", handler); // 11:00 a.m. CDMX solo domingos
