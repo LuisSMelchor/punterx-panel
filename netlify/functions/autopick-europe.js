@@ -1,5 +1,4 @@
 // autopick-europe.js
-const { schedule } = require("@netlify/functions");
 const crypto = require("crypto");
 
 const handler = async () => {
