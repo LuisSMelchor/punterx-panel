@@ -1,6 +1,5 @@
 // netlify/functions/autopick-europe.js
 const crypto = require("crypto");
-const fetch = require("node-fetch");
 
 exports.handler = async function (event, context) {
   const API_KEY = process.env.API_FOOTBALL_KEY;
