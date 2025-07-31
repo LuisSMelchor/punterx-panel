@@ -1,53 +1,38 @@
-// netlify/functions/autopick.js
-
 const crypto = require("crypto");
-const fetch = require("node-fetch");
 
 exports.handler = async function (event, context) {
   const API_KEY = process.env.API_FOOTBALL_KEY;
   const SECRET = process.env.PUNTERX_SECRET;
   const PANEL_ENDPOINT = "https://punterx-panel-vip.netlify.app/.netlify/functions/send";
 
-  const sportParam = event.queryStringParameters?.sport || "football";
-  const targetDate = new Date().toISOString().split("T")[0]; // fecha actual UTC
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const headers = { "x-apisports-key": API_KEY };
 
-  let apiUrl = "";
-  let headers = { "x-apisports-key": API_KEY };
-  let deporte = "";
-  let match = "";
-  let date = "";
-  let bettype = "";
-  let odds = "1.90";
+  const ligasTop = [39, 140, 135, 78, 61, 2]; // Premier, La Liga, Serie A, Bundesliga, Champions, Copa América
 
   try {
-    if (sportParam === "nba") {
-      deporte = "NBA";
-      apiUrl = `https://v1.basketball.api-sports.io/games?date=${targetDate}`;
-      headers["x-rapidapi-host"] = "v1.basketball.api-sports.io";
-    } else {
-      deporte = "Fútbol";
-      apiUrl = `https://v3.football.api-sports.io/fixtures?date=${targetDate}&timezone=America/Toronto`;
-    }
-
+    const apiUrl = `https://v3.football.api-sports.io/fixtures?date=${today}&timezone=America/Toronto`;
     const response = await fetch(apiUrl, { headers });
     const json = await response.json();
-    const game = json.response?.[0];
 
-    if (!game) {
-      return { statusCode: 404, body: "No se encontró partido para hoy." };
+    const partidosFiltrados = json.response.filter(j =>
+      ligasTop.includes(j.league.id) &&
+      !j.league.round?.toLowerCase().includes("friendly")
+    );
+
+    if (!partidosFiltrados.length) {
+      return { statusCode: 404, body: "❌ No hay partidos relevantes para hoy." };
     }
 
-    if (sportParam === "nba") {
-      match = `${game.teams.home.name} vs ${game.teams.away.name}`;
-      date = game.date;
-      bettype = "Over 210.5 puntos";
-    } else {
-      match = `${game.teams.home.name} vs ${game.teams.away.name}`;
-      date = game.fixture.date;
-      bettype = "Over 2.5 goles";
-    }
-
+    const game = partidosFiltrados[Math.floor(Math.random() * partidosFiltrados.length)];
+    const match = `${game.teams.home.name} vs ${game.teams.away.name}`;
+    const date = game.fixture.date;
+    const bettype = "Over 2.5 goles";
+    const odds = "1.90";
     const confidence = "Alta";
+    const prediccion = "3-1";
+    const seguridad = "82%";
+
     const brief = "Partido con ritmo ofensivo y tendencia reciente a superar las líneas establecidas por el mercado.";
 
     const detailed = `🔎 *Análisis VIP:*
@@ -61,12 +46,12 @@ El enfrentamiento entre ${match} tiene varios factores que nos permiten detectar
 
 💡 *Valor detectado:* Las casas de apuestas no ajustaron completamente sus líneas, lo que deja una ventana de oportunidad que podemos aprovechar.
 
+🔢 *Predicción aproximada:* ${prediccion}
+🔐 *Confianza estimada:* ${seguridad}
+
 ⚠️ *Recomendación:* Verifica posibles bajas o rotaciones antes de realizar la apuesta para confirmar que el valor se mantiene.`;
 
-    const alternatives = sportParam === "nba"
-      ? "Ambos equipos superan los 105.5 puntos"
-      : "Ambos anotan (BTTS)";
-
+    const alternatives = "Ambos anotan (BTTS)";
     const bookie = "Bet365, Pinnacle";
     const value = "Línea inflada no ajustada al contexto actual de los equipos.";
     const timing = "Apostar antes del movimiento brusco de cuota en las próximas horas.";
@@ -80,7 +65,7 @@ El enfrentamiento entre ${match} tiene varios factores que nos permiten detectar
       honeypot: "",
       timestamp,
       signature,
-      sport: deporte,
+      sport: "Fútbol",
       event: match,
       date,
       bettype,
