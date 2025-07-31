@@ -1,5 +1,6 @@
 // 🔁 autopick-evening.js
 const crypto = require("crypto");
+const { buscarPartidoPrioritario } = require("./utils/filtrarPartido");
 
 exports.handler = async function (event, context) {
   console.log("🚀 Ejecutando autopick-evening.js");
@@ -16,86 +17,59 @@ exports.handler = async function (event, context) {
     });
 
     const json = await response.json();
-    const game = json.response?.[2]; // Puedes ajustar el índice según el tipo de partido nocturno que quieras
+
+    // ⚽ Buscar partido en el rango 17:00 - 23:59 CDMX, priorizando CONMEBOL, Liga MX, etc.
+    const game = buscarPartidoPrioritario(json.response, "17:00", "23:59");
 
     if (!game) {
-      return { statusCode: 404, body: "No se encontró partido para hoy." };
+      return { statusCode: 404, body: "No se encontró partido prioritario para este rango." };
     }
 
-    const home = game.teams.home.name;
-    const away = game.teams.away.name;
-    const league = game.league.name;
-    const eventDate = game.fixture.date.split("T")[0];
-    const odds = "1.90";
-
-    const match = `${home} vs ${away} (${league})`;
+    const match = `${game.teams.home.name} vs ${game.teams.away.name} (${game.league.name})`;
     const timestamp = Date.now().toString();
     const signature = crypto.createHmac("sha256", SECRET).update(timestamp).digest("hex");
 
-    const basicBody = {
+    const body = {
       authCode: "PunterX2025",
       honeypot: "",
       timestamp,
       signature,
       sport: "Fútbol",
       event: match,
-      date: eventDate,
-      bettype: "Over 2.5 goles",
-      odds,
-      confidence: "Media",
-      brief: `Cierre del día con un duelo abierto entre ${home} y ${away}.`,
-      detailed: "",
-      alternatives: "",
-      bookie: "",
-      value: "",
-      timing: "",
-      notes: ""
+      date: "-",
+      bettype: "-",
+      odds: "1.80",
+      confidence: "-",
+      brief: "-",
+      detailed: "-",
+      alternatives: "-",
+      bookie: "-",
+      value: "-",
+      timing: "-",
+      notes: "-"
     };
 
-    const vipBody = {
-      ...basicBody,
-      detailed: `${home} suele cerrar fuerte en casa, y ${away} viene con tendencia a partidos abiertos. Ambos han tenido altas en 3 de sus últimos 4 juegos.`,
-      alternatives: "Ambos anotan y over 2.5",
-      bookie: "Pinnacle / Codere",
-      value: "Cuota desfasada por baja reciente de uno de los equipos.",
-      timing: "Jugar antes de que caiga la cuota en las últimas horas.",
-      notes: "Ideal para bancas rápidas, cierre del día con valor."
-    };
-
-    const sendBasic = await fetch(PANEL_ENDPOINT, {
+    const result = await fetch(PANEL_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-PX-Signature": signature
       },
-      body: JSON.stringify(basicBody)
+      body: JSON.stringify(body)
     });
 
-    const basicResult = await sendBasic.text();
-    console.log("✅ Enviado al canal gratuito:", basicResult);
-
-    const sendVIP = await fetch(PANEL_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-PX-Signature": signature
-      },
-      body: JSON.stringify(vipBody)
-    });
-
-    const vipResult = await sendVIP.text();
-    console.log("✅ Enviado al grupo VIP:", vipResult);
+    const responseText = await result.text();
+    console.log("✅ Resultado del envío:", responseText);
 
     return {
       statusCode: 200,
-      body: `✅ Pick evening enviado. Canal: ${basicResult} | VIP: ${vipResult}`
+      body: `✅ Pick evening enviado: ${match} | Resultado: ${responseText}`,
     };
-
   } catch (error) {
-    console.error("❌ Error en autopick-evening.js:", error);
+    console.error("❌ Error en autopick-evening:", error);
     return {
       statusCode: 500,
-      body: `❌ Error interno: ${error.message}`
+      body: `❌ Error interno: ${error.message}`,
     };
   }
 };
