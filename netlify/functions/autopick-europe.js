@@ -1,5 +1,6 @@
 // 🔁 autopick-europe.js
 const crypto = require("crypto");
+const { buscarPartidoPrioritario } = require("./utils/filtrarPartido");
 
 exports.handler = async function (event, context) {
   console.log("🚀 Ejecutando autopick-europe.js");
@@ -16,90 +17,59 @@ exports.handler = async function (event, context) {
     });
 
     const json = await response.json();
-    const game = json.response?.[0];
+
+    // ⚽ Buscar partido en el rango 07:00 - 12:00 CDMX, priorizando ligas europeas
+    const game = buscarPartidoPrioritario(json.response, "07:00", "12:00");
 
     if (!game) {
-      return { statusCode: 404, body: "No se encontró partido para hoy." };
+      return { statusCode: 404, body: "No se encontró partido prioritario para este rango." };
     }
 
-    const home = game.teams.home.name;
-    const away = game.teams.away.name;
-    const league = game.league.name;
-    const eventDate = game.fixture.date.split("T")[0];
-    const odds = "1.80";
-
-    const match = `${home} vs ${away} (${league})`;
+    const match = `${game.teams.home.name} vs ${game.teams.away.name} (${game.league.name})`;
     const timestamp = Date.now().toString();
     const signature = crypto.createHmac("sha256", SECRET).update(timestamp).digest("hex");
 
-    // 👉 Mensaje básico para canal gratuito
-    const basicBody = {
+    const body = {
       authCode: "PunterX2025",
       honeypot: "",
       timestamp,
       signature,
       sport: "Fútbol",
       event: match,
-      date: eventDate,
-      bettype: "Más de 2.5 goles",
-      odds,
-      confidence: "Media",
-      brief: `${home} y ${away} se enfrentan hoy. Se espera un juego abierto con opciones de gol.`,
-      detailed: "",
-      alternatives: "",
-      bookie: "",
-      value: "",
-      timing: "",
-      notes: ""
+      date: "-",
+      bettype: "-",
+      odds: "1.80",
+      confidence: "-",
+      brief: "-",
+      detailed: "-",
+      alternatives: "-",
+      bookie: "-",
+      value: "-",
+      timing: "-",
+      notes: "-"
     };
 
-    // 👉 Mensaje completo para grupo VIP
-    const vipBody = {
-      ...basicBody,
-      detailed: `Ambos equipos han promediado más de 2 goles por partido en sus últimos encuentros. ${home} tiene una ofensiva fuerte en casa, mientras que ${away} suele dejar espacios en defensa.`,
-      alternatives: "Ambos anotan",
-      bookie: "Bet365 / Pinnacle",
-      value: "Línea mal ajustada según estadísticas recientes.",
-      timing: "Ideal para jugar 1h antes del inicio.",
-      notes: "Revisar alineaciones antes de apostar."
-    };
-
-    // Enviar al canal gratuito
-    const sendBasic = await fetch(PANEL_ENDPOINT, {
+    const result = await fetch(PANEL_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-PX-Signature": signature
       },
-      body: JSON.stringify(basicBody)
+      body: JSON.stringify(body)
     });
 
-    const basicResult = await sendBasic.text();
-    console.log("✅ Enviado al canal gratuito:", basicResult);
-
-    // Enviar al grupo VIP
-    const sendVIP = await fetch(PANEL_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-PX-Signature": signature
-      },
-      body: JSON.stringify(vipBody)
-    });
-
-    const vipResult = await sendVIP.text();
-    console.log("✅ Enviado al grupo VIP:", vipResult);
+    const responseText = await result.text();
+    console.log("✅ Resultado del envío:", responseText);
 
     return {
       statusCode: 200,
-      body: `✅ Pick europeo enviado. Canal: ${basicResult} | VIP: ${vipResult}`
+      body: `✅ Pick europeo enviado: ${match} | Resultado: ${responseText}`,
     };
-
   } catch (error) {
-    console.error("❌ Error en autopick-europe.js:", error);
+    console.error("❌ Error en autopick-europe:", error);
     return {
       statusCode: 500,
-      body: `❌ Error interno: ${error.message}`
+      body: `❌ Error interno: ${error.message}`,
     };
   }
 };
