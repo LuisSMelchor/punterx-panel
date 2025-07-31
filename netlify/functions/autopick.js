@@ -1,4 +1,7 @@
+// netlify/functions/autopick.js
+
 const crypto = require("crypto");
+const fetch = require("node-fetch");
 
 exports.handler = async function (event, context) {
   const API_KEY = process.env.API_FOOTBALL_KEY;
@@ -6,6 +9,7 @@ exports.handler = async function (event, context) {
   const PANEL_ENDPOINT = "https://punterx-panel-vip.netlify.app/.netlify/functions/send";
 
   const sportParam = event.queryStringParameters?.sport || "football";
+  const targetDate = new Date().toISOString().split("T")[0]; // fecha actual UTC
 
   let apiUrl = "";
   let headers = { "x-apisports-key": API_KEY };
@@ -18,11 +22,11 @@ exports.handler = async function (event, context) {
   try {
     if (sportParam === "nba") {
       deporte = "NBA";
-      apiUrl = `https://v1.basketball.api-sports.io/games?date=2025-07-31`;
+      apiUrl = `https://v1.basketball.api-sports.io/games?date=${targetDate}`;
       headers["x-rapidapi-host"] = "v1.basketball.api-sports.io";
     } else {
       deporte = "Fútbol";
-      apiUrl = `https://v3.football.api-sports.io/fixtures?date=2025-07-31&timezone=America/Toronto`;
+      apiUrl = `https://v3.football.api-sports.io/fixtures?date=${targetDate}&timezone=America/Toronto`;
     }
 
     const response = await fetch(apiUrl, { headers });
@@ -45,6 +49,7 @@ exports.handler = async function (event, context) {
 
     const confidence = "Alta";
     const brief = "Partido con ritmo ofensivo y tendencia reciente a superar las líneas establecidas por el mercado.";
+
     const detailed = `🔎 *Análisis VIP:*
 El enfrentamiento entre ${match} tiene varios factores que nos permiten detectar un valor oculto.
 
