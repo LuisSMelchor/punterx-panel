@@ -36,10 +36,19 @@ exports.handler = async function (event, context) {
 
     const {
   authCode,
-  sport, match, date, bettype,
-  odds, confidence, brief,
-  detailed, alternatives, bookie,
-  value, timing, notes
+  deporte: sport,
+  evento: match,
+  fecha: date,
+  apuesta: bettype,
+  cuota: odds,
+  confianza: confidence,
+  resumen: brief,
+  detallado: detailed = brief,
+  alternativa: alternatives,
+  bookie,
+  valor: value,
+  timing,
+  notas: notes
 } = body;
 
 // 🔐 Extraer timestamp y signature desde los headers
