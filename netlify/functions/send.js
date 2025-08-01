@@ -44,9 +44,9 @@ exports.handler = async (event) => {
 
     const signature = event.headers['x-signature'];
     const expectedSignature = crypto
-      .createHmac('sha256', SECRET)
-      .update(timestamp.toString())
-      .digest('hex');
+  .createHmac('sha256', SECRET)
+  .update(event.body) // 👈 Usamos el cuerpo completo original
+  .digest('hex');
 
     if (signature !== expectedSignature) {
       return { statusCode: 403, body: 'Firma inválida' };
