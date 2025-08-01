@@ -98,7 +98,7 @@ exports.handler = async function (event, context) {
     let message =
       `📌 *${sport || '-'}*\n` +
       `🏟️ *Evento:* ${match || '-'}\n` +
-      `📅 *Fecha:* ${date || '-'}\n` +
+      `📅 *Fecha y hora:* ${date || '-'} | ${body.hora || '-'} (CDMX)\n` +
       `🎯 *Apuesta:* ${bettype || '-'}\n` +
       `💵 *Cuota:* ${odds || '-'}\n` +
       `📈 *Confianza:* ${confidence || '-'}\n\n` +
