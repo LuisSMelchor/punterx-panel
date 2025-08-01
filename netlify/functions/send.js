@@ -35,25 +35,25 @@ exports.handler = async function (event, context) {
     }
 
     const {
-  authCode,
-  deporte: sport,
-  evento: match,
-  fecha: date,
-  apuesta: bettype,
-  cuota: odds,
-  confianza: confidence,
-  resumen: brief,
-  detallado: detailed = brief,
-  alternativa: alternatives,
-  bookie,
-  valor: value,
-  timing,
-  notas: notes
-} = body;
+      authCode,
+      deporte: sport,
+      evento: match,
+      fecha: date,
+      apuesta: bettype,
+      cuota: odds,
+      confianza: confidence,
+      resumen: briefRaw,
+      detallado: detailedRaw = briefRaw,
+      alternativa: alternatives,
+      bookie,
+      valor: value,
+      timing,
+      notas: notes
+    } = body;
 
-// 🔐 Extraer timestamp y signature desde los headers
-const timestamp = event.headers['timestamp'];
-const signature = event.headers['x-signature'];
+    // 🔐 Extraer timestamp y signature desde los headers
+    const timestamp = event.headers['timestamp'];
+    const signature = event.headers['x-signature'];
 
     // 🔐 Código de acceso
     if (authCode !== 'PunterX2025') {
@@ -85,16 +85,14 @@ const signature = event.headers['x-signature'];
     }
 
     // 🧠 Lógica VIP vs Gratuito
-    const hasVIP = [detailed, alternatives, bookie, value, timing, notes].some(v => v && v.trim());
+    const hasVIP = [detailedRaw, alternatives, bookie, value, timing, notes].some(v => v && v.trim());
     const chatId = hasVIP
       ? process.env.TELEGRAM_GROUP_ID
       : process.env.TELEGRAM_CHANNEL_ID;
 
-    // 📋 LOGS para depuración
-    console.log("✅ Tipo de pick:", hasVIP ? "VIP" : "Gratuito");
-    console.log("📤 chatId usado:", chatId);
-    console.log("📦 process.env.TELEGRAM_GROUP_ID:", process.env.TELEGRAM_GROUP_ID);
-    console.log("📦 process.env.TELEGRAM_CHANNEL_ID:", process.env.TELEGRAM_CHANNEL_ID);
+    // ✂️ Recortar análisis si es demasiado largo
+    const brief = briefRaw.length > 2000 ? briefRaw.substring(0, 2000) + "..." : briefRaw;
+    const detailed = detailedRaw.length > 1500 ? detailedRaw.substring(0, 1500) + "..." : detailedRaw;
 
     // 🧾 Construcción del mensaje
     let message =
@@ -115,6 +113,10 @@ const signature = event.headers['x-signature'];
         `⏱️ *Timing:* ${timing || '-'}\n` +
         `📝 *Notas:* ${notes || '-'}`;
     }
+
+    // 📋 LOGS para depuración
+    console.log("✅ Tipo de pick:", hasVIP ? "VIP" : "Gratuito");
+    console.log("📤 chatId usado:", chatId);
 
     const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -158,5 +160,4 @@ const signature = event.headers['x-signature'];
   }
 };
 
-// al final del archivo
 // 😄 Comentario temporal para forzar redeploy
