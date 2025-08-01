@@ -1,4 +1,3 @@
-const fetch = require('node-fetch');
 const crypto = require('crypto');
 
 const TELEGRAM_GROUP_ID = process.env.TELEGRAM_GROUP_ID;
