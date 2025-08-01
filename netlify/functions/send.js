@@ -35,13 +35,16 @@ exports.handler = async function (event, context) {
     }
 
     const {
-      authCode,
-      sport, match, date, bettype,
-      odds, confidence, brief,
-      detailed, alternatives, bookie,
-      value, timing, notes,
-      timestamp, signature
-    } = body;
+  authCode,
+  sport, match, date, bettype,
+  odds, confidence, brief,
+  detailed, alternatives, bookie,
+  value, timing, notes
+} = body;
+
+// 🔐 Extraer timestamp y signature desde los headers
+const timestamp = event.headers['timestamp'];
+const signature = event.headers['x-signature'];
 
     // 🔐 Código de acceso
     if (authCode !== 'PunterX2025') {
