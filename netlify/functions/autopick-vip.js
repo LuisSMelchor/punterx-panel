@@ -1,7 +1,8 @@
-const crypto = await import('node:crypto');
 const fetch = globalThis.fetch;
 
 export async function handler() {
+  const crypto = await import('node:crypto');
+
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
   const ODDS_API_KEY = process.env.ODDS_API_KEY;
