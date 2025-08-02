@@ -1,5 +1,2 @@
 [functions]
   directory = "netlify/functions"
-
-# 🔁 FUNCIONES PROGRAMADAS (hora en UTC)
-
