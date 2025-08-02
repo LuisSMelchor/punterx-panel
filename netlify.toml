@@ -3,12 +3,3 @@
 
 # 🔁 FUNCIONES PROGRAMADAS (hora en UTC)
 
-[functions."autopick-europe"]
-  schedule = "0 13 * * *" # 7:00 a.m. CDMX
-
-[functions."autopick-pre-mx"]
-  schedule = "0 18 * * *" # 12:00 p.m. CDMX
-
-[functions."autopick-evening"]
-  schedule = "0 0 * * *"  # 6:00 p.m. CDMX
-
