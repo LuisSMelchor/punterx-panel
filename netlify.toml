@@ -1,2 +1,10 @@
-[functions."autopick-vip"]
-  schedule = "*/10 * * * *"  # Cada 10 minutos (en UTC)
+[build]
+  publish = "."            # Esto asegura que Netlify sirva index.html desde la raíz
+  functions = "netlify/functions"
+
+[functions]
+  directory = "netlify/functions"
+
+# 🔁 FUNCIONES PROGRAMADAS (hora en UTC)
+#[functions."autopick-vip"]
+#  schedule = "0 23 * * *"  # 17:00 CDMX, solo si vuelves a activar autopicks por hora
