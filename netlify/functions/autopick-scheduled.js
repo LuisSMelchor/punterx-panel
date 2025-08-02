@@ -26,16 +26,17 @@ exports.handler = async function (event, context) {
 
     const game = partidosFiltrados[Math.floor(Math.random() * partidosFiltrados.length)];
     const match = `${game.teams.home.name} vs ${game.teams.away.name}`;
-    const date = game.fixture.date;
-    const bettype = "Over 2.5 goles";
-    const odds = "1.90";
-    const confidence = "Alta";
+    const isoDate = new Date(game.fixture.date);
+    const fecha = isoDate.toISOString().slice(0, 10); // YYYY-MM-DD
+    const hora = isoDate.toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City", hour: "2-digit", minute: "2-digit" }); // HH:mm CDMX
+
+    const cuota = "1.90";
+    const confianza = "Alta";
     const prediccion = "3-1";
     const seguridad = "82%";
+    const analisis_basico = "Partido con ritmo ofensivo y tendencia reciente a superar las líneas establecidas por el mercado.";
 
-    const brief = "Partido con ritmo ofensivo y tendencia reciente a superar las líneas establecidas por el mercado.";
-
-    const detailed = `🔎 *Análisis VIP:*
+    const analisis_profesional = `🔎 *Análisis VIP:*
 El enfrentamiento entre ${match} tiene varios factores que nos permiten detectar un valor oculto.
 
 📊 *Estadísticas recientes:* Ambos equipos han superado la línea propuesta en al menos 4 de sus últimos 5 juegos.
@@ -51,11 +52,10 @@ El enfrentamiento entre ${match} tiene varios factores que nos permiten detectar
 
 ⚠️ *Recomendación:* Verifica posibles bajas o rotaciones antes de realizar la apuesta para confirmar que el valor se mantiene.`;
 
-    const alternatives = "Ambos anotan (BTTS)";
-    const bookie = "Bet365, Pinnacle";
-    const value = "Línea inflada no ajustada al contexto actual de los equipos.";
+    const alternativa = "Ambos anotan (BTTS)";
+    const valor = "Línea inflada no ajustada al contexto actual de los equipos.";
     const timing = "Apostar antes del movimiento brusco de cuota en las próximas horas.";
-    const notes = "Buena opción para combinar con otras selecciones de alto valor en parlays.";
+    const notas = "Buena opción para combinar con otras selecciones de alto valor en parlays.";
 
     const timestamp = Date.now().toString();
     const signature = crypto.createHmac("sha256", SECRET).update(timestamp).digest("hex");
@@ -65,26 +65,25 @@ El enfrentamiento entre ${match} tiene varios factores que nos permiten detectar
       honeypot: "",
       timestamp,
       signature,
-      sport: "Fútbol",
-      event: match,
-      date,
-      bettype,
-      odds,
-      confidence,
-      brief,
-      detailed,
-      alternatives,
-      bookie,
-      value,
+      deporte: "Fútbol",
+      evento: match,
+      fecha,
+      hora,
+      cuota,
+      confianza,
+      analisis_basico,
+      analisis_profesional,
+      alternativa,
+      valor,
       timing,
-      notes
+      notas
     };
 
     const result = await fetch(PANEL_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-PX-Signature": signature
+        "X-Signature": signature
       },
       body: JSON.stringify(body)
     });
