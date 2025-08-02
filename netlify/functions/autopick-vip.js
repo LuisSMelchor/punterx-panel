@@ -1,7 +1,7 @@
+const crypto = await import('node:crypto');
 const fetch = globalThis.fetch;
-const crypto = require('crypto');
 
-exports.handler = async function () {
+export async function handler() {
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
   const ODDS_API_KEY = process.env.ODDS_API_KEY;
@@ -185,4 +185,4 @@ ${esGratis ? `
   }
 
   return await ejecutar();
-};
+}
