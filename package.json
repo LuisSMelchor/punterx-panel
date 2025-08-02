@@ -4,8 +4,5 @@
   "type": "module",
   "scripts": {
     "build": "echo 'Build step (dummy)'"
-  },
-  "dependencies": {
-    "node-fetch": "^3.3.2"
   }
 }
