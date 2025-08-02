@@ -1,2 +1,2 @@
-[functions]
-  directory = "netlify/functions"
+[functions."autopick-vip"]
+  schedule = "*/10 * * * *"  # Cada 10 minutos (en UTC)
