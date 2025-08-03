@@ -1,4 +1,4 @@
-// autopick-vip.js FINAL - MODO PRO ACTIVADO
+// autopick-vip.js FINAL PRO MAX - IA con todos los módulos activados
 
 const fetch = globalThis.fetch;
 
@@ -48,14 +48,17 @@ export async function handler() {
 
   async function obtenerExtras(fixtureId, homeId, awayId) {
     const headers = { 'x-apisports-key': API_FOOTBALL_KEY };
-    const [lineups, injuries, stats, h2h, fixtureDetail, homePlayers, awayPlayers] = await Promise.all([
+    const [lineups, injuries, stats, h2h, fixtureDetail, homePlayers, awayPlayers, standings, topscorers, predictions] = await Promise.all([
       fetch(`https://v3.football.api-sports.io/fixtures/lineups?fixture=${fixtureId}`, { headers }).then(r => r.json()),
       fetch(`https://v3.football.api-sports.io/injuries?fixture=${fixtureId}`, { headers }).then(r => r.json()),
       fetch(`https://v3.football.api-sports.io/fixtures/statistics?fixture=${fixtureId}`, { headers }).then(r => r.json()),
       fetch(`https://v3.football.api-sports.io/fixtures/headtohead?h2h=${homeId}-${awayId}`, { headers }).then(r => r.json()),
       fetch(`https://v3.football.api-sports.io/fixtures?id=${fixtureId}`, { headers }).then(r => r.json()),
       fetch(`https://v3.football.api-sports.io/players?team=${homeId}&season=2024`, { headers }).then(r => r.json()),
-      fetch(`https://v3.football.api-sports.io/players?team=${awayId}&season=2024`, { headers }).then(r => r.json())
+      fetch(`https://v3.football.api-sports.io/players?team=${awayId}&season=2024`, { headers }).then(r => r.json()),
+      fetch(`https://v3.football.api-sports.io/standings?league=${fixtureId}&season=2024`, { headers }).then(r => r.json()),
+      fetch(`https://v3.football.api-sports.io/players/topscorers?league=${fixtureId}&season=2024`, { headers }).then(r => r.json()),
+      fetch(`https://v3.football.api-sports.io/predictions?fixture=${fixtureId}`, { headers }).then(r => r.json())
     ]);
 
     const referee = fixtureDetail.response?.[0]?.fixture?.referee || null;
@@ -69,7 +72,10 @@ export async function handler() {
       referee,
       weather,
       homePlayers: homePlayers.response,
-      awayPlayers: awayPlayers.response
+      awayPlayers: awayPlayers.response,
+      standings: standings.response,
+      topscorers: topscorers.response,
+      predictions: predictions.response
     };
   }
 
@@ -98,29 +104,31 @@ export async function handler() {
   }
 
   async function generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, esGratis = false) {
-    const prompt = `Analiza este partido y genera un mensaje ${esGratis ? 'para el canal gratuito' : 'para el grupo VIP'}:
+    const prompt = `Eres un analista deportivo experto con acceso a datos de fútbol de todo el mundo. Analiza este partido con base en la siguiente información y genera un mensaje ${esGratis ? 'para el canal gratuito' : 'para el grupo VIP'}.
 
-Equipos: ${partido.teams.home.name} vs ${partido.teams.away.name}  
-Liga: ${partido.league.name} (${partido.league.country})  
-Fecha: ${fechaHoy} | Hora: ${hora} CDMX  
-Cuotas: ${cuotas.home} vs ${cuotas.away}  
-EV: ${ev}%  
-Nivel: ${nivel || 'N/A'}  
-Referee: ${extras.referee || 'Desconocido'}
+⚽ Equipos: ${partido.teams.home.name} vs ${partido.teams.away.name}  
+🌍 Liga: ${partido.league.name} (${partido.league.country})  
+📅 Fecha: ${fechaHoy} | 🕒 Hora: ${hora} CDMX  
+💸 Cuotas: ${cuotas.home} vs ${cuotas.away}  
+📈 EV: ${ev}%  
+📊 Nivel: ${nivel || 'N/A'}  
+🧑‍⚖️ Árbitro: ${extras.referee || 'Desconocido'}  
+☁️ Clima: ${extras.weather?.temperature?.celsius || 'N/A'}°C, ${extras.weather?.description || 'N/A'}  
 
-Lineups confirmados: ${extras.lineups.length > 0 ? 'Sí' : 'No'}  
-Lesionados: ${extras.injuries.length}  
-Clima: ${extras.weather?.temperature?.celsius || 'N/A'}°C, ${extras.weather?.description || 'N/A'}  
+📋 Alineaciones confirmadas: ${extras.lineups.length > 0 ? 'Sí' : 'No'}  
+🤕 Lesionados: ${extras.injuries.length}  
+📈 Estadísticas: ${JSON.stringify(extras.stats)}  
+📉 Historial directo: ${extras.h2h.length} partidos  
+🧠 Jugadores analizados: ${extras.homePlayers.length + extras.awayPlayers.length}  
+📊 Posiciones en tabla: ${JSON.stringify(extras.standings)}  
+🥅 Goleadores clave: ${JSON.stringify(extras.topscorers)}  
+🧠 Predicción IA oficial: ${JSON.stringify(extras.predictions)}
 
-Estadísticas: ${JSON.stringify(extras.stats)}  
-Historial directo: ${extras.h2h.length} partidos  
-Jugadores clave: ${extras.homePlayers.length + extras.awayPlayers.length} jugadores analizados
-
-Genera un análisis con estos datos y sugiere:
-- 🧠 Datos avanzados
-- 📌 Apuesta sugerida (resultado principal)
-- 📌 Apuestas extra (solo si hay señales claras como tarjetas, goles, jugadores clave, árbitro, etc.)
-- ⚠️ Advertencia final: “⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder. Recuerda que ninguna apuesta es segura, incluso cuando el análisis sea sólido.”`;
+Genera un análisis avanzado usando estos datos e incluye:
+- 🧠 Datos tácticos y psicológicos relevantes  
+- 📌 Apuesta sugerida (principal, clara y razonada)  
+- 📌 Apuestas extra (solo si hay señales reales como tendencia de goles, tarjetas, goleadores, clima extremo, etc.)  
+- ⚠️ Advertencia responsable: “⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder. Recuerda que ninguna apuesta es segura, incluso cuando el análisis sea sólido.”`;
 
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
