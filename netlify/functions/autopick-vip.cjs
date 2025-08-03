@@ -213,7 +213,7 @@ Finalmente, estima de forma precisa y objetiva la probabilidad de éxito (en por
     const ev = calcularEV(probabilidadEstimada, cuotaMinima);
     const nivel = clasificarNivel(ev);
 
-    const esVIP = ev >= 0;
+    const esVIP = ev >= 1;
     const mensajeFinal = await generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, !esVIP);
     if (mensajeFinal?.mensaje) {
     await enviarMensaje(mensajeFinal.mensaje);
