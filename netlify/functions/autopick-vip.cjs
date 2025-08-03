@@ -130,6 +130,66 @@ exports.handler = async function () {
       console.error("Error obteniendo cuotas:", e.message);
       return null;
     }
+
+    async function generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, esGratis = false) {
+  const prompt = `Eres un analista deportivo experto con acceso a datos de fútbol de todo el mundo. Analiza este partido con base en la siguiente información y genera un mensaje ${esGratis ? 'para el canal gratuito' : 'para el grupo VIP'}.
+
+⚽ Equipos: ${partido.teams.home.name} vs ${partido.teams.away.name}  
+🌍 Liga: ${partido.league.name} (${partido.league.country})  
+📅 Fecha: ${fechaHoy} | 🕒 Hora: ${hora} CDMX  
+💸 Cuotas: ${cuotas.home} vs ${cuotas.away}  
+📈 EV: ${ev}%  
+📊 Nivel: ${nivel || 'N/A'}  
+🧑‍⚖️ Árbitro: ${extras.referee || 'Desconocido'}  
+☁️ Clima: ${extras.weather?.temperature?.celsius || 'N/A'}°C, ${extras.weather?.description || 'N/A'}  
+
+📋 Alineaciones confirmadas: ${extras.lineups.length > 0 ? 'Sí' : 'No'}  
+🤕 Lesionados: ${extras.injuries.length}  
+📈 Estadísticas: ${JSON.stringify(extras.stats)}  
+📉 Historial directo: ${extras.h2h.length} partidos  
+🧠 Jugadores analizados: ${extras.homePlayers.length + extras.awayPlayers.length}  
+📊 Posiciones en tabla: ${JSON.stringify(extras.standings)}  
+🥅 Goleadores clave: ${JSON.stringify(extras.topscorers)}  
+🧠 Predicción IA oficial: ${JSON.stringify(extras.predictions)}
+
+Genera un análisis avanzado usando estos datos e incluye:
+- 🧠 Datos tácticos y psicológicos relevantes  
+- 📌 Apuesta sugerida (principal, clara y razonada)  
+- 📌 Apuestas extra (solo si hay señales reales como tendencia de goles, tarjetas, goleadores, clima extremo, etc.)  
+- ⚠️ Advertencia responsable: “⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder. Recuerda que ninguna apuesta es segura, incluso cuando el análisis sea sólido.”
+
+Finalmente, estima de forma precisa y objetiva la probabilidad de éxito (en porcentaje) para la apuesta sugerida principal. Devuelve este número en formato JSON, como este ejemplo:
+
+{"probabilidad": 0.72}`;
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: "gpt-4",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.85
+    })
+  });
+
+  const out = await res.json();
+  const texto = out.choices?.[0]?.message?.content || "";
+  const regex = /{"probabilidad":\s*(0\.\d+|1\.0|1)}/i;
+  const match = texto.match(regex);
+  const probabilidadEstimada = match ? parseFloat(JSON.parse(match[0]).probabilidad) : null;
+
+  if (!probabilidadEstimada) {
+    console.log(`⚠️ No se pudo generar probabilidad estimada para el partido: ${partido.teams.home.name} vs ${partido.teams.away.name}`);
+    console.log("📄 Mensaje de la IA sin probabilidad:", texto);
+    return null;
+  }
+
+  return { mensaje: texto, probabilidadEstimada };
+    }
+    
   }
 
   async function generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, esGratis = false) {
