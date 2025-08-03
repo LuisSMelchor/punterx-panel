@@ -2,15 +2,6 @@
 
 const fetch = globalThis.fetch;
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
-const ODDS_API_KEY = process.env.ODDS_API_KEY;
-const PANEL_ENDPOINT = process.env.PANEL_ENDPOINT;
-const AUTH_CODE = process.env.AUTH_CODE;
-const SECRET = process.env.PUNTERX_SECRET;
-
 async function guardarPickEnHistorial(data) {
   try {
     const response = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos`, {
@@ -33,6 +24,15 @@ async function guardarPickEnHistorial(data) {
 
 exports.handler = async function () {
   const crypto = await import('node:crypto');
+
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_KEY = process.env.SUPABASE_KEY;
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
+  const ODDS_API_KEY = process.env.ODDS_API_KEY;
+  const PANEL_ENDPOINT = process.env.PANEL_ENDPOINT;
+  const AUTH_CODE = process.env.AUTH_CODE;
+  const SECRET = process.env.PUNTERX_SECRET;
 
   const now = new Date();
   const nowUTC = new Date(now.toUTCString());
@@ -128,112 +128,177 @@ exports.handler = async function () {
     };
   }
 
-    async function obtenerCuotas(fixtureId) {
-    const res = await fetch(`https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h&apiKey=${ODDS_API_KEY}`);
-    const data = await res.json();
-    const partido = data.find(p => p.id === fixtureId);
-    if (!partido) return null;
-
-    const cuotas = partido.bookmakers?.[0]?.markets?.[0]?.outcomes;
-    if (!cuotas) return null;
-
-    return {
-      home: cuotas.find(o => o.name === partido.home_team)?.price || null,
-      away: cuotas.find(o => o.name === partido.away_team)?.price || null,
-      draw: cuotas.find(o => o.name === "Draw")?.price || null
-    };
-  }
-
-  async function generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, esGratis) {
-    const prompt = `Analiza el partido ${partido.teams.home.name} vs ${partido.teams.away.name}. 
-Datos:
-- Cuotas: local ${cuotas.home}, empate ${cuotas.draw}, visitante ${cuotas.away}
-- Nivel detectado: ${nivel}
-- Valor esperado (EV): ${ev}%
-- Hora del partido (CDMX): ${hora}
-- Lesiones: ${extras.injuries.length}
-- Árbitro: ${extras.referee || 'No disponible'}
-- Clima: ${extras.weather?.description || 'Sin datos'}
-
-Redacta un análisis profesional. Al final, sugiere UNA apuesta concreta si se detecta oportunidad clara.`;
+  async function obtenerCuotas(partido) {
+    try {
+      const res = await fetch(`https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=us,eu,uk&markets=h2h&apiKey=${ODDS_API_KEY}`);
+      const data = await res.json();
+      const match = data.find(item =>
+        item.home_team.toLowerCase().includes(partido.teams.home.name.toLowerCase()) &&
+        item.away_team.toLowerCase().includes(partido.teams.away.name.toLowerCase())
+      );
+      if (!match || !match.bookmakers) return null;
+      const mejoresCuotas = { home: 0, draw: 0, away: 0 };
+      match.bookmakers.forEach(bm => {
+        bm.markets[0].outcomes.forEach(outcome => {
+          if (outcome.name === "Home" && outcome.price > mejoresCuotas.home) mejoresCuotas.home = outcome.price;
+          if (outcome.name === "Draw" && outcome.price > mejoresCuotas.draw) mejoresCuotas.draw = outcome.price;
+          if (outcome.name === "Away" && outcome.price > mejoresCuotas.away) mejoresCuotas.away = outcome.price;
+        });
+      });
+      return mejoresCuotas;
+    } catch (e) {
+      console.error("Error obteniendo cuotas:", e.message);
+      return null;
+    }
     
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  }
+  
+  
+  
+  // 🔄 FUNCIÓN PARA OBTENER HISTORIAL DE PICKS ACERTADOS
+async function obtenerHistorial() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos?select=fixture_id,equipos,apuesta,resultado_real,pick_acertado&pick_acertado=is.true&order=fecha.desc&limit=30`, {
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`
+      }
+    });
+    const historial = await res.json();
+
+    if (!Array.isArray(historial)) return [];
+
+    return historial.map(pick => {
+      return `🟢 ${pick.equipos} → ${pick.apuesta}\nResultado: ${pick.resultado_real}`;
+    }).join('\n\n');
+  } catch (e) {
+    console.error("Error al obtener historial:", e.message);
+    return '';
+  }
+}
+
+// 🤖 FUNCIÓN PRINCIPAL PARA GENERAR MENSAJE DE IA
+async function generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, esGratis = false) {
+  const historialTexto = await obtenerHistorial();
+
+  const prompt = `
+Eres una inteligencia artificial especializada en apuestas deportivas. Tienes acceso a información avanzada del partido y tu historial reciente de aciertos.
+
+Tu objetivo es detectar oportunidades ocultas de valor en el mercado y explicar tu razonamiento de forma clara, profesional y convincente.
+
+📚 Historial reciente de aciertos:
+${historialTexto || 'Sin datos disponibles aún.'}
+
+📊 Datos del partido actual:
+- Equipos: ${partido.equipos}
+- Liga: ${partido.liga}
+- Hora (CDMX): ${hora}
+- Cuotas: ${cuotas.map(c => `${c.bookie}: ${c.linea} @ ${c.valor}`).join(' | ')}
+- Valor Esperado (EV): ${ev.toFixed(1)}%
+- Nivel: ${nivel}
+${extras}
+
+🎯 Tarea:
+1. Explica por qué este partido tiene valor.
+2. Identifica señales ocultas (racha, árbitro, forma, ausencias, etc.)
+3. Concluye con una apuesta sugerida concreta (nombre y momio).
+
+Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres una IA.
+`;
+
+  try {
+    const respuesta = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
         model: "gpt-4",
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.7
-      })
+        max_tokens: 300,
+        temperature: 0.8,
+      }),
     });
 
-    const data = await res.json();
-    const contenido = data.choices?.[0]?.message?.content || "Análisis no disponible.";
+    const data = await respuesta.json();
+    const textoIA = data.choices?.[0]?.message?.content || 'No se generó análisis.';
 
-    const apuesta = contenido.split("Apuesta sugerida:")[1]?.trim() || null;
-    const analisis = contenido.split("Apuesta sugerida:")[0]?.trim();
-
-    return {
-      mensaje: esGratis
-        ? `⚽ ${partido.teams.home.name} vs ${partido.teams.away.name}\n\n${analisis}\n\n⚠️ Este contenido es informativo. Apostar conlleva riesgo.`
-        : `⚽ ${partido.teams.home.name} vs ${partido.teams.away.name}\n\n${analisis}\n\n🎯 Apuesta sugerida: ${apuesta || "No disponible"}\n\n⚠️ Este contenido es informativo. Apostar conlleva riesgo.`,
-      apuesta,
-      analisis
-    };
+    return textoIA;
+  } catch (e) {
+    console.error("❌ Error generando análisis con IA:", e.message);
+    return 'No se pudo generar el análisis.';
+  }
+}
   }
 
-  async function guardarEnMemoriaSupabase(data) {
+  async function enviarMensaje(mensaje) {
+    const body = {
+      authCode: AUTH_CODE,
+      mensaje,
+      honeypot: '',
+      origin: 'https://punterx-panel-vip.netlify.app',
+      timestamp
+    };
+    const firma = crypto.createHmac('sha256', SECRET).update(JSON.stringify(body)).digest('hex');
+    const res = await fetch(PANEL_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Signature': firma },
+      body: JSON.stringify(body)
+    });
+    console.log("✅ Enviado a Telegram:", await res.text());
+  }
+
+  async function guardarEnMemoriaSupabase(pick) {
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/memoria_picks`, {
-        method: "POST",
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos`, {
+        method: 'POST',
         headers: {
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          "Content-Type": "application/json"
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Prefer': 'return=representation'
         },
-        body: JSON.stringify([data])
+        body: JSON.stringify(pick)
       });
-      const result = await res.json();
-      console.log("📥 Guardado en memoria Supabase:", result);
-    } catch (e) {
-      console.error("❌ Error guardando en memoria:", e.message);
+      const data = await res.json();
+      console.log("🧠 Pick guardado en Supabase:", data);
+    } catch (err) {
+      console.error("❌ Error guardando pick en Supabase:", err.message);
     }
   }
 
-  const partidos = await obtenerPartidos();
-  const filtrados = filtrarPartidos(partidos);
+  const partidos = filtrarPartidos(await obtenerPartidos());
 
-  for (const partido of filtrados) {
-    const hora = new Date(partido.fixture.date).toLocaleTimeString('es-MX', { timeZone: 'America/Mexico_City' });
-
-    const extras = await obtenerExtras(
-      partido.fixture.id,
-      partido.teams.home.id,
-      partido.teams.away.id
-    );
-
-    const cuotas = await obtenerCuotas(partido.fixture.id);
+  for (const partido of partidos) {
+    const cuotas = await obtenerCuotas(partido);
     if (!cuotas) continue;
 
-    const resultadoIA = await generarMensajeIA(partido, extras, cuotas, 0, "Exploración", hora, true);
+    const hora = new Date(partido.fixture.date).toLocaleTimeString("es-MX", {
+      hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City"
+    });
 
-    if (!resultadoIA || !resultadoIA.mensaje) continue;
+    const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
+    const cuotaMinima = Math.min(cuotas.home, cuotas.away);
+    
+    const resultadoIA = await generarMensajeIA(partido, extras, cuotas, 0, null, hora);
 
-    const probabilidadEstimada = 0.55; // ejemplo fijo por ahora
-    const ev = calcularEV(probabilidadEstimada, cuotas.home);
+if (!resultadoIA || !resultadoIA.probabilidadEstimada) {
+  console.log("⚠️ No se pudo generar probabilidad estimada para el partido:", partido.teams.home.name, "vs", partido.teams.away.name);
+  continue; // 👈 evita que el script se rompa
+}
+    const probabilidadEstimada = resultadoIA.probabilidadEstimada;
+
+    const ev = calcularEV(probabilidadEstimada, cuotaMinima);
     const nivel = clasificarNivel(ev);
-    const esVIP = ev >= 15;
 
+    const esVIP = ev >= 1;
     const mensajeFinal = await generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, !esVIP);
 
-    if (mensajeFinal?.mensaje) {
+        if (mensajeFinal?.mensaje) {
       const yaEnviado = await yaFueEnviado(partido.fixture.id);
       if (!yaEnviado) {
         await enviarMensaje(mensajeFinal.mensaje);
-
         await guardarPickEnHistorial({
           fecha: new Date().toISOString(),
           liga: partido.league.name,
@@ -247,7 +312,6 @@ Redacta un análisis profesional. Al final, sugiere UNA apuesta concreta si se d
           cuotas: JSON.stringify(cuotas),
           analisis_ia: mensajeFinal.analisis || 'No disponible'
         });
-
         await guardarEnMemoriaSupabase({
           equipo_local: partido.teams.home.name,
           equipo_visitante: partido.teams.away.name,
@@ -263,7 +327,6 @@ Redacta un análisis profesional. Al final, sugiere UNA apuesta concreta si se d
           es_vip: esVIP,
           probabilidad_estimada: probabilidadEstimada
         });
-
         await registrarPickEnviado(partido.fixture.id);
       } else {
         console.log(`⚠️ Ya se envió el pick del fixture ${partido.fixture.id}, se omite.`);
@@ -275,4 +338,4 @@ Redacta un análisis profesional. Al final, sugiere UNA apuesta concreta si se d
     statusCode: 200,
     body: JSON.stringify({ ok: true })
   };
-};
+}; // 👈 FIN correcto de exports.handler
