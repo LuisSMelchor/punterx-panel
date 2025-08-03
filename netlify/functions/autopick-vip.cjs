@@ -228,7 +228,6 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
   } catch (e) {
     console.error("❌ Error generando análisis con IA:", e.message);
     return 'No se pudo generar el análisis.';
-  }
 }
   }
 
