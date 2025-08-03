@@ -2,7 +2,7 @@
 
 const fetch = globalThis.fetch;
 
-export async function handler() {
+exports.handler = async function () {
   const crypto = await import('node:crypto');
 
   const SUPABASE_URL = process.env.SUPABASE_URL;
