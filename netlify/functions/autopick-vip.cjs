@@ -25,9 +25,9 @@ exports.handler = async function () {
   }
 
   function clasificarNivel(ev) {
-    if (ev >= 30) return "Élite Mundial";
-    if (ev >= 20) return "Avanzado";
-    if (ev >= 15) return "Competitivo";
+    if (ev >= 15) return "Élite Mundial";
+    if (ev >= 10) return "Avanzado";
+    if (ev >= 05) return "Competitivo";
     return null;
   }
 
@@ -213,7 +213,7 @@ Finalmente, estima de forma precisa y objetiva la probabilidad de éxito (en por
     const ev = calcularEV(probabilidadEstimada, cuotaMinima);
     const nivel = clasificarNivel(ev);
 
-    const esVIP = ev >= 15;
+    const esVIP = ev >= 0;
     const mensajeFinal = await generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, !esVIP);
     if (mensajeFinal?.mensaje) {
     await enviarMensaje(mensajeFinal.mensaje);
