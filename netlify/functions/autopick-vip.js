@@ -1,4 +1,4 @@
-// autopick-vip.js FINAL
+// autopick-vip.js FINAL - MODO PRO ACTIVADO
 
 const fetch = globalThis.fetch;
 
@@ -46,21 +46,30 @@ export async function handler() {
     });
   }
 
-  async function obtenerExtras(fixtureId) {
+  async function obtenerExtras(fixtureId, homeId, awayId) {
     const headers = { 'x-apisports-key': API_FOOTBALL_KEY };
-    const [lineups, injuries, stats, h2h, referee] = await Promise.all([
+    const [lineups, injuries, stats, h2h, fixtureDetail, homePlayers, awayPlayers] = await Promise.all([
       fetch(`https://v3.football.api-sports.io/fixtures/lineups?fixture=${fixtureId}`, { headers }).then(r => r.json()),
       fetch(`https://v3.football.api-sports.io/injuries?fixture=${fixtureId}`, { headers }).then(r => r.json()),
       fetch(`https://v3.football.api-sports.io/fixtures/statistics?fixture=${fixtureId}`, { headers }).then(r => r.json()),
-      fetch(`https://v3.football.api-sports.io/fixtures/headtohead?h2h=${fixtureId}`, { headers }).then(r => r.json()),
-      fetch(`https://v3.football.api-sports.io/fixtures?id=${fixtureId}`, { headers }).then(r => r.json())
+      fetch(`https://v3.football.api-sports.io/fixtures/headtohead?h2h=${homeId}-${awayId}`, { headers }).then(r => r.json()),
+      fetch(`https://v3.football.api-sports.io/fixtures?id=${fixtureId}`, { headers }).then(r => r.json()),
+      fetch(`https://v3.football.api-sports.io/players?team=${homeId}&season=2024`, { headers }).then(r => r.json()),
+      fetch(`https://v3.football.api-sports.io/players?team=${awayId}&season=2024`, { headers }).then(r => r.json())
     ]);
+
+    const referee = fixtureDetail.response?.[0]?.fixture?.referee || null;
+    const weather = fixtureDetail.response?.[0]?.fixture?.weather || null;
+
     return {
       lineups: lineups.response,
       injuries: injuries.response,
       stats: stats.response,
       h2h: h2h.response,
-      referee: referee.response?.[0]?.fixture?.referee || null
+      referee,
+      weather,
+      homePlayers: homePlayers.response,
+      awayPlayers: awayPlayers.response
     };
   }
 
@@ -101,15 +110,17 @@ Referee: ${extras.referee || 'Desconocido'}
 
 Lineups confirmados: ${extras.lineups.length > 0 ? 'Sí' : 'No'}  
 Lesionados: ${extras.injuries.length}  
+Clima: ${extras.weather?.temperature?.celsius || 'N/A'}°C, ${extras.weather?.description || 'N/A'}  
 
 Estadísticas: ${JSON.stringify(extras.stats)}  
-Historial directo: ${extras.h2h.length} partidos
+Historial directo: ${extras.h2h.length} partidos  
+Jugadores clave: ${extras.homePlayers.length + extras.awayPlayers.length} jugadores analizados
 
 Genera un análisis con estos datos y sugiere:
 - 🧠 Datos avanzados
 - 📌 Apuesta sugerida (resultado principal)
 - 📌 Apuestas extra (solo si hay señales claras como tarjetas, goles, jugadores clave, árbitro, etc.)
-- ⚠️ Advertencia final para ambos mensajes.`;
+- ⚠️ Advertencia final: “⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder. Recuerda que ninguna apuesta es segura, incluso cuando el análisis sea sólido.”`;
 
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -120,7 +131,7 @@ Genera un análisis con estos datos y sugiere:
       body: JSON.stringify({
         model: "gpt-4",
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.8
+        temperature: 0.85
       })
     });
 
@@ -151,7 +162,7 @@ Genera un análisis con estos datos y sugiere:
     const cuotas = await obtenerCuotas(partido);
     if (!cuotas) continue;
 
-    const probabilidadEstimada = 0.65;
+    const probabilidadEstimada = 0.65; // Esta será dinámica más adelante
     const cuotaMinima = Math.min(cuotas.home, cuotas.away);
     const ev = calcularEV(probabilidadEstimada, cuotaMinima);
 
@@ -159,7 +170,7 @@ Genera un análisis con estos datos y sugiere:
       hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City"
     });
 
-    const extras = await obtenerExtras(partido.fixture.id);
+    const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
     const nivel = clasificarNivel(ev);
 
     const esVIP = ev >= 15;
