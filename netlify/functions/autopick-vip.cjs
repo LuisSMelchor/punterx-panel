@@ -2,6 +2,26 @@
 
 const fetch = globalThis.fetch;
 
+async function guardarPickEnHistorial(data) {
+  try {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+      },
+      body: JSON.stringify([data])
+    });
+
+    const result = await response.json();
+    console.log("✅ Pick guardado en historial:", result);
+  } catch (e) {
+    console.error("❌ Error guardando en historial:", e.message);
+  }
+}
+
 exports.handler = async function () {
   const crypto = await import('node:crypto');
 
@@ -361,6 +381,19 @@ if (!resultadoIA || !resultadoIA.probabilidadEstimada) {
       if (!yaEnviado) {
         await enviarMensaje(mensajeFinal.mensaje);
         await guardarEnMemoriaSupabase({
+                  await guardarPickEnHistorial({
+          fecha: new Date().toISOString(),
+          liga: partido.league.name,
+          pais: partido.league.country,
+          equipo_local: partido.teams.home.name,
+          equipo_visitante: partido.teams.away.name,
+          apuesta: mensajeFinal.apuesta || 'No definida',
+          valor_esperado: ev,
+          nivel_valor: nivel,
+          probabilidad_estimada: probabilidadEstimada,
+          cuotas: JSON.stringify(cuotas),
+          analisis_ia: mensajeFinal.analisis || 'No disponible'
+        });
           equipo_local: partido.teams.home.name,
           equipo_visitante: partido.teams.away.name,
           liga: partido.league.name,
