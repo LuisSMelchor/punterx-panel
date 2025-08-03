@@ -177,8 +177,35 @@ Finalmente, estima de forma precisa y objetiva la probabilidad de éxito (en por
 
   const out = await res.json();
   const texto = out.choices?.[0]?.message?.content || "";
-  const regex = /{"probabilidad":\s*(0\.\d+|1\.0|1)}/i;
-  const match = texto.match(regex);
+  console.log("🧠 Análisis IA completo:\n", texto);
+
+// 1. Buscar probabilidad dentro de llaves JSON
+let probabilidadEstimada = null;
+
+const regexConLlaves = /{"probabilidad":\s*(0?\.\d+|1\.0|1)}/i;
+const regexSinLlaves = /"probabilidad":\s*(0?\.\d+|1\.0|1)/i;
+
+let match = texto.match(regexConLlaves);
+if (match) {
+  try {
+    const json = JSON.parse(match[0]);
+    probabilidadEstimada = parseFloat(json.probabilidad);
+  } catch (e) {
+    console.warn("⚠️ JSON mal formado en bloque con llaves:", e.message);
+  }
+} else {
+  // Si no hay llaves, buscar sin ellas
+  match = texto.match(regexSinLlaves);
+  if (match) {
+    probabilidadEstimada = parseFloat(match[1]);
+  }
+}
+
+if (!probabilidadEstimada || isNaN(probabilidadEstimada)) {
+  console.warn("⚠️ No se pudo generar probabilidad estimada. Se usará valor por defecto.");
+  probabilidadEstimada = 0.65; // Fallback inteligente
+}
+
   const probabilidadEstimada = match ? parseFloat(JSON.parse(match[0]).probabilidad) : null;
 
   if (!probabilidadEstimada) {
