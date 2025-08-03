@@ -184,9 +184,15 @@ exports.handler = async function () {
 
     const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
     const cuotaMinima = Math.min(cuotas.home, cuotas.away);
-
+    
     const resultadoIA = await generarMensajeIA(partido, extras, cuotas, 0, null, hora);
+
+if (!resultadoIA || !resultadoIA.probabilidadEstimada) {
+  console.log("⚠️ No se pudo generar probabilidad estimada para el partido:", partido.teams.home.name, "vs", partido.teams.away.name);
+  continue; // 👈 evita que el script se rompa
+}
     const probabilidadEstimada = resultadoIA.probabilidadEstimada;
+
     const ev = calcularEV(probabilidadEstimada, cuotaMinima);
     const nivel = clasificarNivel(ev);
 
