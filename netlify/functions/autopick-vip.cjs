@@ -27,7 +27,7 @@ exports.handler = async function () {
   function clasificarNivel(ev) {
     if (ev >= 15) return "Élite Mundial";
     if (ev >= 10) return "Avanzado";
-    if (ev >= 05) return "Competitivo";
+    if (ev >= 5) return "Competitivo";
     return null;
   }
 
