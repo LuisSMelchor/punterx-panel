@@ -1,76 +1,83 @@
-# 🧠 PunterX | Sistema de Picks Deportivos Automatizado
 
-Bienvenido al backend automatizado de **PunterX**, un sistema inteligente que genera y envía pronósticos deportivos (picks) directamente a Telegram según horarios definidos y lógica de filtrado por ligas.
-
----
-
-## ⚙️ ¿Qué hace este proyecto?
-
-- Consulta partidos del día desde [API-FOOTBALL](https://www.api-football.com/).
-- Filtra el mejor evento según horario y ligas prioritarias.
-- Genera un mensaje básico o detallado (VIP) con información de apuestas.
-- Envía el pick automáticamente a:
-  - 📢 Canal público de Telegram (gratuito)
-  - 🔒 Grupo VIP de Telegram (exclusivo)
-
----
-
-## 🧱 Estructura del Proyecto
-
-
-netlify/
-├── functions/
-│ ├── autopick-europe.js # Picks europeos (7am CDMX)
-│ ├── autopick-pre-mx.js # Picks Liga MX/Sudamérica (12pm CDMX)
-│ ├── autopick-evening.js # Picks tarde-noche (6pm CDMX)
-│ └── utils/
-│ └── filtrarPartido.js # Lógica de prioridad y selección de partido
+> 🗑️ **Los antiguos archivos `autopick-europe`, `autopick-pre-mx` y `autopick-evening` han sido eliminados.**
+Todo se centraliza ahora en `autopick-vip.js`.
 
 ---
 
 ## ⏱️ Programación de funciones
 
-Las funciones usan cron programado desde `netlify.toml`:
+Usamos funciones programadas (cron jobs) desde `netlify.toml`:
 
-| Función              | Hora CDMX     | Ligas Prioritarias                              |
-|----------------------|---------------|--------------------------------------------------|
-| `autopick-europe`    | 07:00 a.m.    | Europa                                           |
-| `autopick-pre-mx`    | 12:00 p.m.    | Liga MX, CONMEBOL, selecciones                   |
-| `autopick-evening`   | 06:00 p.m.    | México, MLS, torneos internacionales, selecciones |
+| Función              | Frecuencia         | Descripción                                       |
+|----------------------|--------------------|---------------------------------------------------|
+| `autopick-vip`       | Cada 15 minutos    | Analiza el mundo completo, filtra picks por EV    |
+| `verificador-aciertos` | Diario a las 23:59 | Revisa picks enviados y su resultado (próximamente) |
+
+---
+
+## 🧠 Inteligencia Artificial (IA)
+
+- Generación automática de análisis detallado (OpenAI GPT-4)
+- Evaluación contextual: forma, árbitro, clima, historial, alineaciones, lesiones
+- Propuesta de apuestas adicionales si hay señales claras
+- Inserción de resumen histórico reciente (memoria en Supabase) para aprendizaje adaptativo (en progreso)
+
+---
+
+## 📊 Clasificación de Picks
+
+| Nivel         | EV estimado       | Destino        |
+|---------------|-------------------|----------------|
+| 🎯 Élite      | EV ≥ 30%          | Grupo VIP      |
+| 🥈 Avanzado   | 20% ≤ EV < 30%     | Grupo VIP      |
+| 🥉 Competitivo| 15% ≤ EV < 20%     | Grupo VIP      |
+| 📄 Informativo| EV = 14%          | Canal gratuito |
 
 ---
 
 ## 🔐 Seguridad
 
-- Código de acceso (`authCode`)
-- Honeypot para detectar bots
-- Firma HMAC SHA256 con `timestamp` y `secret`
-- Validación de origen (solo desde el panel web)
-- Separación entre picks VIP y gratuitos
+- Código de acceso personalizado (`authCode`)
+- Honeypot para prevenir bots automatizados
+- Firma HMAC SHA256 con `timestamp` y `secret` compartido
+- Validación de origen: solo desde el panel autorizado
+- Separación clara entre picks gratuitos y VIP
 
 ---
 
 ## 📡 Integración con Telegram
 
-- ✅ Envío automático al canal o grupo según el tipo de pick
-- ✅ Usa `node-telegram-bot-api` y Telegram Bot Token
+- ✅ Envío automático al canal o grupo VIP con mensajes diferenciados
+- ✅ Generación de teaser gratuito y análisis completo para VIP
+- ✅ Eliminación automática de duplicados por `fixture.id`
+- ✅ Prueba gratuita de 15 días gestionada por bot + Supabase (en Replit)
 
 ---
 
-## 🛠️ Próximas funciones (etapas futuras)
+## 🧠 Memoria Inteligente (en desarrollo)
 
-- Generación automática de análisis (`brief`, `detailed`) usando IA
-- Sistema de suscripciones pagadas con control de acceso
-- Backup de picks enviados en Supabase
-- Panel de estadísticas y rendimiento de pronósticos
+- Supabase guarda todos los picks enviados con:
+  - Liga, EV, análisis, equipos, cuotas, probabilidad estimada
+- En breve: función `getMemorySummaryFromSupabase()` resumirá patrones y se integrará al `prompt` de OpenAI para que la IA aprenda de aciertos y errores pasados
+
+---
+
+## 🔮 Próximos pasos
+
+- Implementar y probar `getMemorySummaryFromSupabase()`
+- Agregar rendimiento semanal (newsletter automatizado)
+- Integrar sistema de pagos y control de membresía
+- Enriquecer estadísticas de Supabase para visualización
+- Sistema experto basado en retroalimentación de éxito histórico
 
 ---
 
 ## 🙌 Autor
 
 **Luis Jesús Sánchez Melchor**  
-Creador de PunterX y administrador del canal [@punterxpicks](https://t.me/punterxpicks)
+Creador y administrador de [@punterxpicks](https://t.me/punterxpicks)  
+Coordinador general del sistema PunterX
 
 ---
-docs: primera versión del README.md
 
+**docs:** actualización agosto 2025 – versión avanzada con IA, EV y Supabase
