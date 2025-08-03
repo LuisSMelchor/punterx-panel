@@ -128,7 +128,11 @@ Genera un análisis avanzado usando estos datos e incluye:
 - 🧠 Datos tácticos y psicológicos relevantes  
 - 📌 Apuesta sugerida (principal, clara y razonada)  
 - 📌 Apuestas extra (solo si hay señales reales como tendencia de goles, tarjetas, goleadores, clima extremo, etc.)  
-- ⚠️ Advertencia responsable: “⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder. Recuerda que ninguna apuesta es segura, incluso cuando el análisis sea sólido.”`;
+- ⚠️ Advertencia responsable: “⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder. Recuerda que ninguna apuesta es segura, incluso cuando el análisis sea sólido.”
+
+Finalmente, estima de forma precisa y objetiva la probabilidad de éxito (en porcentaje) para la apuesta sugerida principal. Devuelve este número en formato JSON, como este ejemplo:
+
+{"probabilidad": 0.72}`;
 
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -144,7 +148,12 @@ Genera un análisis avanzado usando estos datos e incluye:
     });
 
     const out = await res.json();
-    return out.choices?.[0]?.message?.content || null;
+    const texto = out.choices?.[0]?.message?.content || "";
+    const regex = /{"probabilidad":\s*(0\.\d+|1\.0|1)}/i;
+    const match = texto.match(regex);
+    const probabilidadEstimada = match ? parseFloat(JSON.parse(match[0]).probabilidad) : 0.65;
+
+    return { mensaje: texto, probabilidadEstimada };
   }
 
   async function enviarMensaje(mensaje) {
@@ -170,20 +179,21 @@ Genera un análisis avanzado usando estos datos e incluye:
     const cuotas = await obtenerCuotas(partido);
     if (!cuotas) continue;
 
-    const probabilidadEstimada = 0.65; // Esta será dinámica más adelante
-    const cuotaMinima = Math.min(cuotas.home, cuotas.away);
-    const ev = calcularEV(probabilidadEstimada, cuotaMinima);
-
     const hora = new Date(partido.fixture.date).toLocaleTimeString("es-MX", {
       hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City"
     });
 
     const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
+    const cuotaMinima = Math.min(cuotas.home, cuotas.away);
+
+    const resultadoIA = await generarMensajeIA(partido, extras, cuotas, 0, null, hora);
+    const probabilidadEstimada = resultadoIA.probabilidadEstimada;
+    const ev = calcularEV(probabilidadEstimada, cuotaMinima);
     const nivel = clasificarNivel(ev);
 
     const esVIP = ev >= 15;
-    const mensaje = await generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, !esVIP);
-    if (mensaje) await enviarMensaje(mensaje);
+    const mensajeFinal = await generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, !esVIP);
+    if (mensajeFinal?.mensaje) await enviarMensaje(mensajeFinal.mensaje);
   }
 
   return {
