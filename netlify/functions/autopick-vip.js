@@ -5,6 +5,8 @@ const fetch = globalThis.fetch;
 export async function handler() {
   const crypto = await import('node:crypto');
 
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_KEY = process.env.SUPABASE_KEY;
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
   const ODDS_API_KEY = process.env.ODDS_API_KEY;
@@ -173,6 +175,26 @@ Finalmente, estima de forma precisa y objetiva la probabilidad de éxito (en por
     console.log("✅ Enviado a Telegram:", await res.text());
   }
 
+  async function guardarEnMemoriaSupabase(pick) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'return=representation'
+      },
+      body: JSON.stringify(pick)
+    });
+
+    const data = await res.json();
+    console.log("🧠 Pick guardado en Supabase:", data);
+  } catch (err) {
+    console.error("❌ Error guardando pick en Supabase:", err.message);
+  }
+}
+  
   const partidos = filtrarPartidos(await obtenerPartidos());
 
   for (const partido of partidos) {
@@ -193,8 +215,23 @@ Finalmente, estima de forma precisa y objetiva la probabilidad de éxito (en por
 
     const esVIP = ev >= 15;
     const mensajeFinal = await generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, !esVIP);
-    if (mensajeFinal?.mensaje) await enviarMensaje(mensajeFinal.mensaje);
-  }
+    if (mensajeFinal?.mensaje) {
+  await enviarMensaje(mensajeFinal.mensaje);
+  await guardarEnMemoriaSupabase({
+    equipo_local: partido.teams.home.name,
+    equipo_visitante: partido.teams.away.name,
+    liga: partido.league.name,
+    pais: partido.league.country,
+    cuota_local: cuotas.home,
+    cuota_visitante: cuotas.away,
+    cuota_empate: cuotas.draw,
+    ev,
+    nivel,
+    hora_local: hora,
+    mensaje: mensajeFinal.mensaje,
+    es_vip: esVIP
+  });
+}
 
   return {
     statusCode: 200,
