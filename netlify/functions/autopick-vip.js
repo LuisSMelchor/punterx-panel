@@ -229,7 +229,8 @@ Finalmente, estima de forma precisa y objetiva la probabilidad de éxito (en por
       nivel,
       hora_local: hora,
       mensaje: mensajeFinal.mensaje,
-      es_vip: esVIP
+      es_vip: esVIP,
+      probabilidad_estimada: probabilidadEstimada
     });
   }
 }
