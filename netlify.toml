@@ -1,2 +1,2 @@
 [functions."autopick-vip"]
-  schedule = "*/10 * * * *"  # ⏱️ Cada 10 minutos
+  schedule = "*/15 * * * *"  # ⏱️ Cada 15 minutos
