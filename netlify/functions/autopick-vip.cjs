@@ -216,8 +216,81 @@ if (!probabilidadEstimada || isNaN(probabilidadEstimada)) {
     
   }
 
-  async function generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, esGratis = false) {
-    // ... [PROMPT OMITIDO POR ESPACIO] ...
+  // 🔄 FUNCIÓN PARA OBTENER HISTORIAL DE PICKS ACERTADOS
+async function obtenerHistorial() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos?select=fixture_id,equipos,apuesta,resultado_real,pick_acertado&pick_acertado=is.true&order=fecha.desc&limit=30`, {
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`
+      }
+    });
+    const historial = await res.json();
+
+    if (!Array.isArray(historial)) return [];
+
+    return historial.map(pick => {
+      return `🟢 ${pick.equipos} → ${pick.apuesta}\nResultado: ${pick.resultado_real}`;
+    }).join('\n\n');
+  } catch (e) {
+    console.error("Error al obtener historial:", e.message);
+    return '';
+  }
+}
+
+// 🤖 FUNCIÓN PRINCIPAL PARA GENERAR MENSAJE DE IA
+async function generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, esGratis = false) {
+  const historialTexto = await obtenerHistorial();
+
+  const prompt = `
+Eres una inteligencia artificial especializada en apuestas deportivas. Tienes acceso a información avanzada del partido y tu historial reciente de aciertos.
+
+Tu objetivo es detectar oportunidades ocultas de valor en el mercado y explicar tu razonamiento de forma clara, profesional y convincente.
+
+📚 Historial reciente de aciertos:
+${historialTexto || 'Sin datos disponibles aún.'}
+
+📊 Datos del partido actual:
+- Equipos: ${partido.equipos}
+- Liga: ${partido.liga}
+- Hora (CDMX): ${hora}
+- Cuotas: ${cuotas.map(c => `${c.bookie}: ${c.linea} @ ${c.valor}`).join(' | ')}
+- Valor Esperado (EV): ${ev.toFixed(1)}%
+- Nivel: ${nivel}
+${extras}
+
+🎯 Tarea:
+1. Explica por qué este partido tiene valor.
+2. Identifica señales ocultas (racha, árbitro, forma, ausencias, etc.)
+3. Concluye con una apuesta sugerida concreta (nombre y momio).
+
+Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres una IA.
+`;
+
+  try {
+    const respuesta = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 300,
+        temperature: 0.8,
+      }),
+    });
+
+    const data = await respuesta.json();
+    const textoIA = data.choices?.[0]?.message?.content || 'No se generó análisis.';
+
+    return textoIA;
+  } catch (e) {
+    console.error("❌ Error generando análisis con IA:", e.message);
+    return 'No se pudo generar el análisis.';
+  }
+}
   }
 
   async function enviarMensaje(mensaje) {
