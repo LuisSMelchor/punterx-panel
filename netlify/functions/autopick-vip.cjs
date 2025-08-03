@@ -380,34 +380,34 @@ if (!resultadoIA || !resultadoIA.probabilidadEstimada) {
       const yaEnviado = await yaFueEnviado(partido.fixture.id);
       if (!yaEnviado) {
         await enviarMensaje(mensajeFinal.mensaje);
+        await guardarPickEnHistorial({
+  fecha: new Date().toISOString(),
+  liga: partido.league.name,
+  pais: partido.league.country,
+  equipo_local: partido.teams.home.name,
+  equipo_visitante: partido.teams.away.name,
+  apuesta: mensajeFinal.apuesta || 'No definida',
+  valor_esperado: ev,
+  nivel_valor: nivel,
+  probabilidad_estimada: probabilidadEstimada,
+  cuotas: JSON.stringify(cuotas),
+  analisis_ia: mensajeFinal.analisis || 'No disponible'
+});
         await guardarEnMemoriaSupabase({
-                  await guardarPickEnHistorial({
-          fecha: new Date().toISOString(),
-          liga: partido.league.name,
-          pais: partido.league.country,
-          equipo_local: partido.teams.home.name,
-          equipo_visitante: partido.teams.away.name,
-          apuesta: mensajeFinal.apuesta || 'No definida',
-          valor_esperado: ev,
-          nivel_valor: nivel,
-          probabilidad_estimada: probabilidadEstimada,
-          cuotas: JSON.stringify(cuotas),
-          analisis_ia: mensajeFinal.analisis || 'No disponible'
-        });
-          equipo_local: partido.teams.home.name,
-          equipo_visitante: partido.teams.away.name,
-          liga: partido.league.name,
-          pais: partido.league.country,
-          cuota_local: cuotas.home,
-          cuota_visitante: cuotas.away,
-          cuota_empate: cuotas.draw,
-          ev,
-          nivel,
-          hora_local: hora,
-          mensaje: mensajeFinal.mensaje,
-          es_vip: esVIP,
-          probabilidad_estimada: probabilidadEstimada
-        });
+  equipo_local: partido.teams.home.name,
+  equipo_visitante: partido.teams.away.name,
+  liga: partido.league.name,
+  pais: partido.league.country,
+  cuota_local: cuotas.home,
+  cuota_visitante: cuotas.away,
+  cuota_empate: cuotas.draw,
+  ev,
+  nivel,
+  hora_local: hora,
+  mensaje: mensajeFinal.mensaje,
+  es_vip: esVIP,
+  probabilidad_estimada: probabilidadEstimada
+});
         await registrarPickEnviado(partido.fixture.id);
       } else {
         console.log(`⚠️ Ya se envió el pick del fixture ${partido.fixture.id}, se omite.`);
