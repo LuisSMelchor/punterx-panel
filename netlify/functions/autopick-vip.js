@@ -239,4 +239,5 @@ Finalmente, estima de forma precisa y objetiva la probabilidad de éxito (en por
 return {
   statusCode: 200,
   body: JSON.stringify({ ok: true })
-};
+  };
+}; // ← ✅ esta línea es obligatoria
