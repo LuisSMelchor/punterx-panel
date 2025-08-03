@@ -216,25 +216,26 @@ Finalmente, estima de forma precisa y objetiva la probabilidad de éxito (en por
     const esVIP = ev >= 15;
     const mensajeFinal = await generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, !esVIP);
     if (mensajeFinal?.mensaje) {
-  await enviarMensaje(mensajeFinal.mensaje);
-  await guardarEnMemoriaSupabase({
-    equipo_local: partido.teams.home.name,
-    equipo_visitante: partido.teams.away.name,
-    liga: partido.league.name,
-    pais: partido.league.country,
-    cuota_local: cuotas.home,
-    cuota_visitante: cuotas.away,
-    cuota_empate: cuotas.draw,
-    ev,
-    nivel,
-    hora_local: hora,
-    mensaje: mensajeFinal.mensaje,
-    es_vip: esVIP
-  });
+    await enviarMensaje(mensajeFinal.mensaje);
+    await guardarEnMemoriaSupabase({
+      equipo_local: partido.teams.home.name,
+      equipo_visitante: partido.teams.away.name,
+      liga: partido.league.name,
+      pais: partido.league.country,
+      cuota_local: cuotas.home,
+      cuota_visitante: cuotas.away,
+      cuota_empate: cuotas.draw,
+      ev,
+      nivel,
+      hora_local: hora,
+      mensaje: mensajeFinal.mensaje,
+      es_vip: esVIP
+    });
+  }
 }
 
-  return {
-    statusCode: 200,
-    body: JSON.stringify({ ok: true })
-  };
-}
+// ✅ Esto va fuera del for
+return {
+  statusCode: 200,
+  body: JSON.stringify({ ok: true })
+};
