@@ -155,7 +155,8 @@ exports.handler = async function () {
 //     return [
 // 🔴 CORREGIDO: return fuera de función
 
-    try {      { bookie: "Mejor Cuota", linea: "Local", valor: mejoresCuotas.home };
+    try {
+      return { bookie: "Mejor Cuota", linea: "Local", valor: mejoresCuotas.home };
       { bookie: "Mejor Cuota", linea: "Empate", valor: mejoresCuotas.draw };
       { bookie: "Mejor Cuota", linea: "Visitante", valor: mejoresCuotas.away };
     ];
