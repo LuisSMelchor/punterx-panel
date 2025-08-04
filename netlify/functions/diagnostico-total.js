@@ -1,3 +1,4 @@
+
 // /netlify/functions/diagnostico/diagnostico-total-avanzado.js
 
 import { createClient } from '@supabase/supabase-js';
@@ -28,12 +29,13 @@ export async function handler() {
   // 2. Probar conexión Supabase con inserción + lectura + borrado
   try {
     const insertRes = await supabase.from("picks_historicos").insert([{
-      equipo_local: "Equipo A",
-      equipo_visitante: "Equipo B",
-      liga: "Liga Test",
-      valor_esperado: 25,
+      equipo_local: "Diagnóstico FC",
+      equipo_visitante: "Prueba United",
+      liga: "Liga Diagnóstico",
+      valor_esperado: 33.3,
       es_prueba: true,
-      mensaje: "Este es un mensaje de prueba",
+      tipo_pick: "GRATUITO",
+      mensaje: "⚠️ Pick de prueba para verificación del sistema.",
       hora_local: new Date().toISOString().replace("T", " ").slice(0, 19)
     }]);
 
