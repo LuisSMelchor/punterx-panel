@@ -153,8 +153,6 @@ exports.handler = async function () {
     
   }
   
-  
-  
   // 🔄 FUNCIÓN PARA OBTENER HISTORIAL DE PICKS ACERTADOS
 async function obtenerHistorial() {
   try {
@@ -193,7 +191,7 @@ ${historialTexto || 'Sin datos disponibles aún.'}
 - Equipos: ${partido.equipos}
 - Liga: ${partido.liga}
 - Hora (CDMX): ${hora}
-- Cuotas: ${cuotas.map(c => `${c.bookie}: ${c.linea} @ ${c.valor}`).join(' | ')}
+- Cuotas: - Cuotas: ${Array.isArray(cuotas) ? cuotas.map(c => `${c.bookie}: ${c.linea} @ ${c.valor}`).join(' | ') : 'Cuotas no disponibles'}
 - Valor Esperado (EV): ${ev.toFixed(1)}%
 - Nivel: ${nivel}
 ${extras}
@@ -269,13 +267,20 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
 
   const partidos = filtrarPartidos(await obtenerPartidos());
 
-  for (const partido of partidos) {
-    const cuotas = await obtenerCuotas(partido);
-    if (!cuotas) continue;
+for (const partido of partidos) {
+  const cuotas = await obtenerCuotas(partido);
 
-    const hora = new Date(partido.fixture.date).toLocaleTimeString("es-MX", {
-      hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City"
-    });
+  // ✅ Validación para evitar errores si cuotas no es un array válido
+  if (!Array.isArray(cuotas) || cuotas.length === 0) {
+    console.warn(`⚠️ Cuotas no válidas para el partido: ${partido.equipos || partido.teams?.home?.name + ' vs ' + partido.teams?.away?.name}`);
+    continue;
+  }
+
+  const hora = new Date(partido.fixture.date).toLocaleTimeString("es-MX", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "America/Mexico_City"
+  });
 
     const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
     const cuotaMinima = Math.min(cuotas.home, cuotas.away);
