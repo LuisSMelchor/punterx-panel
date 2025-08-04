@@ -4,5 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "echo 'Build step (dummy)'"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.53.0"
   }
 }
