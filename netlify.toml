@@ -2,4 +2,4 @@
   schedule = "*/15 * * * *"  # ⏱️ Cada 15 minutos
 
 [functions."verificador-aciertos"]
-schedule = "59 23 * * *"
+schedule = "0 * * * *" # 🕐 Cada hora en punto
