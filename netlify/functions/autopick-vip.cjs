@@ -186,8 +186,8 @@ Eres una inteligencia artificial especializada en apuestas deportivas. Tienes ac
 
 Tu objetivo es detectar oportunidades ocultas de valor en el mercado y explicar tu razonamiento de forma clara, profesional y convincente.
 
-📚 Historial reciente de aciertos:
-${historialTexto || 'Sin datos disponibles aún.'}
+📚 Memoria IA:
+${await generarResumenIA()}
 
 📊 Datos del partido actual:
 - Equipos: ${partido.equipos}
