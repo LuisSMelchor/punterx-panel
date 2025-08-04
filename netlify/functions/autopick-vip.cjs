@@ -129,27 +129,39 @@ exports.handler = async function () {
   }
 
   async function obtenerCuotas(partido) {
-    try {
-      const res = await fetch(`https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=us,eu,uk&markets=h2h&apiKey=${ODDS_API_KEY}`);
-      const data = await res.json();
-      const match = data.find(item =>
-        item.home_team.toLowerCase().includes(partido.teams.home.name.toLowerCase()) &&
-        item.away_team.toLowerCase().includes(partido.teams.away.name.toLowerCase())
-      );
-      if (!match || !match.bookmakers) return null;
-      const mejoresCuotas = { home: 0, draw: 0, away: 0 };
-      match.bookmakers.forEach(bm => {
-        bm.markets[0].outcomes.forEach(outcome => {
-          if (outcome.name === "Home" && outcome.price > mejoresCuotas.home) mejoresCuotas.home = outcome.price;
-          if (outcome.name === "Draw" && outcome.price > mejoresCuotas.draw) mejoresCuotas.draw = outcome.price;
-          if (outcome.name === "Away" && outcome.price > mejoresCuotas.away) mejoresCuotas.away = outcome.price;
-        });
+  try {
+    const res = await fetch(`https://api.the-odds-api.com/v4/sports/soccer/${partido.league.id}/odds/?regions=us&markets=h2h&apiKey=${process.env.ODDS_API_KEY}`);
+    const data = await res.json();
+
+    const evento = data.find(e =>
+      e.home_team.toLowerCase().includes(partido.teams.home.name.toLowerCase()) &&
+      e.away_team.toLowerCase().includes(partido.teams.away.name.toLowerCase())
+    );
+
+    if (!evento || !evento.bookmakers || evento.bookmakers.length === 0) return null;
+
+    const mejoresCuotas = { home: 0, draw: 0, away: 0 };
+
+    for (const bm of evento.bookmakers) {
+      if (!bm.markets || !bm.markets[0] || !bm.markets[0].outcomes) continue;
+
+      bm.markets[0].outcomes.forEach(outcome => {
+        if (outcome.name === "Home" && outcome.price > mejoresCuotas.home) mejoresCuotas.home = outcome.price;
+        if (outcome.name === "Draw" && outcome.price > mejoresCuotas.draw) mejoresCuotas.draw = outcome.price;
+        if (outcome.name === "Away" && outcome.price > mejoresCuotas.away) mejoresCuotas.away = outcome.price;
       });
-      return mejoresCuotas;
-    } catch (e) {
-      console.error("Error obteniendo cuotas:", e.message);
-      return null;
     }
+
+    return [
+      { bookie: "Mejor Cuota", linea: "Local", valor: mejoresCuotas.home },
+      { bookie: "Mejor Cuota", linea: "Empate", valor: mejoresCuotas.draw },
+      { bookie: "Mejor Cuota", linea: "Visitante", valor: mejoresCuotas.away }
+    ];
+  } catch (e) {
+    console.error("Error obteniendo cuotas:", e.message);
+    return null;
+  }
+}
     
   }
   
@@ -283,7 +295,10 @@ for (const partido of partidos) {
   });
 
     const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
-    const cuotaMinima = Math.min(cuotas.home, cuotas.away);
+    const cuotaMinima = Math.min(
+  cuotas.find(c => c.linea === "Local")?.valor || 0,
+  cuotas.find(c => c.linea === "Visitante")?.valor || 0
+);
     
     const resultadoIA = await generarMensajeIA(partido, extras, cuotas, 0, null, hora);
 
