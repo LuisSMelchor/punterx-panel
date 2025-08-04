@@ -154,7 +154,8 @@ exports.handler = async function () {
 
 //     return [
 // 🔴 CORREGIDO: return fuera de función
-      { bookie: "Mejor Cuota", linea: "Local", valor: mejoresCuotas.home };
+
+    try {      { bookie: "Mejor Cuota", linea: "Local", valor: mejoresCuotas.home };
       { bookie: "Mejor Cuota", linea: "Empate", valor: mejoresCuotas.draw };
       { bookie: "Mejor Cuota", linea: "Visitante", valor: mejoresCuotas.away };
     ];
@@ -359,3 +360,5 @@ if (!resultadoIA || !resultadoIA.probabilidadEstimada) {
     body: JSON.stringify({ ok: true })
   };
 }; // 👈 FIN correcto de exports.handler
+
+}
