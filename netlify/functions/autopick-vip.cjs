@@ -359,3 +359,26 @@ if (!resultadoIA || !resultadoIA.probabilidadEstimada) {
     body: JSON.stringify({ ok: true })
   };
 }; // 👈 FIN correcto de exports.handler
+async function obtenerCuotas(partido) {
+  try {
+    const response = await fetch(`https://api.the-odds-api.com/v4/sports/soccer_odds/odds/?regions=eu&markets=h2h&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&dateFormat=iso&oddsFormat=decimal&eventIds=${partido.odds_id}&apiKey=${ODDS_API_KEY}`);
+    const data = await response.json();
+    const oddsData = data[0]?.bookmakers || [];
+    const mejoresCuotas = { home: 0, draw: 0, away: 0 };
+    oddsData.forEach(bookmaker => {
+      bookmaker.markets[0]?.outcomes.forEach(outcome => {
+        if (outcome.name === 'Home' && outcome.price > mejoresCuotas.home) mejoresCuotas.home = outcome.price;
+        if (outcome.name === 'Draw' && outcome.price > mejoresCuotas.draw) mejoresCuotas.draw = outcome.price;
+        if (outcome.name === 'Away' && outcome.price > mejoresCuotas.away) mejoresCuotas.away = outcome.price;
+      });
+    });
+    return [
+      { bookie: 'Mejor Cuota', linea: 'Local', valor: mejoresCuotas.home },
+      { bookie: 'Mejor Cuota', linea: 'Empate', valor: mejoresCuotas.draw },
+      { bookie: 'Mejor Cuota', linea: 'Visitante', valor: mejoresCuotas.away }
+    ];
+  } catch (error) {
+    console.error('Error al obtener cuotas:', error);
+    return [];
+  }
+}
