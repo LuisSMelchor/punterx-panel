@@ -45,12 +45,16 @@ exports.handler = async function () {
     return Math.round(((prob * cuota) - 1) * 100);
   }
 
-  function clasificarNivel(ev) {
-    if (ev >= 15) return "Élite Mundial";
-    if (ev >= 10) return "Avanzado";
-    if (ev >= 5) return "Competitivo";
-    return null;
-  }
+  
+function clasificarNivel(ev) {
+  if (ev >= 40) return "🟣 Ultra Elite";
+  if (ev >= 30) return "🎯 Élite Mundial";
+  if (ev >= 20) return "🥈 Avanzado";
+  if (ev >= 15) return "🥉 Competitivo";
+  if (ev === 14) return "📄 Informativo";
+  return null;
+}
+
 
   async function yaFueEnviado(fixtureId) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/picks_enviados?fixture_id=eq.${fixtureId}`, {
@@ -129,20 +133,68 @@ exports.handler = async function () {
     };
   }
 
-  async function obtenerCuotas(partido) {
-    try {
-      // Se obtiene la lista de cuotas (market h2h) filtrando por casas de apuesta conocidas
-      const res = await fetch(`https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`);
-      const data = await res.json();
+  
+async function obtenerCuotas(partido) {
+  try {
+    const res = await fetch(`https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h,over_under_2_5,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`);
+    const data = await res.json();
+    const removeAccents = (txt) => txt.normalize("NFD").replace(/[̀-ͯ]/g, "");
 
-      // Buscar el evento correspondiente al partido (coincidencia de nombres de equipos)
-      const evento = data.find(e =>
-        e.home_team.toLowerCase().includes(partido.teams.home.name.toLowerCase()) &&
-        e.away_team.toLowerCase().includes(partido.teams.away.name.toLowerCase())
-      );
-      if (!evento || !evento.bookmakers || evento.bookmakers.length === 0) return [];
+    const nombreLocal = removeAccents(partido.teams.home.name.toLowerCase());
+    const nombreVisita = removeAccents(partido.teams.away.name.toLowerCase());
+    const fechaPartido = new Date(partido.fixture.date).toISOString().split("T")[0];
 
-      const mejoresCuotas = { home: 0, draw: 0, away: 0 };
+    const evento = data.find(e => {
+      const evLocal = removeAccents(e.home_team.toLowerCase());
+      const evVisita = removeAccents(e.away_team.toLowerCase());
+      const fechaEvento = new Date(e.commence_time).toISOString().split("T")[0];
+      return evLocal.includes(nombreLocal) &&
+             evVisita.includes(nombreVisita) &&
+             fechaEvento === fechaPartido;
+    });
+
+    if (!evento || !evento.bookmakers || evento.bookmakers.length === 0) return null;
+
+    let mejores = {
+      home: 0, draw: 0, away: 0, bookie: "", extra: []
+    };
+
+    for (const bm of evento.bookmakers) {
+      for (const market of bm.markets) {
+        if (!market.outcomes) continue;
+        market.outcomes.forEach(o => {
+          const name = o.name.toLowerCase();
+          const price = o.price;
+          if (market.key === "h2h") {
+            if (name.includes(nombreLocal) && price > mejores.home) {
+              mejores.home = price; mejores.bookie = bm.title;
+            }
+            if (name.includes("draw") && price > mejores.draw) mejores.draw = price;
+            if (name.includes(nombreVisita) && price > mejores.away) {
+              mejores.away = price; mejores.bookie = bm.title;
+            }
+          }
+          if (market.key === "over_under_2_5" && name.includes("over")) {
+            mejores.extra.push(`Más de 2.5 goles @${price}`);
+          }
+          if (market.key === "btts" && name.includes("yes")) {
+            mejores.extra.push(`Ambos anotan: sí @${price}`);
+          }
+          if (market.key === "double_chance" && name.includes("draw or")) {
+            mejores.extra.push(`Doble oportunidad: ${o.name} @${price}`);
+          }
+        });
+      }
+    }
+
+    if (mejores.home < 1 || mejores.away < 1) return null;
+    return mejores;
+  } catch (err) {
+    console.error("❌ Error obteniendo cuotas:", err.message);
+    return null;
+  }
+}
+;
       for (const bm of evento.bookmakers) {
         if (!bm.markets || !bm.markets[0] || !bm.markets[0].outcomes) continue;
         bm.markets[0].outcomes.forEach(outcome => {
