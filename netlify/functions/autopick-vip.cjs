@@ -10,7 +10,7 @@ async function guardarPickEnHistorial(data) {
         'apikey': SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Content-Type': 'application/json',
-        'Prefer': 'return=representation'
+        'Prefer': 'return=representation',
       },
       body: JSON.stringify([data])
     });
@@ -68,7 +68,7 @@ exports.handler = async function () {
       headers: {
         apikey: SUPABASE_KEY,
         Authorization: `Bearer ${SUPABASE_KEY}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         fixture_id: fixtureId,
@@ -124,7 +124,7 @@ exports.handler = async function () {
       awayPlayers: awayPlayers.response,
       standings: standings.response,
       topscorers: topscorers.response,
-      predictions: predictions.response
+      predictions: predictions.response,
     };
   }
 
@@ -135,7 +135,7 @@ exports.handler = async function () {
 
     const evento = data.find(e =>
       e.home_team.toLowerCase().includes(partido.teams.home.name.toLowerCase()) &&
-      e.away_team.toLowerCase().includes(partido.teams.away.name.toLowerCase())
+      e.away_team.toLowerCase().includes(partido.teams.away.name.toLowerCase()));
     );
 
     if (!evento || !evento.bookmakers || evento.bookmakers.length === 0) return null;
@@ -172,7 +172,7 @@ async function obtenerHistorial() {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos?select=fixture_id,equipos,apuesta,resultado_real,pick_acertado&pick_acertado=is.true&order=fecha.desc&limit=30`, {
       headers: {
         apikey: SUPABASE_KEY,
-        Authorization: `Bearer ${SUPABASE_KEY}`
+        Authorization: `Bearer ${SUPABASE_KEY}`,
       }
     });
     const historial = await res.json();
