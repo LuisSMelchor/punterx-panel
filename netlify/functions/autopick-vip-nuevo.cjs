@@ -1,5 +1,7 @@
 // autopick-vip.js FINAL PRO MAX - IA con todos los módulos activados
 
+console.log("Despliegue forzado con nuevo nombre");
+
 const fetch = globalThis.fetch;
 
 async function guardarPickEnHistorial(data) {
