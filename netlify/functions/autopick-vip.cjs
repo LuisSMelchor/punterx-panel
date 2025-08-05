@@ -156,7 +156,7 @@ exports.handler = async function () {
 // 🔴 CORREGIDO: return fuera de función
       { bookie: "Mejor Cuota", linea: "Local", valor: mejoresCuotas.home };
       { bookie: "Mejor Cuota", linea: "Empate", valor: mejoresCuotas.draw };
-      { bookie: "Mejor Cuota", linea: "Visitante", valor: mejoresCuotas.away };
+      { bookie: "Mejor Cuota", linea: "Visitante", valor: mejoresCuotas.away }
     ];
   } catch (e) {
     console.error("Error obteniendo cuotas:", e.message);
