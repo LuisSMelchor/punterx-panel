@@ -47,11 +47,11 @@ exports.handler = async function () {
 
   
 function clasificarNivel(ev) {
-  if (ev >= 40) return "🟣 Ultra Elite";
-  if (ev >= 30) return "🎯 Élite Mundial";
-  if (ev >= 20) return "🥈 Avanzado";
-  if (ev >= 15) return "🥉 Competitivo";
-  if (ev === 14) return "📄 Informativo";
+  if (ev >= 30) return "🟣 Ultra Elite";
+  if (ev >= 20) return "🎯 Élite Mundial";
+  if (ev >= 10) return "🥈 Avanzado";
+  if (ev >= 5) return "🥉 Competitivo";
+  if (ev === 1) return "📄 Informativo";
   return null;
 }
 
