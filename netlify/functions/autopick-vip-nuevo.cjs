@@ -132,7 +132,6 @@ function clasificarNivel(ev) {
       predictions: predictions.response
     };
   }
-
   
 async function obtenerCuotas(partido) {
   try {
@@ -194,26 +193,6 @@ async function obtenerCuotas(partido) {
     return null;
   }
 }
-;
-      for (const bm of evento.bookmakers) {
-        if (!bm.markets || !bm.markets[0] || !bm.markets[0].outcomes) continue;
-        bm.markets[0].outcomes.forEach(outcome => {
-          if (outcome.name === "Home" && outcome.price > mejoresCuotas.home) mejoresCuotas.home = outcome.price;
-          if (outcome.name === "Draw" && outcome.price > mejoresCuotas.draw) mejoresCuotas.draw = outcome.price;
-          if (outcome.name === "Away" && outcome.price > mejoresCuotas.away) mejoresCuotas.away = outcome.price;
-        });
-      }
-      // Retornar array de objetos con la mejor cuota para cada resultado
-      return [
-        { bookie: "Mejor Cuota", linea: "Local", valor: mejoresCuotas.home },
-        { bookie: "Mejor Cuota", linea: "Empate", valor: mejoresCuotas.draw },
-        { bookie: "Mejor Cuota", linea: "Visitante", valor: mejoresCuotas.away }
-      ];
-    } catch (e) {
-      console.error("Error obteniendo cuotas:", e.message);
-      return [];
-    }
-  }
 
   async function obtenerHistorial() {
     try {
