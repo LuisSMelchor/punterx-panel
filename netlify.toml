@@ -1,5 +1,5 @@
-[functions."autopick-vip"]
-  schedule = "*/15 * * * *"  # ⏱️ Cada 15 minutos
+[functions."autopick-vip-nuevo"]
+schedule = "*/15 * * * *"  # ⏱️ Cada 15 minutos
 
 [functions."verificador-aciertos"]
 schedule = "0 * * * *" # 🕐 Cada hora en punto
