@@ -16,7 +16,6 @@ async function guardarPickEnHistorial(data) {
       },
       body: JSON.stringify([data])
     });
-
     const result = await response.json();
     console.log("✅ Pick guardado en historial:", result);
   } catch (e) {
@@ -131,70 +130,62 @@ exports.handler = async function () {
   }
 
   async function obtenerCuotas(partido) {
-  try {
-    const res = await fetch(`https://api.the-odds-api.com/v4/sports/soccer/${partido.league.id}/odds/?regions=us&markets=h2h&apiKey=${process.env.ODDS_API_KEY}`);
-    const data = await res.json();
+    try {
+      // Se obtiene la lista de cuotas (market h2h) filtrando por casas de apuesta conocidas
+      const res = await fetch(`https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`);
+      const data = await res.json();
 
-    const evento = data.find(e =>
-      e.home_team.toLowerCase().includes(partido.teams.home.name.toLowerCase()) &&
-      e.away_team.toLowerCase().includes(partido.teams.away.name.toLowerCase())
-    );
+      // Buscar el evento correspondiente al partido (coincidencia de nombres de equipos)
+      const evento = data.find(e =>
+        e.home_team.toLowerCase().includes(partido.teams.home.name.toLowerCase()) &&
+        e.away_team.toLowerCase().includes(partido.teams.away.name.toLowerCase())
+      );
+      if (!evento || !evento.bookmakers || evento.bookmakers.length === 0) return [];
 
-    if (!evento || !evento.bookmakers || evento.bookmakers.length === 0) return null;
-
-    const mejoresCuotas = { home: 0, draw: 0, away: 0 };
-
-    for (const bm of evento.bookmakers) {
-      if (!bm.markets || !bm.markets[0] || !bm.markets[0].outcomes) continue;
-
-      bm.markets[0].outcomes.forEach(outcome => {
-        if (outcome.name === "Home" && outcome.price > mejoresCuotas.home) mejoresCuotas.home = outcome.price;
-        if (outcome.name === "Draw" && outcome.price > mejoresCuotas.draw) mejoresCuotas.draw = outcome.price;
-        if (outcome.name === "Away" && outcome.price > mejoresCuotas.away) mejoresCuotas.away = outcome.price;
-      });
-    }
-
-//     return [
-// 🔴 CORREGIDO: return fuera de función
-      { bookie: "Mejor Cuota", linea: "Local", valor: mejoresCuotas.home },;
-      { bookie: "Mejor Cuota", linea: "Empate", valor: mejoresCuotas.draw },
-      { bookie: "Mejor Cuota", linea: "Visitante", valor: mejoresCuotas.away }
-    ];
-  } catch (e) {
-    console.error("Error obteniendo cuotas:", e.message);
-    return null;
-  }
-}
-    
-  }
-  
-  // 🔄 FUNCIÓN PARA OBTENER HISTORIAL DE PICKS ACERTADOS
-async function obtenerHistorial() {
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos?select=fixture_id,equipos,apuesta,resultado_real,pick_acertado&pick_acertado=is.true&order=fecha.desc&limit=30`, {
-      headers: {
-        apikey: SUPABASE_KEY,
-        Authorization: `Bearer ${SUPABASE_KEY}`
+      const mejoresCuotas = { home: 0, draw: 0, away: 0 };
+      for (const bm of evento.bookmakers) {
+        if (!bm.markets || !bm.markets[0] || !bm.markets[0].outcomes) continue;
+        bm.markets[0].outcomes.forEach(outcome => {
+          if (outcome.name === "Home" && outcome.price > mejoresCuotas.home) mejoresCuotas.home = outcome.price;
+          if (outcome.name === "Draw" && outcome.price > mejoresCuotas.draw) mejoresCuotas.draw = outcome.price;
+          if (outcome.name === "Away" && outcome.price > mejoresCuotas.away) mejoresCuotas.away = outcome.price;
+        });
       }
-    });
-    const historial = await res.json();
-
-    if (!Array.isArray(historial)) return [];
-
-    return historial.map(pick => {
-      return `🟢 ${pick.equipos} → ${pick.apuesta}\nResultado: ${pick.resultado_real}`;
-    }).join('\n\n');
-  } catch (e) {
-    console.error("Error al obtener historial:", e.message);
-    return '';
+      // Retornar array de objetos con la mejor cuota para cada resultado
+      return [
+        { bookie: "Mejor Cuota", linea: "Local", valor: mejoresCuotas.home },
+        { bookie: "Mejor Cuota", linea: "Empate", valor: mejoresCuotas.draw },
+        { bookie: "Mejor Cuota", linea: "Visitante", valor: mejoresCuotas.away }
+      ];
+    } catch (e) {
+      console.error("Error obteniendo cuotas:", e.message);
+      return [];
+    }
   }
-}
 
-// 🤖 FUNCIÓN PRINCIPAL PARA GENERAR MENSAJE DE IA
-async function generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, esGratis = false) {
-  const historialTexto = await obtenerHistorial();
+  async function obtenerHistorial() {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos?select=fixture_id,equipos,apuesta,resultado_real,pick_acertado&pick_acertado=is.true&order=fecha.desc&limit=30`, {
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`
+        }
+      });
+      const historial = await res.json();
+      if (!Array.isArray(historial)) return [];
 
-  const prompt = `
+      return historial.map(pick => {
+        return `🟢 ${pick.equipos} → ${pick.apuesta}\nResultado: ${pick.resultado_real}`;
+      }).join('\n\n');
+    } catch (e) {
+      console.error("Error al obtener historial:", e.message);
+      return '';
+    }
+  }
+
+  async function generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, esGratis = false) {
+    const historialTexto = await obtenerHistorial();
+    const prompt = `
 Eres una inteligencia artificial especializada en apuestas deportivas. Tienes acceso a información avanzada del partido y tu historial reciente de aciertos.
 
 Tu objetivo es detectar oportunidades ocultas de valor en el mercado y explicar tu razonamiento de forma clara, profesional y convincente.
@@ -206,7 +197,7 @@ ${historialTexto || 'Sin datos disponibles aún.'}
 - Equipos: ${partido.equipos}
 - Liga: ${partido.liga}
 - Hora (CDMX): ${hora}
-- Cuotas: - Cuotas: ${Array.isArray(cuotas) ? cuotas.map(c => `${c.bookie}: ${c.linea} @ ${c.valor}`).join(' | ') : 'Cuotas no disponibles'}
+- Cuotas: ${Array.isArray(cuotas) ? cuotas.map(c => `${c.bookie}: ${c.linea} @ ${c.valor}`).join(' | ') : 'Cuotas no disponibles'}
 - Valor Esperado (EV): ${ev.toFixed(1)}%
 - Nivel: ${nivel}
 ${extras}
@@ -218,30 +209,27 @@ ${extras}
 
 Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres una IA.
 `;
-
-  try {
-    const respuesta = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 300,
-        temperature: 0.8,
-      }),
-    });
-
-    const data = await respuesta.json();
-    const textoIA = data.choices?.[0]?.message?.content || 'No se generó análisis.';
-
-    return textoIA;
-  } catch (e) {
-    console.error("❌ Error generando análisis con IA:", e.message);
-    return 'No se pudo generar el análisis.';
-}
+    try {
+      const respuesta = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4",
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 300,
+          temperature: 0.8,
+        }),
+      });
+      const data = await respuesta.json();
+      const textoIA = data.choices?.[0]?.message?.content || 'No se generó análisis.';
+      return textoIA;
+    } catch (e) {
+      console.error("❌ Error generando análisis con IA:", e.message);
+      return 'No se pudo generar el análisis.';
+    }
   }
 
   async function enviarMensaje(mensaje) {
@@ -282,42 +270,42 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
 
   const partidos = filtrarPartidos(await obtenerPartidos());
 
-for (const partido of partidos) {
-  const cuotas = await obtenerCuotas(partido);
+  for (const partido of partidos) {
+    const cuotas = await obtenerCuotas(partido);
 
-  // ✅ Validación para evitar errores si cuotas no es un array válido
-  if (!Array.isArray(cuotas) || cuotas.length === 0) {
-    console.warn(`⚠️ Cuotas no válidas para el partido: ${partido.equipos || partido.teams?.home?.name + ' vs ' + partido.teams?.away?.name}`);
-    continue;
-  }
+    // ✅ Validación para evitar errores si cuotas no es un array válido
+    if (!Array.isArray(cuotas) || cuotas.length === 0) {
+      console.warn(`⚠️ Cuotas no válidas para el partido: ${partido.equipos || partido.teams?.home?.name + ' vs ' + partido.teams?.away?.name}`);
+      continue;
+    }
 
-  const hora = new Date(partido.fixture.date).toLocaleTimeString("es-MX", {
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "America/Mexico_City"
-  });
+    const hora = new Date(partido.fixture.date).toLocaleTimeString("es-MX", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "America/Mexico_City"
+    });
 
     const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
+
     const cuotaMinima = Math.min(
-  cuotas.find(c => c.linea === "Local")?.valor || 0,
-  cuotas.find(c => c.linea === "Visitante")?.valor || 0
-);
-    
-    const resultadoIA = await generarMensajeIA(partido, extras, cuotas, 0, null, hora);
-
-if (!resultadoIA || !resultadoIA.probabilidadEstimada) {
-  console.log("⚠️ No se pudo generar probabilidad estimada para el partido:", partido.teams.home.name, "vs", partido.teams.away.name);
-  continue; // 👈 evita que el script se rompa
-}
-    const probabilidadEstimada = resultadoIA.probabilidadEstimada;
-
+      cuotas.find(c => c.linea === "Local")?.valor || 0,
+      cuotas.find(c => c.linea === "Visitante")?.valor || 0
+    );
+    // Estimar probabilidad implícita a partir de la cuota mínima (evitar probabilidad indefinida)
+    const probabilidadEstimada = cuotaMinima > 0 ? 1 / cuotaMinima : 0;
     const ev = calcularEV(probabilidadEstimada, cuotaMinima);
     const nivel = clasificarNivel(ev);
 
     const esVIP = ev >= 1;
-    const mensajeFinal = await generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, !esVIP);
+    const mensajeTexto = await generarMensajeIA(partido, extras, cuotas, ev, nivel, hora, !esVIP);
+    // Encapsular el texto de IA en un objeto con campos esperados
+    const mensajeFinal = {
+      mensaje: mensajeTexto,
+      apuesta: null,
+      analisis: mensajeTexto
+    };
 
-        if (mensajeFinal?.mensaje) {
+    if (mensajeFinal && mensajeFinal.mensaje) {
       const yaEnviado = await yaFueEnviado(partido.fixture.id);
       if (!yaEnviado) {
         await enviarMensaje(mensajeFinal.mensaje);
@@ -334,14 +322,18 @@ if (!resultadoIA || !resultadoIA.probabilidadEstimada) {
           cuotas: JSON.stringify(cuotas),
           analisis_ia: mensajeFinal.analisis || 'No disponible'
         });
+        // Guardar también en la "memoria" de Supabase los detalles del pick
+        const cuotaLocal = cuotas.find(c => c.linea === 'Local')?.valor || 0;
+        const cuotaEmpate = cuotas.find(c => c.linea === 'Empate')?.valor || 0;
+        const cuotaVisitante = cuotas.find(c => c.linea === 'Visitante')?.valor || 0;
         await guardarEnMemoriaSupabase({
           equipo_local: partido.teams.home.name,
           equipo_visitante: partido.teams.away.name,
           liga: partido.league.name,
           pais: partido.league.country,
-          cuota_local: cuotas.home,
-          cuota_visitante: cuotas.away,
-          cuota_empate: cuotas.draw,
+          cuota_local: cuotaLocal,
+          cuota_visitante: cuotaVisitante,
+          cuota_empate: cuotaEmpate,
           ev,
           nivel,
           hora_local: hora,
@@ -360,27 +352,4 @@ if (!resultadoIA || !resultadoIA.probabilidadEstimada) {
     statusCode: 200,
     body: JSON.stringify({ ok: true })
   };
-}; // 👈 FIN correcto de exports.handler
-async function obtenerCuotas(partido) {
-  try {
-    const response = await fetch(`https://api.the-odds-api.com/v4/sports/soccer_odds/odds/?regions=eu&markets=h2h&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&dateFormat=iso&oddsFormat=decimal&eventIds=${partido.odds_id}&apiKey=${ODDS_API_KEY}`);
-    const data = await response.json();
-    const oddsData = data[0]?.bookmakers || [];
-    const mejoresCuotas = { home: 0, draw: 0, away: 0 };
-    oddsData.forEach(bookmaker => {
-      bookmaker.markets[0]?.outcomes.forEach(outcome => {
-        if (outcome.name === 'Home' && outcome.price > mejoresCuotas.home) mejoresCuotas.home = outcome.price;
-        if (outcome.name === 'Draw' && outcome.price > mejoresCuotas.draw) mejoresCuotas.draw = outcome.price;
-        if (outcome.name === 'Away' && outcome.price > mejoresCuotas.away) mejoresCuotas.away = outcome.price;
-      });
-    });
-    return [
-      { bookie: 'Mejor Cuota', linea: 'Local', valor: mejoresCuotas.home },
-      { bookie: 'Mejor Cuota', linea: 'Empate', valor: mejoresCuotas.draw },
-      { bookie: 'Mejor Cuota', linea: 'Visitante', valor: mejoresCuotas.away }
-    ];
-  } catch (error) {
-    console.error('Error al obtener cuotas:', error);
-    return [];
-  }
-}
+};
