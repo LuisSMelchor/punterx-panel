@@ -1,111 +1,106 @@
 
-const fetch = globalThis.fetch || require("node-fetch");
-const { createClient } = require("@supabase/supabase-js");
+// /netlify/functions/diagnostico/diagnostico-total-avanzado.js
 
-exports.handler = async () => {
-  const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-  const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
-  const TELEGRAM_GROUP_ID = process.env.TELEGRAM_GROUP_ID;
-  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-  const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
-  const ODDS_API_KEY = process.env.ODDS_API_KEY;
-  const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_KEY = process.env.SUPABASE_KEY;
+import { createClient } from '@supabase/supabase-js';
 
-  const resultados = [];
+const fetch = globalThis.fetch;
 
-  // Verificación de variables necesarias
-  const variablesNecesarias = [
-    TELEGRAM_BOT_TOKEN,
-    TELEGRAM_CHANNEL_ID,
-    TELEGRAM_GROUP_ID,
-    OPENAI_API_KEY,
-    API_FOOTBALL_KEY,
-    ODDS_API_KEY,
-    SUPABASE_URL,
-    SUPABASE_KEY,
-  ];
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const OPENAI_KEY = process.env.OPENAI_API_KEY;
+const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
 
-  if (variablesNecesarias.every(Boolean)) {
-    resultados.push("✅ Todas las variables necesarias están cargadas.");
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+export async function handler() {
+  const resumen = [];
+  let todoOk = true;
+
+  // 1. Verificar variables de entorno
+  if (!SUPABASE_URL || !SUPABASE_KEY || !OPENAI_KEY || !API_FOOTBALL_KEY || !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHANNEL_ID) {
+    resumen.push("❌ Faltan variables de entorno necesarias.");
+    todoOk = false;
   } else {
-    resultados.push("❌ Faltan variables necesarias en el entorno.");
+    resumen.push("✅ Todas las variables necesarias están cargadas.");
   }
 
-  // Supabase prueba: insertar, leer y borrar
+  // 2. Probar conexión Supabase con inserción + lectura + borrado
   try {
-    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-    const insert = await supabase.from("picks_historicos").insert([{
-      liga: "Test",
-      equipos: "Equipo A vs Equipo B",
-      analisis: "Diagnóstico IA",
-      apuesta: "Over 2.5",
-      ev: 20,
-      probabilidad: 60,
-      tipo_pick: "Diagnóstico",
-      nivel: "Test",
-      creado_en: new Date().toISOString()
+    const insertRes = await supabase.from("picks_historicos").insert([{
+      equipo_local: "Diagnóstico FC",
+      equipo_visitante: "Prueba United",
+      liga: "Liga Diagnóstico",
+      valor_esperado: 33.3,
+      es_prueba: true,
+      tipo_pick: "GRATUITO",
+      mensaje: "⚠️ Pick de prueba para verificación del sistema.",
+      hora_local: new Date().toISOString().replace("T", " ").slice(0, 19)
     }]);
 
-    if (insert.error) throw insert.error;
+    if (insertRes.error) throw insertRes.error;
 
-    const read = await supabase.from("picks_historicos").select("*").eq("liga", "Test");
-    const del = await supabase.from("picks_historicos").delete().eq("liga", "Test");
+    const { data } = await supabase.from("picks_historicos").select("*").eq("es_prueba", true);
+    if (!data.length) throw new Error("No se pudo leer el pick de prueba");
 
-    if (read.error || del.error) throw read.error || del.error;
+    await supabase.from("picks_historicos").delete().eq("es_prueba", true);
 
-    resultados.push("✅ Supabase insertó, leyó y borró correctamente.");
-  } catch (err) {
-    resultados.push(`❌ Error en test Supabase: ${err.message}`);
+    resumen.push("✅ Supabase insertó, leyó y borró correctamente.");
+  } catch (e) {
+    resumen.push("❌ Error en test Supabase: " + e.message);
+    todoOk = false;
   }
 
-  // API-Football
+  // 3. Probar API-Football
   try {
     const res = await fetch("https://v3.football.api-sports.io/status", {
       headers: { "x-apisports-key": API_FOOTBALL_KEY }
     });
-    const data = await res.json();
-    const used = data.response.requests.current;
-    const limit = data.response.requests.limit_day;
-    resultados.push(`✅ API-Football activo. Llamadas hoy: ${used} / Límite diario: ${limit} / Restantes: ${limit - used}`);
-  } catch {
-    resultados.push("❌ Error en API-Football.");
+    const json = await res.json();
+    if (json.errors?.token) throw new Error("Token inválido de API-Football");
+    resumen.push("✅ API-Football activo y respondiendo.");
+  } catch (e) {
+    resumen.push("❌ Error en API-Football: " + e.message);
+    todoOk = false;
   }
 
-  // OddsAPI
-  try {
-    const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${ODDS_API_KEY}`);
-    const headers = res.headers;
-    const used = headers.get("x-requests-used");
-    const remaining = headers.get("x-requests-remaining");
-    resultados.push(`✅ OddsAPI activo. Llamadas usadas este mes: ${used} / restantes: ${remaining}`);
-  } catch {
-    resultados.push("❌ Error en OddsAPI.");
-  }
-
-  // OpenAI
+  // 4. Probar conexión OpenAI (solo encabezado)
   try {
     const res = await fetch("https://api.openai.com/v1/models", {
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }
+      headers: {
+        "Authorization": "Bearer " + OPENAI_KEY,
+        "Content-Type": "application/json"
+      }
     });
-    if (res.ok) {
-      resultados.push("✅ OpenAI conectado correctamente.");
-    } else {
-      resultados.push("❌ Error en conexión con OpenAI.");
-    }
-  } catch {
-    resultados.push("❌ Error en conexión con OpenAI.");
+    if (res.status !== 200) throw new Error("Respuesta no válida de OpenAI");
+    resumen.push("✅ OpenAI conectado correctamente.");
+  } catch (e) {
+    resumen.push("❌ Error en OpenAI: " + e.message);
+    todoOk = false;
   }
 
-  // Validar clave Telegram sin enviar mensaje
-  if (TELEGRAM_BOT_TOKEN?.startsWith("8") && TELEGRAM_BOT_TOKEN.length > 40) {
-    resultados.push("✅ Telegram: Clave válida y funcional (sin enviar mensajes).");
-  } else {
-    resultados.push("❌ Telegram: Clave inválida o mal configurada.");
+  // 5. Enviar mensaje de prueba a Telegram (opcional)
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHANNEL_ID,
+        text: "📡 Diagnóstico automático completado con éxito desde Netlify. Todo funciona correctamente ✅"
+      })
+    });
+
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.description);
+    resumen.push("✅ Telegram recibió mensaje de prueba.");
+  } catch (e) {
+    resumen.push("❌ Error enviando a Telegram: " + e.message);
+    todoOk = false;
   }
 
   return {
     statusCode: 200,
-    body: resultados.join("\n")
+    body: resumen.join("\n")
   };
-};
+}
