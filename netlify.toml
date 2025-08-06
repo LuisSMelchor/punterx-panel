@@ -1,5 +1,16 @@
+[build]
+  command = "npm run build"
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
 [functions."autopick-vip-nuevo"]
-schedule = "*/15 * * * *"  # ⏱️ Cada 15 minutos
+  schedule = "*/15 * * * *"
 
 [functions."verificador-aciertos"]
-schedule = "0 * * * *" # 🕐 Cada hora en punto
+  schedule = "0 * * * *"
+
+[functions."analisis-semanal"]
+  schedule = "0 10 * * 1" # Cada lunes a las 10:00am (hora del servidor)
