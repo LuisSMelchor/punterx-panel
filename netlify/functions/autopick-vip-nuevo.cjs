@@ -318,6 +318,7 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
 
     const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
 
+const cuotasFiltradas = cuotas.filter(c => c.cuota && parseFloat(c.cuota) > 1.01);
     const cuotaMinima = cuotasFiltradas.length > 0
   ? Math.min(...cuotasFiltradas.map(c => parseFloat(c.cuota)))
   : 0;
