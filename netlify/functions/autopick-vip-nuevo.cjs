@@ -13,7 +13,7 @@ exports.handler = async function () {
   const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
   const ODDS_API_KEY = process.env.ODDS_API_KEY;
   const PANEL_ENDPOINT = process.env.PANEL_ENDPOINT;
-  the AUTH_CODE = process.env.AUTH_CODE;
+  const AUTH_CODE = process.env.AUTH_CODE;
   const SECRET = process.env.PUNTERX_SECRET;
 
   // ✅ Validación de variables de entorno
