@@ -337,21 +337,23 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
     };
 
     if (mensajeFinal && mensajeFinal.mensaje) {
-      const yaEnviado = await yaFueEnviado(partido.fixture.id);
-      if (!yaEnviado) {
-        await enviarMensaje(mensajeFinal.mensaje);
-        await guardarPickEnHistorial({
-          fecha: new Date().toISOString(),
-          liga: partido.league.name,
-          pais: partido.league.country,
-          equipo_local: partido.teams.home.name,
-          equipo_visitante: partido.teams.away.name,
-          apuesta: mensajeFinal.apuesta || 'No definida',
-          valor_esperado: ev,
-          nivel_valor: nivel,
-          probabilidad_estimada: probabilidadEstimada,
-          cuotas: JSON.stringify(cuotas),
-          analisis_ia: mensajeFinal.analisis || 'No disponible'
+  const yaEnviado = await yaFueEnviado(partido.fixture.id);
+  if (!yaEnviado) {
+    await enviarMensaje(mensajeFinal.mensaje);
+    await guardarPickEnHistorial({
+      timestamp: new Date().toISOString(),
+      evento: `${partido.teams.home.name} vs ${partido.teams.away.name}`,
+      equipos: `${partido.teams.home.name} vs ${partido.teams.away.name}`,
+      liga: `${partido.league.country} - ${partido.league.name}`,
+      analisis: mensajeFinal.analisis || 'No disponible',
+      apuesta: mensajeFinal.apuesta || 'No definida',
+      tipo_pick: mensajeFinal.nivel || nivel || 'Sin nivel',
+      ev: parseFloat(ev.toFixed(2)) || null,
+      probabilidad: parseFloat(probabilidadEstimada.toFixed(2)) || null,
+      nivel: nivel || 'Sin clasificar',
+    });
+  }
+}
         });
         // Guardar también en la "memoria" de Supabase los detalles del pick
         const cuotaLocal = cuotas.find(c => c.linea === 'Local')?.valor || 0;
