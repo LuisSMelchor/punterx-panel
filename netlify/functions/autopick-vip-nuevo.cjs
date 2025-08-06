@@ -16,6 +16,27 @@ exports.handler = async function () {
   const AUTH_CODE = process.env.AUTH_CODE;
   const SECRET = process.env.PUNTERX_SECRET;
 
+  // ✅ Validación de variables de entorno
+  const required = {
+    SUPABASE_URL,
+    SUPABASE_KEY,
+    OPENAI_API_KEY,
+    API_FOOTBALL_KEY,
+    ODDS_API_KEY,
+    PANEL_ENDPOINT,
+    AUTH_CODE,
+    SECRET,
+  };
+  for (const [name, value] of Object.entries(required)) {
+    if (!value) {
+      console.error(`❌ Falta la variable de entorno ${name}`);
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ error: `Missing env var: ${name}` }),
+      };
+    }
+  }
+
   const now = new Date();
   const nowUTC = new Date(now.toUTCString());
   const horaCDMX = new Date(nowUTC.getTime() - 5 * 60 * 60 * 1000);
@@ -24,19 +45,16 @@ exports.handler = async function () {
 
   async function guardarPickEnHistorial(data) {
     try {
-      const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/picks_historicos`,
-        {
-          method: "POST",
-          headers: {
-            apikey: SUPABASE_KEY,
-            Authorization: `Bearer ${SUPABASE_KEY}`,
-            "Content-Type": "application/json",
-            Prefer: "return=representation",
-          },
-          body: JSON.stringify([data]),
-        }
-      );
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify([data]),
+      });
       const result = await response.json();
       console.log("✅ Pick guardado en historial:", result);
     } catch (e) {
@@ -90,9 +108,7 @@ exports.handler = async function () {
   async function obtenerPartidos() {
     const res = await fetch(
       `https://v3.football.api-sports.io/fixtures?date=${fechaHoy}`,
-      {
-        headers: { "x-apisports-key": API_FOOTBALL_KEY },
-      }
+      { headers: { "x-apisports-key": API_FOOTBALL_KEY } }
     );
     const data = await res.json();
     return data.response;
@@ -107,20 +123,11 @@ exports.handler = async function () {
     });
   }
 
-  async function obtenerExtras(fixtureId, homeId, awayId) {
+  // ✅ Manejo robusto de APIs externas con Promise.allSettled
+  async function obtenerExtras(fixtureId, homeId, awayId, leagueId) {
     const headers = { "x-apisports-key": API_FOOTBALL_KEY };
-    const [
-      lineups,
-      injuries,
-      stats,
-      h2h,
-      fixtureDetail,
-      homePlayers,
-      awayPlayers,
-      standings,
-      topscorers,
-      predictions,
-    ] = await Promise.all([
+
+    const requests = [
       fetch(
         `https://v3.football.api-sports.io/fixtures/lineups?fixture=${fixtureId}`,
         { headers }
@@ -149,35 +156,52 @@ exports.handler = async function () {
         `https://v3.football.api-sports.io/players?team=${awayId}&season=2024`,
         { headers }
       ).then((r) => r.json()),
+      // ✅ standings y topscorers usan ahora leagueId
       fetch(
-        `https://v3.football.api-sports.io/standings?league=${fixtureId}&season=2024`,
+        `https://v3.football.api-sports.io/standings?league=${leagueId}&season=2024`,
         { headers }
       ).then((r) => r.json()),
       fetch(
-        `https://v3.football.api-sports.io/players/topscorers?league=${fixtureId}&season=2024`,
+        `https://v3.football.api-sports.io/players/topscorers?league=${leagueId}&season=2024`,
         { headers }
       ).then((r) => r.json()),
       fetch(
         `https://v3.football.api-sports.io/predictions?fixture=${fixtureId}`,
         { headers }
       ).then((r) => r.json()),
-    ]);
+    ];
 
+    const [
+      lineupsRes,
+      injuriesRes,
+      statsRes,
+      h2hRes,
+      fixtureDetailRes,
+      homePlayersRes,
+      awayPlayersRes,
+      standingsRes,
+      topscorersRes,
+      predictionsRes,
+    ] = await Promise.allSettled(requests);
+
+    const safe = (res) => (res.status === "fulfilled" ? res.value : {});
+
+    const fixtureDetail = safe(fixtureDetailRes);
     const referee = fixtureDetail.response?.[0]?.fixture?.referee || null;
     const weather = fixtureDetail.response?.[0]?.fixture?.weather || null;
 
     return {
-      lineups: lineups.response,
-      injuries: injuries.response,
-      stats: stats.response,
-      h2h: h2h.response,
+      lineups: safe(lineupsRes).response || [],
+      injuries: safe(injuriesRes).response || [],
+      stats: safe(statsRes).response || [],
+      h2h: safe(h2hRes).response || [],
       referee,
       weather,
-      homePlayers: homePlayers.response,
-      awayPlayers: awayPlayers.response,
-      standings: standings.response,
-      topscorers: topscorers.response,
-      predictions: predictions.response,
+      homePlayers: safe(homePlayersRes).response || [],
+      awayPlayers: safe(awayPlayersRes).response || [],
+      standings: safe(standingsRes).response || [],
+      topscorers: safe(topscorersRes).response || [],
+      predictions: safe(predictionsRes).response || [],
     };
   }
 
@@ -189,12 +213,8 @@ exports.handler = async function () {
       const data = await res.json();
       const removeAccents = (txt) =>
         txt.normalize("NFD").replace(/[̀-ͯ]/g, "");
-      const nombreLocal = removeAccents(
-        partido.teams.home.name.toLowerCase()
-      );
-      const nombreVisita = removeAccents(
-        partido.teams.away.name.toLowerCase()
-      );
+      const nombreLocal = removeAccents(partido.teams.home.name.toLowerCase());
+      const nombreVisita = removeAccents(partido.teams.away.name.toLowerCase());
       const fechaPartido = new Date(partido.fixture.date)
         .toISOString()
         .split("T")[0];
@@ -433,19 +453,22 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
     const extras = await obtenerExtras(
       partido.fixture.id,
       partido.teams.home.id,
-      partido.teams.away.id
+      partido.teams.away.id,
+      partido.league.id
     );
 
-    const cuotasFiltradas = cuotas.filter(
-      (c) => c.valor && !isNaN(c.valor)
-    );
+    const cuotasFiltradas = cuotas.filter((c) => c.valor && !isNaN(c.valor));
     const cuotaMinima =
       cuotasFiltradas.length > 0
         ? Math.min(...cuotasFiltradas.map((c) => parseFloat(c.valor)))
         : 0;
 
-    const probabilidadEstimada =
-      cuotaMinima > 0 ? 1 / cuotaMinima : 0;
+    // ✅ EV calculado con probabilidad independiente (predictions)
+    const predHome = extras.predictions?.[0]?.percent?.home;
+    const probabilidadEstimada = predHome
+      ? parseFloat(predHome) / 100
+      : 0;
+
     const ev = calcularEV(probabilidadEstimada, cuotaMinima);
     const nivel = clasificarNivel(ev);
 
