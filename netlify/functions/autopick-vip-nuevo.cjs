@@ -304,22 +304,29 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
   for (const partido of partidos) {
     const cuotas = await obtenerCuotas(partido);
 
-    // ✅ Validación para evitar errores si cuotas no es un array válido
-    if (!Array.isArray(cuotas) || cuotas.length === 0) {
-      console.warn(`⚠️ Cuotas no válidas para el partido: ${partido.equipos || partido.teams?.home?.name + ' vs ' + partido.teams?.away?.name}`);
-      continue;
-    }
+    // Validación para evitar errores si cuotas no es un array válido
+if (!Array.isArray(cuotas) || cuotas.length === 0) {
+  console.warn(`⚠️ Cuotas no válidas para el partido: ${partido.equipos || partido.teams?.home?.name + ' vs ' + partido.teams?.away?.name}`);
+  continue;
+}
 
-    const hora = new Date(partido.fixture.date).toLocaleTimeString("es-MX", {
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone: "America/Mexico_City"
-    });
+const hora = new Date(partido.fixture.date).toLocaleTimeString("es-MX", {
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZone: "America/Mexico_City"
+});
 
-    const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
+const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
 
-    const cuotaMinima = Math.min(
+// Filtramos cuotas válidas antes de calcular la mínima
+const cuotasFiltradas = cuotas.filter(c => c.cuota && !isNaN(c.cuota));
+
+const cuotaMinima = cuotasFiltradas.length > 0
+  ? Math.min(...cuotasFiltradas.map(c => parseFloat(c.cuota)))
+  : 0;
+
 const cuotas = [];
+
       cuotas.find(c => c.linea === "Local")?.valor || 0,
       cuotas.find(c => c.linea === "Visitante")?.valor || 0
     );
