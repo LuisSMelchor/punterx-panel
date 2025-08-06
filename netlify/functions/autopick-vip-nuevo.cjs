@@ -8,7 +8,7 @@ exports.handler = async function () {
   const crypto = await import("node:crypto");
 
   const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_KEY = process.env.SUPABASE_KEY;
+  the SUPABASE_KEY = process.env.SUPABASE_KEY;
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
   const ODDS_API_KEY = process.env.ODDS_API_KEY;
@@ -326,49 +326,37 @@ exports.handler = async function () {
   }
 
   async function generarMensajeIA(
-  partido,
-  extras,
-  cuotas,
-  ev,
-  nivel,
-  hora,
-  esGratis = false
-) {
-  const historialTexto = await obtenerHistorial();
-  const extrasTexto = JSON.stringify(extras, null, 2);
-
-  const prompt = `
-Eres una inteligencia artificial especializada en apuestas deportivas. Tienes acceso a información avanzada del partido y tu historial reciente de aciertos.
-
-Tu objetivo es detectar oportunidades ocultas de valor en el mercado y explicar tu razonamiento de forma clara, profesional y convincente.
-
-📚 Historial reciente de aciertos:
-${historialTexto || "Sin datos disponibles aún."}
-
-📊 Datos del partido actual:
-- Equipos: ${partido.equipos}
-- Liga: ${partido.liga}
-- Hora (CDMX): ${hora}
-- Cuotas: ${
-    Array.isArray(cuotas)
+    partido,
+    extras,
+    cuotas,
+    ev,
+    nivel,
+    hora,
+    esGratis = false
+  ) {
+    const historialTexto = await obtenerHistorial();
+    const cuotasTexto = Array.isArray(cuotas)
       ? cuotas.map((c) => `${c.bookie}: ${c.linea} @ ${c.valor}`).join(" | ")
-      : "Cuotas no disponibles"
-  }
-- Valor Esperado (EV): ${ev.toFixed(1)}%
-- Nivel: ${nivel}
-${extrasTexto}
+      : "Cuotas no disponibles";
 
-🎯 Tarea:
-1. Explica por qué este partido tiene valor.
-2. Identifica señales ocultas (racha, árbitro, forma, ausencias, etc.)
-3. Concluye con una apuesta sugerida concreta (nombre y momio).
+    const basePrompt = `Eres una inteligencia artificial especializada en apuestas deportivas. Analiza el siguiente partido utilizando la información disponible.\n\n📚 Historial reciente de aciertos:\n${
+      historialTexto || "Sin datos disponibles aún."
+    }\n\n📊 Datos del partido actual:\n- Equipos: ${
+      partido.equipos
+    }\n- Liga: ${partido.liga}\n- Hora (CDMX): ${hora}\n- Cuotas: ${cuotasTexto}\n- Valor Esperado (EV): ${ev.toFixed(
+      1
+    )}%\n- Nivel: ${nivel}`;
 
-Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres una IA.
-`;
-  try {
-    const respuesta = await fetch(
-      "https://api.openai.com/v1/chat/completions",
-      {
+    const tareaGratis =
+      "\n\nRedacta un análisis breve sin revelar la apuesta sugerida. Concluye invitando a unirte al grupo VIP. Devuelve tu respuesta en formato JSON con las claves 'analisis' y 'apuesta' (deja 'apuesta' vacía).";
+
+    const tareaVIP =
+      "\n\nRedacta un análisis profesional y concluye con una apuesta sugerida concreta (nombre y momio). Devuelve tu respuesta en formato JSON con las claves 'analisis' y 'apuesta'.";
+
+    const prompt = basePrompt + (esGratis ? tareaGratis : tareaVIP);
+
+    try {
+      const respuesta = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -380,17 +368,41 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
           max_tokens: 300,
           temperature: 0.8,
         }),
+      });
+      const data = await respuesta.json();
+      const contenido = data.choices?.[0]?.message?.content || "{}";
+      try {
+        return JSON.parse(contenido);
+      } catch {
+        return { analisis: contenido, apuesta: "" };
       }
-    );
-    const data = await respuesta.json();
-    const textoIA =
-      data.choices?.[0]?.message?.content || "No se generó análisis.";
-    return textoIA;
-  } catch (e) {
-    console.error("❌ Error generando análisis con IA:", e.message);
-    return "No se pudo generar el análisis.";
+    } catch (e) {
+      console.error("❌ Error generando análisis con IA:", e.message);
+      return { analisis: "No se pudo generar el análisis.", apuesta: "" };
+    }
   }
-}
+
+  function construirMensaje(partido, hora, ev, nivel, infoIA, cuotas, esGratis) {
+    const equipos = `${partido.teams.home.name} vs ${partido.teams.away.name}`;
+    if (esGratis) {
+      return `📡 RADAR DE VALOR\n\n${equipos}\nHora: ${hora} (CDMX)\nEV estimado: ${ev.toFixed(
+        1
+      )}% | Nivel: ${nivel}\n\n${infoIA.analisis}\n\n🚀 Únete a nuestro grupo VIP para recibir la apuesta sugerida y picks exclusivos.\n👉 https://t.me/+qmgqwj5tZVM2NDQx`;
+    }
+
+    const extras = cuotas.filter(
+      (c) => ["Local", "Empate", "Visitante"].indexOf(c.linea) === -1
+    );
+    const extrasTexto = extras
+      .map((e) => `• ${e.linea} @ ${e.valor} (${e.bookie})`)
+      .join("\n");
+
+    return `🎯 PICK NIVEL: ${nivel}\n${equipos} (${partido.league.name})\nHora: ${hora} (CDMX)\nEV estimado: ${ev.toFixed(
+      1
+    )}%\n\n${infoIA.analisis}\n\nApuesta sugerida: ${infoIA.apuesta}\n${
+      extrasTexto ? `\nApuestas extra:\n${extrasTexto}\n` : ""
+    }⚠️ Las apuestas implican riesgo. Juega con responsabilidad.`;
+  }
 
   async function enviarMensaje(mensaje) {
     const body = {
@@ -465,78 +477,107 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
         ? Math.min(...cuotasFiltradas.map((c) => parseFloat(c.valor)))
         : 0;
 
-    // ✅ EV calculado con probabilidad independiente (predictions)
     const predHome = extras.predictions?.[0]?.percent?.home;
-    const probabilidadEstimada = predHome
-      ? parseFloat(predHome) / 100
-      : 0;
+    const probabilidadEstimada = predHome ? parseFloat(predHome) / 100 : 0;
 
     const ev = calcularEV(probabilidadEstimada, cuotaMinima);
     const nivel = clasificarNivel(ev);
 
-    const esVIP = ev >= 1;
-    const mensajeTexto = await generarMensajeIA(
+    if (ev < 15) continue;
+
+    const yaEnviado = await yaFueEnviado(partido.fixture.id);
+    if (yaEnviado) {
+      console.log(
+        `⚠️ Ya se envió el pick del fixture ${partido.fixture.id}, se omite.`
+      );
+      continue;
+    }
+
+    const infoGratis = await generarMensajeIA(
       partido,
       extras,
       cuotas,
       ev,
       nivel,
       hora,
-      !esVIP
+      true
     );
-    const mensajeFinal = {
-      mensaje: mensajeTexto,
-      apuesta: null,
-      analisis: mensajeTexto,
+    const infoVIP = await generarMensajeIA(
+      partido,
+      extras,
+      cuotas,
+      ev,
+      nivel,
+      hora,
+      false
+    );
+
+    const mensajeGratis = construirMensaje(
+      partido,
+      hora,
+      ev,
+      nivel,
+      infoGratis,
+      cuotas,
+      true
+    );
+    const mensajeVIP = construirMensaje(
+      partido,
+      hora,
+      ev,
+      nivel,
+      infoVIP,
+      cuotas,
+      false
+    );
+
+    await enviarMensaje(mensajeGratis);
+    await enviarMensaje(mensajeVIP);
+
+    const insertData = {
+      timestamp: new Date().toISOString(),
+      fixture_id: partido.fixture.id,
+      evento: `${partido.teams.home.name} vs ${partido.teams.away.name}`,
+      equipos: `${partido.teams.home.name} vs ${partido.teams.away.name}`,
+      liga: `${partido.league.country} - ${partido.league.name}`,
+      analisis: infoVIP.analisis || "No disponible",
+      apuesta: infoVIP.apuesta || "No definida",
+      tipo_pick: nivel || "Sin nivel",
+      ev: Number.isFinite(ev) ? Number(ev.toFixed(2)) : undefined,
+      probabilidad: Number.isFinite(probabilidadEstimada)
+        ? Number(probabilidadEstimada.toFixed(2))
+        : undefined,
+      nivel: nivel || "Sin clasificar",
     };
-
-    if (mensajeFinal && mensajeFinal.mensaje) {
-      const yaEnviado = await yaFueEnviado(partido.fixture.id);
-      if (!yaEnviado) {
-        await enviarMensaje(mensajeFinal.mensaje);
-        await guardarPickEnHistorial({
-          timestamp: new Date().toISOString(),
-          evento: `${partido.teams.home.name} vs ${partido.teams.away.name}`,
-          equipos: `${partido.teams.home.name} vs ${partido.teams.away.name}`,
-          liga: `${partido.league.country} - ${partido.league.name}`,
-          analisis: mensajeFinal.analisis || "No disponible",
-          apuesta: mensajeFinal.apuesta || "No definida",
-          tipo_pick: mensajeFinal.nivel || nivel || "Sin nivel",
-          ev: parseFloat(ev.toFixed(2)) || null,
-          probabilidad: parseFloat(probabilidadEstimada.toFixed(2)) || null,
-          nivel: nivel || "Sin clasificar",
-        });
-
-        const cuotaLocal =
-          cuotas.find((c) => c.linea === "Local")?.valor || 0;
-        const cuotaEmpate =
-          cuotas.find((c) => c.linea === "Empate")?.valor || 0;
-        const cuotaVisitante =
-          cuotas.find((c) => c.linea === "Visitante")?.valor || 0;
-
-        await guardarEnMemoriaSupabase({
-          equipo_local: partido.teams.home.name,
-          equipo_visitante: partido.teams.away.name,
-          liga: partido.league.name,
-          pais: partido.league.country,
-          cuota_local: cuotaLocal,
-          cuota_visitante: cuotaVisitante,
-          cuota_empate: cuotaEmpate,
-          ev,
-          nivel,
-          hora_local: hora,
-          mensaje: mensajeFinal.mensaje,
-          es_vip: esVIP,
-          probabilidad_estimada: probabilidadEstimada,
-        });
-
-        await registrarPickEnviado(partido.fixture.id);
-      } else {
-        console.log(
-          `⚠️ Ya se envió el pick del fixture ${partido.fixture.id}, se omite.`
-        );
+    for (const k of Object.keys(insertData)) {
+      if (insertData[k] === undefined || insertData[k] === null) {
+        delete insertData[k];
       }
     }
+    await guardarPickEnHistorial(insertData);
+
+    const cuotaLocal = cuotas.find((c) => c.linea === "Local")?.valor || 0;
+    const cuotaEmpate = cuotas.find((c) => c.linea === "Empate")?.valor || 0;
+    const cuotaVisitante =
+      cuotas.find((c) => c.linea === "Visitante")?.valor || 0;
+
+    await guardarEnMemoriaSupabase({
+      equipo_local: partido.teams.home.name,
+      equipo_visitante: partido.teams.away.name,
+      liga: partido.league.name,
+      pais: partido.league.country,
+      cuota_local: cuotaLocal,
+      cuota_visitante: cuotaVisitante,
+      cuota_empate: cuotaEmpate,
+      ev,
+      nivel,
+      hora_local: hora,
+      mensaje: mensajeVIP,
+      es_vip: true,
+      probabilidad_estimada: probabilidadEstimada,
+    });
+
+    await registrarPickEnviado(partido.fixture.id);
   }
 
   return {
