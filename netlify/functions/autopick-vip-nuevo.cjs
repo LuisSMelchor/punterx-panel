@@ -318,13 +318,11 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
 
     const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
 
-const cuotasFiltradas = cuotas.filter(c => c.cuota && parseFloat(c.cuota) > 1.01);
-    const cuotaMinima = cuotasFiltradas.length > 0
-  ? Math.min(...cuotasFiltradas.map(c => parseFloat(c.cuota)))
-  : 0;
+    const cuotaMinima = Math.min(
+const cuotas = [];
       cuotas.find(c => c.linea === "Local")?.valor || 0,
       cuotas.find(c => c.linea === "Visitante")?.valor || 0
-    
+    );
     // Estimar probabilidad implícita a partir de la cuota mínima (evitar probabilidad indefinida)
     const probabilidadEstimada = cuotaMinima > 0 ? 1 / cuotaMinima : 0;
     const ev = calcularEV(probabilidadEstimada, cuotaMinima);
