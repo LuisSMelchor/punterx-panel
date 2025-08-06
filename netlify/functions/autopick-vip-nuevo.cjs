@@ -354,7 +354,7 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
     });
   }
 }
-        });
+    }
         // Guardar también en la "memoria" de Supabase los detalles del pick
         const cuotaLocal = cuotas.find(c => c.linea === 'Local')?.valor || 0;
         const cuotaEmpate = cuotas.find(c => c.linea === 'Empate')?.valor || 0;
@@ -375,14 +375,10 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
           probabilidad_estimada: probabilidadEstimada
         });
         await registrarPickEnviado(partido.fixture.id);
-      } else {
         console.log(`⚠️ Ya se envió el pick del fixture ${partido.fixture.id}, se omite.`);
       }
-    }
-  }
 
   return {
     statusCode: 200,
     body: JSON.stringify({ ok: true })
   };
-};
