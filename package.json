@@ -1,7 +1,6 @@
 {
   "name": "punterx-panel",
   "version": "1.0.0",
-  "type": "module",
   "scripts": {
     "build": "echo 'Build step (dummy)'"
   },
