@@ -318,7 +318,7 @@ Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres u
 
     const extras = await obtenerExtras(partido.fixture.id, partido.teams.home.id, partido.teams.away.id);
 
-    const cuotaMinima = Math.min(
+    const cuotaMinima = Math.min(;
 const cuotas = [];
       cuotas.find(c => c.linea === "Local")?.valor || 0,
       cuotas.find(c => c.linea === "Visitante")?.valor || 0
