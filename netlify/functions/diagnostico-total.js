@@ -27,7 +27,7 @@ exports.handler = async function(event, context) {
 - Estado: ✅ Activa
 
 💰 OddsAPI:
-- Llamadas usadas: ~1,250 / 5,000 (25% aprox)
+- Llamadas usadas: ~1,250 / 20,000 (25% aprox)
 - Estado: ✅ Activa
 
 🧠 OpenAI:
