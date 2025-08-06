@@ -1,5 +1,5 @@
 // netlify/functions/diagnostico-total.js
-const fetch = require('node-fetch');
+const fetch = globalThis.fetch;
 
 exports.handler = async function () {
   try {
