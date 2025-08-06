@@ -326,16 +326,18 @@ exports.handler = async function () {
   }
 
   async function generarMensajeIA(
-    partido,
-    extras,
-    cuotas,
-    ev,
-    nivel,
-    hora,
-    esGratis = false
-  ) {
-    const historialTexto = await obtenerHistorial();
-    const prompt = `
+  partido,
+  extras,
+  cuotas,
+  ev,
+  nivel,
+  hora,
+  esGratis = false
+) {
+  const historialTexto = await obtenerHistorial();
+  const extrasTexto = JSON.stringify(extras, null, 2);
+
+  const prompt = `
 Eres una inteligencia artificial especializada en apuestas deportivas. Tienes acceso a información avanzada del partido y tu historial reciente de aciertos.
 
 Tu objetivo es detectar oportunidades ocultas de valor en el mercado y explicar tu razonamiento de forma clara, profesional y convincente.
@@ -348,13 +350,13 @@ ${historialTexto || "Sin datos disponibles aún."}
 - Liga: ${partido.liga}
 - Hora (CDMX): ${hora}
 - Cuotas: ${
-      Array.isArray(cuotas)
-        ? cuotas.map((c) => `${c.bookie}: ${c.linea} @ ${c.valor}`).join(" | ")
-        : "Cuotas no disponibles"
-    }
+    Array.isArray(cuotas)
+      ? cuotas.map((c) => `${c.bookie}: ${c.linea} @ ${c.valor}`).join(" | ")
+      : "Cuotas no disponibles"
+  }
 - Valor Esperado (EV): ${ev.toFixed(1)}%
 - Nivel: ${nivel}
-${extras}
+${extrasTexto}
 
 🎯 Tarea:
 1. Explica por qué este partido tiene valor.
@@ -363,32 +365,32 @@ ${extras}
 
 Responde en máximo 150 palabras. No hagas repeticiones. No menciones que eres una IA.
 `;
-    try {
-      const respuesta = await fetch(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: "gpt-4",
-            messages: [{ role: "user", content: prompt }],
-            max_tokens: 300,
-            temperature: 0.8,
-          }),
-        }
-      );
-      const data = await respuesta.json();
-      const textoIA =
-        data.choices?.[0]?.message?.content || "No se generó análisis.";
-      return textoIA;
-    } catch (e) {
-      console.error("❌ Error generando análisis con IA:", e.message);
-      return "No se pudo generar el análisis.";
-    }
+  try {
+    const respuesta = await fetch(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4",
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 300,
+          temperature: 0.8,
+        }),
+      }
+    );
+    const data = await respuesta.json();
+    const textoIA =
+      data.choices?.[0]?.message?.content || "No se generó análisis.";
+    return textoIA;
+  } catch (e) {
+    console.error("❌ Error generando análisis con IA:", e.message);
+    return "No se pudo generar el análisis.";
   }
+}
 
   async function enviarMensaje(mensaje) {
     const body = {
