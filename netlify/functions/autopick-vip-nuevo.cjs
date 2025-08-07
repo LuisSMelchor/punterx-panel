@@ -5,6 +5,17 @@ console.log("Despliegue forzado con nuevo nombre");
 const fetch = globalThis.fetch;
 
 exports.handler = async function () {
+
+const oddsURL = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h,over_under_2_5,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`;
+
+try {
+  const response = await fetch(oddsURL);
+  const oddsData = await response.json();
+  console.log("✅ OddsAPI response:", oddsData);
+} catch (error) {
+  console.error("❌ Error al consultar OddsAPI:", error.message);
+}
+  
   const crypto = await import("node:crypto");
 
   const SUPABASE_URL = process.env.SUPABASE_URL;
