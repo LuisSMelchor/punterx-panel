@@ -52,7 +52,7 @@ try {
   console.log('Funciones activas detectadas:', funcionesActivas);
 } catch (e) {
   console.log('Error al contar funciones:', e.message);
-  funcionesActivas = 0;
+  funcionesActivas = 0;}
 
     // API-FOOTBALL
     try {
