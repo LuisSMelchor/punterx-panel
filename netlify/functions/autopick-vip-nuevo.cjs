@@ -216,7 +216,7 @@ exports.handler = async function () {
 
   async function obtenerCuotas(partido) {
   try {
-    const url = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h,over_under_2_5,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`;
+    const url = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h,totals,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`;
 
     console.log(`🔍 Consultando cuotas para: ${partido.equipos || 'Sin nombre definido'}`);
     console.log(`📦 Datos del partido:`, {
@@ -479,6 +479,10 @@ exports.handler = async function () {
   const partidos = filtrarPartidos(await obtenerPartidos());
 
   for (const partido of partidos) {
+    // Construir correctamente el objeto partido para obtenerCuotas
+partido.liga = `${partido.league?.name || 'Sin liga'} (${partido.league?.country || 'País desconocido'})`;
+partido.equipos = `${partido.teams?.home?.name || 'Equipo local'} vs ${partido.teams?.away?.name || 'Equipo visitante'}`;
+partido.fixture_id = partido.fixture?.id || null;
     const cuotas = await obtenerCuotas(partido);
 
     if (!Array.isArray(cuotas) || cuotas.length === 0) {
