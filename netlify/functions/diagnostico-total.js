@@ -63,10 +63,10 @@ exports.handler = async () => {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
       body: resultado,
     };
-  } catch (err) {
+  } catch (error) {
     return {
       statusCode: 500,
-      body: `❌ Error al generar el diagnóstico: ${err.message}`,
+      body: `❌ Error al generar el diagnóstico: ${error.message}`,
     };
   }
 };
