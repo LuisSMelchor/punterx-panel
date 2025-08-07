@@ -613,64 +613,6 @@ ${datosIA.analisis_vip}
 // 🚀 Envío automático a Telegram
 await enviarMensaje(mensajeGratis, false); // Canal gratuito
 await enviarMensaje(mensajeVIP, true);     // Grupo VIP
-    
-    const ev = calcularEV(probabilidadEstimada, cuotaMinima);
-    const nivel = clasificarNivel(ev);
-
-    if (ev < 14) continue;
-
-    const yaEnviado = await yaFueEnviado(partido.fixture.id);
-    if (yaEnviado) {
-      console.log(
-        `⚠️ Ya se envió el pick del fixture ${partido.fixture.id}, se omite.`
-      );
-      continue;
-    }
-
-    const infoGratis = await generarMensajeIA(
-      partido,
-      extras,
-      cuotas,
-      ev,
-      nivel,
-      hora,
-      true
-    );
-    const infoVIP = await generarMensajeIA(
-      partido,
-      extras,
-      cuotas,
-      ev,
-      nivel,
-      hora,
-      false
-    );
-
-    const mensajeGratis = construirMensaje(
-      partido,
-      hora,
-      ev,
-      nivel,
-      infoGratis,
-      cuotas,
-      true
-    );
-    const mensajeVIP = construirMensaje(
-      partido,
-      hora,
-      ev,
-      nivel,
-      infoVIP,
-      cuotas,
-      false
-    );
-
-    await enviarMensaje(mensajeGratis);
-    await enviarMensaje(mensajeVIP);
-
-    const cuotaLocal = cuotas.find((c) => c.linea === "Local")?.valor || null;
-    const cuotaEmpate = cuotas.find((c) => c.linea === "Empate")?.valor || null;
-    const cuotaVisitante = cuotas.find((c) => c.linea === "Visitante")?.valor || null;
 
     const pickData = {
       timestamp: new Date().toISOString(),
