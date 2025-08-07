@@ -267,7 +267,7 @@ exports.handler = async function () {
                 bookie: bm.title,
               });
             }
-            if (market.key === "btts" && name includes("yes")) {
+            if (market.key === "btts" && name.includes("yes")) {
               extras.push({
                 linea: "Ambos anotan: sí",
                 valor: price,
