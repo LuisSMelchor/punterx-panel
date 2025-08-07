@@ -248,7 +248,7 @@ exports.handler = async function () {
             const name = o.name.toLowerCase();
             const price = o.price;
             if (market.key === "h2h") {
-              if (name includes(nombreLocal) && price > mejorHome) {
+              if (name.includes(nombreLocal) && price > mejorHome) {
                 mejorHome = price;
                 bookie = bm.title;
               }
