@@ -64,9 +64,13 @@ exports.handler = async () => {
       body: resultado,
     };
   } catch (error) {
-    return {
-      statusCode: 500,
-      body: `❌ Error al generar el diagnóstico: ${error.message}`,
-    };
-  }
+  const mensaje = typeof error === 'object' && error !== null
+    ? JSON.stringify(error, null, 2)
+    : String(error);
+
+  return {
+    statusCode: 500,
+    body: `❌ Error al generar el diagnóstico: ${mensaje}`,
+  };
+}
 };
