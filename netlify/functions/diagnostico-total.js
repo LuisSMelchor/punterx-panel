@@ -8,7 +8,7 @@ require('dotenv').config();
 
 // Environment variables
 const SUPABASE_URL = process.env.SUPABASE_URL;
-the SUPABASE_KEY = process.env.SUPABASE_KEY;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
