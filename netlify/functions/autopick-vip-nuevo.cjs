@@ -254,7 +254,7 @@ exports.handler = async function () {
             const name = o.name.toLowerCase();
             const price = o.price;
             if (market.key === "h2h") {
-              if (name includes(nombreLocal) && price > mejorHome) {
+              if (name.includes(nombreLocal) && price > mejorHome) {
                 mejorHome = price;
                 bookie = bm.title;
               }
@@ -266,21 +266,21 @@ exports.handler = async function () {
                 bookie = bm.title;
               }
             }
-            if (market.key === "over_under_2_5" && name includes("over")) {
+            if (market.key === "over_under_2_5" && name.includes("over")) {
               extras.push({
                 linea: "Over 2.5 goles",
                 valor: price,
                 bookie: bm.title,
               });
             }
-            if (market.key === "btts" && name includes("yes")) {
+            if (market.key === "btts" && name.includes("yes")) {
               extras.push({
                 linea: "Ambos anotan: sí",
                 valor: price,
                 bookie: bm.title,
               });
             }
-            if (market key === "double_chance" && name includes("draw or")) {
+            if (market key === "double_chance" && name.includes("draw or")) {
               extras.push({
                 linea: `Doble oportunidad ${o.name}`,
                 valor: price,
