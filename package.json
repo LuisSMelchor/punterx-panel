@@ -5,6 +5,8 @@
     "build": "echo 'Build step (dummy)'"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.53.0"
+    "@supabase/supabase-js": "^2.53.0",
+    "dayjs": "^1.11.10",
+    "dotenv": "^16.3.1"
   }
 }
