@@ -4,8 +4,6 @@ console.log("Despliegue forzado con nuevo nombre");
 
 const fetch = globalThis.fetch;
 
-const ODDS_API_KEY = process.env.ODDS_API_KEY;
-
 exports.handler = async function () {
   const crypto = await import("node:crypto");
 
@@ -13,6 +11,7 @@ exports.handler = async function () {
   const SUPABASE_KEY = process.env.SUPABASE_KEY;
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
+  const ODDS_API_KEY = process.env.ODDS_API_KEY;
   const PANEL_ENDPOINT = process.env.PANEL_ENDPOINT;
   const AUTH_CODE = process.env.AUTH_CODE;
   const SECRET = process.env.PUNTERX_SECRET;
@@ -77,7 +76,6 @@ exports.handler = async function () {
   }
 
   async function yaFueEnviado(fixtureId) {
-    try {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/picks_enviados?fixture_id=eq.${fixtureId}`,
       {
@@ -89,10 +87,6 @@ exports.handler = async function () {
     );
     const data = await res.json();
     return data.length > 0;
-  } catch (error) {
-    console.error('❌ Error en yaFueEnviado:', error.message);
-    return false;
-  }
   }
 
   async function registrarPickEnviado(fixtureId) {
@@ -254,33 +248,33 @@ exports.handler = async function () {
             const name = o.name.toLowerCase();
             const price = o.price;
             if (market.key === "h2h") {
-              if (name.includes(nombreLocal) && price > mejorHome) {
+              if (name includes(nombreLocal) && price > mejorHome) {
                 mejorHome = price;
                 bookie = bm.title;
               }
-              if (name.includes("draw") && price > mejorDraw) {
+              if (name includes("draw") && price > mejorDraw) {
                 mejorDraw = price;
               }
-              if (name.includes(nombreVisita) && price > mejorAway) {
+              if (name includes(nombreVisita) && price > mejorAway) {
                 mejorAway = price;
                 bookie = bm.title;
               }
             }
-            if (market.key === "over_under_2_5" && name.includes("over")) {
+            if (market.key === "over_under_2_5" && name includes("over")) {
               extras.push({
                 linea: "Over 2.5 goles",
                 valor: price,
                 bookie: bm.title,
               });
             }
-            if (market.key === "btts" && name.includes("yes")) {
+            if (market.key === "btts" && name includes("yes")) {
               extras.push({
                 linea: "Ambos anotan: sí",
                 valor: price,
                 bookie: bm.title,
               });
             }
-            if (market.key === "double_chance" && name.includes("draw or")) {
+            if (market key === "double_chance" && name includes("draw or")) {
               extras.push({
                 linea: `Doble oportunidad ${o.name}`,
                 valor: price,
@@ -486,10 +480,6 @@ exports.handler = async function () {
     const predHome = extras.predictions?.[0]?.percent?.home;
     const probabilidadEstimada = predHome ? parseFloat(predHome) / 100 : 0;
 
-        if (!cuotaMinima || isNaN(cuotaMinima)) {
-          console.log("⚠️ Cuota inválida detectada, skip pick");
-          continue;
-        }
     const ev = calcularEV(probabilidadEstimada, cuotaMinima);
     const nivel = clasificarNivel(ev);
 
