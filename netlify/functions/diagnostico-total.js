@@ -1,150 +1,130 @@
-const { createClient } = require('@supabase/supabase-js');
-const fetch = require('node-fetch');
+// netlify/functions/diagnostico-total.js
+import { createClient } from '@supabase/supabase-js';
+import fetch from 'node-fetch';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
 
-exports.handler = async () => {
-  const errores = [];
-  let conexionSupabase = "❌ ERROR";
-  let funcionesActivas = 0;
+const ESTADO_OK = '<span style="color:green;font-weight:bold">OK</span>';
+const ESTADO_ERROR = '<span style="color:red;font-weight:bold">ERROR</span>';
+const estadoColor = (estado) => estado === 'OK' ? '🟢 Estable' : '🔴 Inestable';
+
+export default async function handler(req, res) {
+  const now = new Date();
+  const fechaActual = now.toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
+
+  let estadoSupabase = 'OK';
+  let estadoFootball = 'OK';
+  let estadoOdds = 'OK';
+  let estadoOpenAI = 'OK';
   let picksHoy = 0;
-  let ultimoPick = "No disponible";
-  let estadoFootball = "❌";
-  let estadoOdds = "❌";
-  let estadoOpenAI = "❌";
+  let ultimoPick = 'No disponible';
+  let funcionesActivas = 0;
+  let errores = [];
+  let estadoGeneral = 'Estable 🟢';
 
-  // Verifica Supabase
   try {
+    // Verificar Supabase y obtener picks recientes
     const { data, error } = await supabase
-      .from("picks_historicos")
-      .select("*")
-      .order("timestamp", { ascending: false })
-      .limit(1);
+      .from('picks_historicos')
+      .select('*')
+      .order('timestamp', { ascending: false })
+      .limit(5);
 
     if (error) throw error;
-    conexionSupabase = "✅ OK";
 
-    if (data.length > 0) {
-      const pick = data[0];
-      ultimoPick = `${pick.equipos} (${pick.ev}% EV)`;
-    }
-  } catch (err) {
-    errores.push("Supabase: " + err.message);
+    const hoy = new Date().toISOString().split('T')[0];
+    picksHoy = data.filter(p => p.timestamp.startsWith(hoy)).length;
+    ultimoPick = data[0]?.evento || 'No disponible';
+  } catch (e) {
+    estadoSupabase = 'ERROR';
+    errores.push('❌ Supabase: ' + e.message);
   }
 
-  // Verifica cuántos picks hoy
+  // Verificar APIs externas
   try {
-    const hoy = new Date().toISOString().slice(0, 10);
-    const { count, error } = await supabase
-      .from("picks_historicos")
-      .select("*", { count: "exact", head: true })
-      .gte("timestamp", `${hoy}T00:00:00.000Z`);
-
-    if (error) throw error;
-    picksHoy = count || 0;
-  } catch (err) {
-    errores.push("Conteo de picks hoy: " + err.message);
+    const res1 = await fetch('https://v3.football.api-sports.io/status', {
+      headers: { 'x-apisports-key': process.env.API_FOOTBALL_KEY }
+    });
+    if (!res1.ok) throw new Error('API-FOOTBALL no responde');
+  } catch (e) {
+    estadoFootball = 'ERROR';
+    errores.push('⚠️ API-Football: ' + e.message);
   }
 
-  // Verifica API-Football
   try {
-    const res = await fetch(
-      "https://v3.football.api-sports.io/status",
-      { headers: { "x-apisports-key": process.env.API_FOOTBALL_KEY } }
-    );
-    if (res.ok) estadoFootball = "✅ OK";
-    else errores.push("API-Football: Status " + res.status);
-  } catch (err) {
-    errores.push("API-Football: " + err.message);
+    const res2 = await fetch(`https://api.the-odds-api.com/v4/sports`, {
+      headers: { 'x-api-key': process.env.ODDS_API_KEY }
+    });
+    if (!res2.ok) throw new Error('OddsAPI no responde');
+  } catch (e) {
+    estadoOdds = 'ERROR';
+    errores.push('⚠️ OddsAPI: ' + e.message);
   }
 
-  // Verifica OddsAPI
   try {
-    const res = await fetch(
-      `https://api.the-odds-api.com/v4/sports/?apiKey=${process.env.ODDS_API_KEY}`
-    );
-    if (res.ok) estadoOdds = "✅ OK";
-    else errores.push("OddsAPI: Status " + res.status);
-  } catch (err) {
-    errores.push("OddsAPI: " + err.message);
-  }
-
-  // Verifica OpenAI
-  try {
-    const res = await fetch("https://api.openai.com/v1/models", {
+    const res3 = await fetch('https://api.openai.com/v1/models', {
       headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }
     });
-    if (res.ok) estadoOpenAI = "✅ OK";
-    else errores.push("OpenAI: Status " + res.status);
-  } catch (err) {
-    errores.push("OpenAI: " + err.message);
+    if (!res3.ok) throw new Error('OpenAI no responde');
+  } catch (e) {
+    estadoOpenAI = 'ERROR';
+    errores.push('⚠️ OpenAI: ' + e.message);
   }
 
-  // Verifica funciones activas (dummy logic si no tienes tracking real)
-  funcionesActivas = 1; // Puedes automatizar si quieres más adelante
+  // Verificar funciones activas desde Netlify env
+  try {
+    funcionesActivas = 1; // Aquí puedes integrar con un contador real si lo deseas
+  } catch (e) {
+    errores.push('⚠️ No se pudo contar funciones activas');
+  }
 
-  const estadoGeneral = errores.length === 0 ? "🟢 Estable" : "🟠 Con advertencias";
+  if ([estadoSupabase, estadoFootball, estadoOdds, estadoOpenAI].includes('ERROR')) {
+    estadoGeneral = '⚠️ Inestable 🔴';
+  }
 
   const html = `
-  <!DOCTYPE html>
-  <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <title>🧠 Diagnóstico PunterX</title>
-    <style>
-      body { font-family: Arial, sans-serif; background: #f4f4f4; padding: 30px; color: #333; }
-      .card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; }
-      h1 { font-size: 24px; color: #333; }
-      h2 { font-size: 20px; color: #444; }
-      .estado { font-size: 18px; margin: 5px 0; }
-      .ok { color: green; }
-      .error { color: red; }
-      .advertencia { color: orange; }
-      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-      .footer { font-size: 14px; margin-top: 40px; color: #777; }
-    </style>
-  </head>
-  <body>
-    <h1>📊 Diagnóstico General del Sistema <span style="float:right;">${new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}</span></h1>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Diagnóstico PunterX</title>
+        <style>
+          body { font-family: Arial, sans-serif; background:#f8f8f8; color:#333; padding:30px; }
+          h1 { color:#2c3e50; }
+          .ok { color: green; font-weight: bold; }
+          .error { color: red; font-weight: bold; }
+          .box { background:#fff; padding:20px; border-radius:8px; box-shadow:0 0 5px rgba(0,0,0,0.1); max-width:700px; margin:auto; }
+          .status { margin-bottom:10px; }
+          .errores { margin-top:20px; color:#e74c3c; }
+        </style>
+      </head>
+      <body>
+        <div class="box">
+          <h1>📊 Diagnóstico General de PunterX</h1>
+          <p><strong>Fecha y hora:</strong> ${fechaActual}</p>
+          <p class="status"><strong>Estado general:</strong> ${estadoGeneral}</p>
+          <p><strong>Último pick enviado:</strong> ${ultimoPick}</p>
+          <p><strong>Número de picks hoy:</strong> ${picksHoy}</p>
+          <p><strong>Funciones activas:</strong> ${funcionesActivas}</p>
+          <hr />
+          <p><strong>🧠 Supabase:</strong> ${estadoSupabase === 'OK' ? ESTADO_OK : ESTADO_ERROR}</p>
+          <p><strong>⚽ API-Football:</strong> ${estadoFootball === 'OK' ? ESTADO_OK : ESTADO_ERROR}</p>
+          <p><strong>📈 OddsAPI:</strong> ${estadoOdds === 'OK' ? ESTADO_OK : ESTADO_ERROR}</p>
+          <p><strong>🤖 OpenAI:</strong> ${estadoOpenAI === 'OK' ? ESTADO_OK : ESTADO_ERROR}</p>
 
-    <div class="card">
-      <h2>🧠 Estado del sistema: ${estadoGeneral}</h2>
-      <div class="grid">
-        <div class="estado">📤 Último pick: <strong>${ultimoPick}</strong></div>
-        <div class="estado">📅 Picks hoy: <strong>${picksHoy}</strong></div>
-        <div class="estado">⚙️ Funciones activas: <strong>${funcionesActivas}</strong></div>
-        <div class="estado">🔗 Supabase: <strong class="${conexionSupabase.includes('OK') ? 'ok' : 'error'}">${conexionSupabase}</strong></div>
-        <div class="estado">⚽ API-Football: <strong class="${estadoFootball.includes('OK') ? 'ok' : 'error'}">${estadoFootball}</strong></div>
-        <div class="estado">📊 OddsAPI: <strong class="${estadoOdds.includes('OK') ? 'ok' : 'error'}">${estadoOdds}</strong></div>
-        <div class="estado">🧠 OpenAI: <strong class="${estadoOpenAI.includes('OK') ? 'ok' : 'error'}">${estadoOpenAI}</strong></div>
-      </div>
-    </div>
-
-    ${errores.length > 0 ? `
-      <div class="card">
-        <h2>⚠️ Errores detectados</h2>
-        <ul>${errores.map(err => `<li class="advertencia">${err}</li>`).join('')}</ul>
-      </div>
-    ` : `
-      <div class="card">
-        <h2>✅ Sin errores actuales</h2>
-      </div>
-    `}
-
-    <div class="footer">
-      Sistema automatizado PunterX · Diagnóstico generado automáticamente<br/>
-      Zona horaria: <strong>CDMX</strong> · Versión: Diagnóstico HTML v1.0
-    </div>
-  </body>
-  </html>
+          ${errores.length > 0 ? `
+            <div class="errores">
+              <h3>Errores recientes:</h3>
+              <ul>
+                ${errores.map(e => `<li>${e}</li>`).join('')}
+              </ul>
+            </div>` : ''}
+        </div>
+      </body>
+    </html>
   `;
 
-  return {
-    statusCode: 200,
-    headers: { "Content-Type": "text/html" },
-    body: html,
-  };
-};
+  res.status(200).setHeader('Content-Type', 'text/html').end(html);
+}
