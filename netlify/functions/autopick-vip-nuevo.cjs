@@ -76,8 +76,8 @@ exports.handler = async function () {
     return null;
   }
 
-  try {
   async function yaFueEnviado(fixtureId) {
+    try {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/picks_enviados?fixture_id=eq.${fixtureId}`,
       {
