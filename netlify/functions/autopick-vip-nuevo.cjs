@@ -260,7 +260,7 @@ exports.handler = async function () {
                 bookie = bm.title;
               }
             }
-            if (market.key === "over_under_2_5" && name includes("over")) {
+            if (market.key === "over_under_2_5" && name.includes("over")) {
               extras.push({
                 linea: "Over 2.5 goles",
                 valor: price,
