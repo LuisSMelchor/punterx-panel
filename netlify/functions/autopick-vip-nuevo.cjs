@@ -255,7 +255,7 @@ exports.handler = async function () {
               if (name.includes("draw") && price > mejorDraw) {
                 mejorDraw = price;
               }
-              if (name includes(nombreVisita) && price > mejorAway) {
+              if (name.includes(nombreVisita) && price > mejorAway) {
                 mejorAway = price;
                 bookie = bm.title;
               }
