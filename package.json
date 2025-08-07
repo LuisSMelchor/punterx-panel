@@ -4,16 +4,11 @@
   "scripts": {
     "build": "echo 'Build step (dummy)'"
   },
-"dependencies": {
-  "@supabase/supabase-js": "^2.53.0",
-  "dayjs": "^1.11.10",
-  "dotenv": "^16.3.1",
-  "node-fetch": "^3.3.2",
-  "openai": "^4.30.1"
-}
   "dependencies": {
     "@supabase/supabase-js": "^2.53.0",
     "dayjs": "^1.11.10",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "node-fetch": "^2.6.7",
+    "openai": "^3.2.1"
   }
 }
