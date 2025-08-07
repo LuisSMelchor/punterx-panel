@@ -252,7 +252,7 @@ exports.handler = async function () {
                 mejorHome = price;
                 bookie = bm.title;
               }
-              if (name includes("draw") && price > mejorDraw) {
+              if (name.includes("draw") && price > mejorDraw) {
                 mejorDraw = price;
               }
               if (name includes(nombreVisita) && price > mejorAway) {
