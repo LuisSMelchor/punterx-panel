@@ -17,6 +17,7 @@ async function diagnosticoNivel2() {
 
 exports.handler = async () => {
   console.log('Iniciando diagnóstico total nivel 1');
+
   try {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
@@ -27,7 +28,8 @@ exports.handler = async () => {
       .order('timestamp', { ascending: false })
       .limit(1);
     if (errorUltimo) throw errorUltimo;
-    const ultimoTimestamp = ultimoPickData[0]?.timestamp;
+
+    const ultimoTimestamp = ultimoPickData?.[0]?.timestamp;
     const ultimoPick = ultimoTimestamp ? dayjs().to(dayjs(ultimoTimestamp)) : 'No disponible';
     console.log('Último pick timestamp:', ultimoTimestamp);
 
@@ -43,10 +45,11 @@ exports.handler = async () => {
     // Contar funciones de Netlify
     const functionsDir = __dirname;
     const funcionesActivas = fs
-  .readdirSync(functionsDir)
-  .filter((f) =>
-    /\.(js|cjs|ts)$/i.test(f) && !f.includes('diagnostico-total')
-  ).length;
+      .readdirSync(functionsDir)
+      .filter((f) =>
+        /\.(js|cjs|ts)$/i.test(f) &&
+        !f.includes('diagnostico-total')
+      ).length;
     console.log('Funciones activas detectadas:', funcionesActivas);
 
     let estadoGeneral = 'Estable 🟢';
@@ -68,9 +71,7 @@ exports.handler = async () => {
 
     // OddsAPI
     try {
-      const r = await fetch('https://api.the-odds-api.com/v4/sports', {
-        headers: { 'x-api-key': process.env.ODDS_API_KEY }
-      });
+      const r = await fetch(`https://api.the-odds-api.com/v4/sports?apiKey=${process.env.ODDS_API_KEY}`);
       resultadosApis.push(`📊 OddsAPI: ${r.ok ? 'OK' : 'Error ' + r.status}`);
       if (!r.ok) estadoGeneral = 'Inestable 🔴';
       console.log('OddsAPI status:', r.status);
@@ -98,7 +99,7 @@ exports.handler = async () => {
       `🔄 Último pick enviado: ${ultimoPick}`,
       `✅ Conexión a Supabase: OK`,
       `⚙️ Funciones activas en Netlify: ${funcionesActivas}`,
-      `📅 Picks registrados hoy: ${picksHoy}`,
+      `📅 Picks registrados hoy: ${picksHoy ?? 0}`,
       ...resultadosApis,
       `🚀 Estado general: ${estadoGeneral}`
     ].join('\n');
@@ -108,12 +109,13 @@ exports.handler = async () => {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
       body: resultado
     };
+
   } catch (error) {
     console.error('Error al generar el diagnóstico:', error);
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-      body: `❌ Error al generar el diagnóstico: ${error.message || error}`
+      body: `❌ Error al generar el diagnóstico: ${error.message || JSON.stringify(error)}`
     };
   }
 };
