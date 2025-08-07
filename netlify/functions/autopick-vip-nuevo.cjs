@@ -42,6 +42,61 @@ exports.handler = async function () {
   const fechaHoy = horaCDMX.toISOString().split("T")[0];
   const timestamp = Date.now();
 
+async function generarMensajeIA(partido) {
+  const prompt = `
+Eres un experto en análisis táctico y apuestas deportivas. A partir de los siguientes datos del partido, genera el siguiente JSON:
+
+{
+  "analisis_gratuito": "Breve análisis para el canal gratuito",
+  "frase_motivacional": "Frase que invite a confiar en la IA y a unirse al grupo VIP",
+  "analisis_vip": "Análisis profundo y táctico para usuarios VIP",
+  "apuesta": "La mejor apuesta sugerida según el análisis",
+  "apuestas_extra": ["Opción 1", "Opción 2"]
+}
+
+Datos del partido:
+Liga: ${partido.liga}
+Equipos: ${partido.equipos}
+Fixture ID: ${partido.fixture_id}
+Hora estimada: ${partido.hora}
+Forma actual: ${partido.forma || "No disponible"}
+Alineaciones confirmadas: ${partido.alineaciones || "No disponibles"}
+Lesionados: ${partido.lesionados || "No disponibles"}
+Historial de enfrentamientos: ${partido.historial || "No disponible"}
+Árbitro y estadísticas: ${partido.arbitro || "No disponible"}
+Cuotas promedio del mercado: ${partido.cuotas || "No disponibles"}
+Clima estimado: ${partido.clima || "No disponible"}
+
+Responde únicamente con el JSON solicitado.
+  `.trim();
+
+  try {
+    const config = new Configuration({ apiKey: OPENAI_API_KEY });
+    const openai = new OpenAIApi(config);
+
+    const completion = await openai.createChatCompletion({
+      model: 'gpt-4',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.7
+    });
+
+    const respuesta = completion.data.choices[0].message.content.trim();
+
+    let resultado;
+    try {
+      resultado = JSON.parse(respuesta);
+    } catch (err) {
+      console.error('❌ Error al parsear respuesta de OpenAI:', err.message);
+      return null;
+    }
+
+    return resultado;
+  } catch (err) {
+    console.error('❌ Error al generar mensaje IA:', err.message);
+    return null;
+  }
+}
+  
   async function guardarPickEnSupabase(data) {
     try {
       const response = await fetch(
@@ -521,6 +576,44 @@ partido.fixture_id = partido.fixture?.id || null;
           console.log("⚠️ Cuota inválida detectada, skip pick");
           continue;
         }
+
+    // 🧠 Obtener análisis desde OpenAI (una sola llamada)
+const datosIA = await generarMensajeIA(partido);
+
+if (!datosIA) {
+  console.warn(`⚠️ OpenAI falló para el partido: ${partido.equipos}`);
+  continue;
+}
+
+// ✅ Mensaje para canal gratuito
+const mensajeGratis = `
+📡 RADAR DE VALOR
+${partido.equipos}
+${datosIA.analisis_gratuito}
+
+${datosIA.frase_motivacional}
+
+🚀 Únete al grupo VIP por 15 días gratis: https://t.me/+qmgqwj5tZVM2NDQx
+⚠️ Apuesta con responsabilidad.
+`.trim();
+
+// 🎯 Mensaje para grupo VIP
+const mensajeVIP = `
+🎯 PICK NIVEL: ${partido.nivel || 'Hallazgo VIP'}
+${partido.equipos}
+EV: ${partido.ev}% | Prob. estimada: ${partido.probabilidad}%
+💡 Apuesta sugerida: ${datosIA.apuesta}
+🎯 Apuestas extra: ${datosIA.apuestas_extra?.join(' • ') || 'Ninguna'}
+
+${datosIA.analisis_vip}
+
+⚠️ Este contenido es informativo. Apuesta de forma responsable.
+`.trim();
+
+// 🚀 Envío automático a Telegram
+await enviarMensaje(mensajeGratis, false); // Canal gratuito
+await enviarMensaje(mensajeVIP, true);     // Grupo VIP
+    
     const ev = calcularEV(probabilidadEstimada, cuotaMinima);
     const nivel = clasificarNivel(ev);
 
