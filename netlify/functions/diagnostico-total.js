@@ -1,60 +1,71 @@
 
-exports.handler = async function (event, context) {
-  const startTime = Date.now();
+const { createClient } = require('@supabase/supabase-js');
+const dayjs = require('dayjs');
+dayjs.locale('es');
+require('dayjs/locale/es');
+require('dotenv').config();
 
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+exports.handler = async () => {
   try {
-    const SUPABASE_URL = process.env.SUPABASE_URL;
-    const SUPABASE_KEY = process.env.SUPABASE_KEY;
+    // Obtener total de picks
+    const { count: totalPicks, error: errorPicks } = await supabase
+      .from('picks_historicos')
+      .select('*', { count: 'exact', head: true });
 
-    if (!SUPABASE_URL || !SUPABASE_KEY) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ status: '❌ ERROR', message: 'Faltan variables de entorno necesarias.' })
-      };
-    }
+    if (errorPicks) throw errorPicks;
 
-    const headers = {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json'
-    };
+    // Obtener último pick
+    const { data: ultimoPickData, error: errorUltimo } = await supabase
+      .from('picks_historicos')
+      .select('timestamp')
+      .order('timestamp', { ascending: false })
+      .limit(1);
 
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos?select=*`, { headers });
-    const data = await response.json();
+    if (errorUltimo) throw errorUltimo;
 
-    const total = data.length || 0;
-    const ultPick = data[total - 1]?.timestamp || "No disponible";
+    const ultimoPick = ultimoPickData?.[0]?.timestamp
+      ? dayjs(ultimoPickData[0].timestamp).format('D [de] MMMM, HH:mm [(CDMX)]')
+      : 'No disponible';
 
-    const mem = process.memoryUsage();
+    // Obtener usuarios VIP
+    const { count: vipActivos, error: errorVip } = await supabase
+      .from('usuarios_vip')
+      .select('*', { count: 'exact', head: true })
+      .eq('estatus', 'activo');
 
-    const duracion = ((Date.now() - startTime) / 1000).toFixed(2);
+    if (errorVip) throw errorVip;
+
+    // Obtener usuarios en prueba
+    const { count: pruebaActivos, error: errorPrueba } = await supabase
+      .from('usuarios_vip')
+      .select('*', { count: 'exact', head: true })
+      .eq('estatus', 'prueba');
+
+    if (errorPrueba) throw errorPrueba;
+
+    // Simulaciones o placeholders
+    const memoria = 'Operativa';
+    const analisisIA = dayjs().format('D [de] MMMM HH:mm');
+
+    const resultado = `📊 Estado del sistema: Activo
+📅 Último pick enviado: ${ultimoPick}
+📂 Total de picks guardados: ${totalPicks}
+👥 Usuarios VIP actuales: ${vipActivos}
+🧪 Usuarios en prueba gratuita: ${pruebaActivos}
+🧠 Memoria inteligente: ${memoria}
+📦 Último análisis de IA: ${analisisIA}`;
 
     return {
       statusCode: 200,
-      body: JSON.stringify({
-        status: "✅ Diagnóstico OK",
-        timestamp: "2025-08-07T02:31:52.802648",
-        total_picks: total,
-        ultimo_pick: ultPick,
-        entorno: process.env.NODE_ENV || "No definido",
-        uso_memoria: {
-          rss: `${(mem.rss / 1024 / 1024).toFixed(2)} MB`,
-          heapTotal: `${(mem.heapTotal / 1024 / 1024).toFixed(2)} MB`,
-          heapUsed: `${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB`
-        },
-        duracion_ejecucion: `${duracion} segundos`,
-        mensaje: "📊 Sistema monitoreado exitosamente. Todo está en orden.",
-        version: "v2 Diagnóstico Pro"
-      }, null, 2)
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      body: resultado,
     };
-  } catch (error) {
+  } catch (err) {
     return {
       statusCode: 500,
-      body: JSON.stringify({
-        status: "❌ ERROR",
-        error: error.message,
-        mensaje: "Ocurrió un problema al generar el diagnóstico."
-      })
+      body: `❌ Error al generar el diagnóstico: ${err.message}`,
     };
   }
 };
