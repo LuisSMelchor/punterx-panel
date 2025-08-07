@@ -215,24 +215,31 @@ exports.handler = async function () {
   }
 
   async function obtenerCuotas(partido) {
-    try {
-      const url =
-        `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h,over_under_2_5,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        console.error(`❌ HTTP ${res.status} al obtener cuotas`);
-        return [];
-      }
-      const raw = await res.json();
-      if (raw && raw.success === false) {
-        console.error(`❌ OddsAPI respondió con error: ${raw.message || raw.msg}`);
-        return [];
-      }
-      const data = Array.isArray(raw) ? raw : Array.isArray(raw.data) ? raw.data : [];
-      return obtenerMejoresCuotasSeguras(data, partido);
-    } catch (err) {
-      console.error("❌ Error obteniendo cuotas:", err.message);
+  try {
+    const url = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h,over_under_2_5,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`;
+
+    const res = await fetch(url);
+
+    if (!res.ok) {
+      const errorText = await res.text(); // Detalles del error
+      console.warn(`⚠️ Cuotas no válidas para el partido: ${partido.equipos || 'Partido sin nombre'}`);
+      console.warn(`❌ HTTP ${res.status} al obtener cuotas → ${errorText}`);
       return [];
+    }
+
+    const raw = await res.json();
+
+    if (raw && raw.success === false) {
+      console.warn(`❌ OddsAPI respondió con error: ${raw.message || raw.msg}`);
+      return [];
+    }
+
+    const data = Array.isArray(raw) ? raw : Array.isArray(raw.data) ? raw.data : [];
+
+    return obtenerMejoresCuotasSeguras(data, partido);
+  } catch (err) {
+    console.warn(`❌ Error de red o ejecución al obtener cuotas para ${partido.equipos || 'Partido sin nombre'}:`, err.message);
+    return [];
     }
   }
 
