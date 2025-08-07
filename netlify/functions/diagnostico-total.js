@@ -43,8 +43,10 @@ exports.handler = async () => {
     // Contar funciones de Netlify
     const functionsDir = __dirname;
     const funcionesActivas = fs
-      .readdirSync(functionsDir)
-      .filter((f) => /\.(js|cjs|ts)$/i.test(f)).length;
+  .readdirSync(functionsDir)
+  .filter((f) =>
+    /\.(js|cjs|ts)$/i.test(f) && !f.includes('diagnostico-total')
+  ).length;
     console.log('Funciones activas detectadas:', funcionesActivas);
 
     let estadoGeneral = 'Estable 🟢';
