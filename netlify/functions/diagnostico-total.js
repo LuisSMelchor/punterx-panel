@@ -1,130 +1,93 @@
-// netlify/functions/diagnostico-total.js
-import { createClient } from '@supabase/supabase-js';
-import fetch from 'node-fetch';
+const { createClient } = require('@supabase/supabase-js');
+const fetch = require('node-fetch');
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
-
-const ESTADO_OK = '<span style="color:green;font-weight:bold">OK</span>';
-const ESTADO_ERROR = '<span style="color:red;font-weight:bold">ERROR</span>';
-const estadoColor = (estado) => estado === 'OK' ? '🟢 Estable' : '🔴 Inestable';
-
-export default async function handler(req, res) {
-  const now = new Date();
-  const fechaActual = now.toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
-
-  let estadoSupabase = 'OK';
-  let estadoFootball = 'OK';
-  let estadoOdds = 'OK';
-  let estadoOpenAI = 'OK';
-  let picksHoy = 0;
-  let ultimoPick = 'No disponible';
-  let funcionesActivas = 0;
-  let errores = [];
-  let estadoGeneral = 'Estable 🟢';
-
+exports.handler = async () => {
   try {
-    // Verificar Supabase y obtener picks recientes
-    const { data, error } = await supabase
+    // Configuración
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_KEY;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Verificar conexión a Supabase
+    const { data: picks, error: errorPicks } = await supabase
       .from('picks_historicos')
       .select('*')
       .order('timestamp', { ascending: false })
-      .limit(5);
+      .limit(1);
 
-    if (error) throw error;
+    const { data: picksHoy, error: errorHoy } = await supabase
+      .from('picks_historicos')
+      .select('id', { count: 'exact', head: true })
+      .gte('timestamp', new Date().toISOString().split('T')[0]);
 
-    const hoy = new Date().toISOString().split('T')[0];
-    picksHoy = data.filter(p => p.timestamp.startsWith(hoy)).length;
-    ultimoPick = data[0]?.evento || 'No disponible';
-  } catch (e) {
-    estadoSupabase = 'ERROR';
-    errores.push('❌ Supabase: ' + e.message);
-  }
+    const ultimoPick = picks?.[0]?.evento || 'No disponible';
+    const cantidadHoy = picksHoy?.length || 0;
+    const estadoSupabase = errorPicks || errorHoy ? '❌ Error' : '✅ OK';
 
-  // Verificar APIs externas
-  try {
-    const res1 = await fetch('https://v3.football.api-sports.io/status', {
+    // Verificar API-Football
+    const resFootball = await fetch('https://v3.football.api-sports.io/status', {
       headers: { 'x-apisports-key': process.env.API_FOOTBALL_KEY }
     });
-    if (!res1.ok) throw new Error('API-FOOTBALL no responde');
-  } catch (e) {
-    estadoFootball = 'ERROR';
-    errores.push('⚠️ API-Football: ' + e.message);
-  }
+    const estadoFootball = resFootball.ok ? '✅ OK' : '❌ Error';
 
-  try {
-    const res2 = await fetch(`https://api.the-odds-api.com/v4/sports`, {
+    // Verificar OddsAPI
+    const resOdds = await fetch(`https://api.the-odds-api.com/v4/sports`, {
       headers: { 'x-api-key': process.env.ODDS_API_KEY }
     });
-    if (!res2.ok) throw new Error('OddsAPI no responde');
-  } catch (e) {
-    estadoOdds = 'ERROR';
-    errores.push('⚠️ OddsAPI: ' + e.message);
-  }
+    const estadoOdds = resOdds.ok ? '✅ OK' : '❌ Error';
 
-  try {
-    const res3 = await fetch('https://api.openai.com/v1/models', {
+    // Verificar OpenAI
+    const resOpenAI = await fetch('https://api.openai.com/v1/models', {
       headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }
     });
-    if (!res3.ok) throw new Error('OpenAI no responde');
-  } catch (e) {
-    estadoOpenAI = 'ERROR';
-    errores.push('⚠️ OpenAI: ' + e.message);
-  }
+    const estadoOpenAI = resOpenAI.ok ? '✅ OK' : '❌ Error';
 
-  // Verificar funciones activas desde Netlify env
-  try {
-    funcionesActivas = 1; // Aquí puedes integrar con un contador real si lo deseas
-  } catch (e) {
-    errores.push('⚠️ No se pudo contar funciones activas');
-  }
+    // Evaluar estado general
+    const todoOK = [estadoSupabase, estadoFootball, estadoOdds, estadoOpenAI].every((e) => e === '✅ OK');
+    const estadoGeneral = todoOK ? '🟢 Estable' : '🔴 Inestable';
 
-  if ([estadoSupabase, estadoFootball, estadoOdds, estadoOpenAI].includes('ERROR')) {
-    estadoGeneral = '⚠️ Inestable 🔴';
-  }
-
-  const html = `
-    <html>
+    // HTML de respuesta
+    const html = `
+      <!DOCTYPE html>
+      <html lang="es">
       <head>
-        <meta charset="utf-8" />
+        <meta charset="UTF-8" />
         <title>Diagnóstico PunterX</title>
         <style>
-          body { font-family: Arial, sans-serif; background:#f8f8f8; color:#333; padding:30px; }
-          h1 { color:#2c3e50; }
-          .ok { color: green; font-weight: bold; }
-          .error { color: red; font-weight: bold; }
-          .box { background:#fff; padding:20px; border-radius:8px; box-shadow:0 0 5px rgba(0,0,0,0.1); max-width:700px; margin:auto; }
-          .status { margin-bottom:10px; }
-          .errores { margin-top:20px; color:#e74c3c; }
+          body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; color: #333; }
+          h1 { color: #222; }
+          .ok { color: green; }
+          .error { color: red; }
+          .panel { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 0 10px #ccc; }
+          .status { font-size: 18px; margin-bottom: 10px; }
         </style>
       </head>
       <body>
-        <div class="box">
-          <h1>📊 Diagnóstico General de PunterX</h1>
-          <p><strong>Fecha y hora:</strong> ${fechaActual}</p>
-          <p class="status"><strong>Estado general:</strong> ${estadoGeneral}</p>
-          <p><strong>Último pick enviado:</strong> ${ultimoPick}</p>
-          <p><strong>Número de picks hoy:</strong> ${picksHoy}</p>
-          <p><strong>Funciones activas:</strong> ${funcionesActivas}</p>
+        <div class="panel">
+          <h1>📊 Diagnóstico del sistema PunterX</h1>
+          <div class="status"><strong>🧠 Supabase:</strong> <span class="${estadoSupabase.includes('✅') ? 'ok' : 'error'}">${estadoSupabase}</span></div>
+          <div class="status"><strong>⚽ API-Football:</strong> <span class="${estadoFootball.includes('✅') ? 'ok' : 'error'}">${estadoFootball}</span></div>
+          <div class="status"><strong>📈 OddsAPI:</strong> <span class="${estadoOdds.includes('✅') ? 'ok' : 'error'}">${estadoOdds}</span></div>
+          <div class="status"><strong>🤖 OpenAI:</strong> <span class="${estadoOpenAI.includes('✅') ? 'ok' : 'error'}">${estadoOpenAI}</span></div>
           <hr />
-          <p><strong>🧠 Supabase:</strong> ${estadoSupabase === 'OK' ? ESTADO_OK : ESTADO_ERROR}</p>
-          <p><strong>⚽ API-Football:</strong> ${estadoFootball === 'OK' ? ESTADO_OK : ESTADO_ERROR}</p>
-          <p><strong>📈 OddsAPI:</strong> ${estadoOdds === 'OK' ? ESTADO_OK : ESTADO_ERROR}</p>
-          <p><strong>🤖 OpenAI:</strong> ${estadoOpenAI === 'OK' ? ESTADO_OK : ESTADO_ERROR}</p>
-
-          ${errores.length > 0 ? `
-            <div class="errores">
-              <h3>Errores recientes:</h3>
-              <ul>
-                ${errores.map(e => `<li>${e}</li>`).join('')}
-              </ul>
-            </div>` : ''}
+          <div class="status"><strong>📌 Último pick enviado:</strong> ${ultimoPick}</div>
+          <div class="status"><strong>📅 Picks enviados hoy:</strong> ${cantidadHoy}</div>
+          <hr />
+          <div class="status"><strong>🔍 Estado general:</strong> <span class="${todoOK ? 'ok' : 'error'}">${estadoGeneral}</span></div>
         </div>
       </body>
-    </html>
-  `;
+      </html>
+    `;
 
-  res.status(200).setHeader('Content-Type', 'text/html').end(html);
-}
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'text/html' },
+      body: html
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      body: `<h1>Error al generar diagnóstico</h1><pre>${error.message}</pre>`
+    };
+  }
+};
