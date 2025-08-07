@@ -280,7 +280,7 @@ exports.handler = async function () {
                 bookie: bm.title,
               });
             }
-            if (market key === "double_chance" && name.includes("draw or")) {
+            if (market.key === "double_chance" && name.includes("draw or")) {
               extras.push({
                 linea: `Doble oportunidad ${o.name}`,
                 valor: price,
