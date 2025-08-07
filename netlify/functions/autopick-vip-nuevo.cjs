@@ -72,7 +72,6 @@ exports.handler = async function () {
     if (ev >= 20) return "🎯 Élite Mundial";
     if (ev >= 10) return "🥈 Avanzado";
     if (ev >= 5) return "🥉 Competitivo";
-    if (ev === 1) return "📄 Informativo";
     return null;
   }
 
