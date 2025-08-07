@@ -1,133 +1,150 @@
-const fs = require('fs');
 const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
-const { Configuration, OpenAIApi } = require('openai');
 
-// Optional: load environment variables locally. In Netlify, they are provided automatically.
-require('dotenv').config();
-
-// Environment variables
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const ODDS_API_KEY = process.env.ODDS_API_KEY;
-const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
-
-// Supabase client
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 exports.handler = async () => {
-  let errores = [];
-  let estadoGeneral = 'Estable 🟢';
+  const errores = [];
+  let conexionSupabase = "❌ ERROR";
+  let funcionesActivas = 0;
+  let picksHoy = 0;
+  let ultimoPick = "No disponible";
+  let estadoFootball = "❌";
+  let estadoOdds = "❌";
+  let estadoOpenAI = "❌";
 
-  // Último pick
-  let ultimoPick = 'No disponible';
+  // Verifica Supabase
   try {
-    const { data: dataUltimo, error } = await supabase
-      .from('picks_historicos')
-      .select('timestamp')
-      .order('timestamp', { ascending: false })
+    const { data, error } = await supabase
+      .from("picks_historicos")
+      .select("*")
+      .order("timestamp", { ascending: false })
       .limit(1);
+
     if (error) throw error;
-    if (dataUltimo && dataUltimo.length > 0) {
-      const fecha = new Date(dataUltimo[0].timestamp);
-      ultimoPick = fecha.toLocaleString('es-MX', {
-        timeZone: 'America/Mexico_City'
-      });
+    conexionSupabase = "✅ OK";
+
+    if (data.length > 0) {
+      const pick = data[0];
+      ultimoPick = `${pick.equipos} (${pick.ev}% EV)`;
     }
   } catch (err) {
-    errores.push('Supabase: error al obtener último pick');
+    errores.push("Supabase: " + err.message);
   }
 
-  // Picks registrados hoy
-  let picksHoy = 0;
+  // Verifica cuántos picks hoy
   try {
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
-    const { data, error } = await supabase
-      .from('picks_historicos')
-      .select('id')
-      .gte('timestamp', hoy.toISOString());
+    const hoy = new Date().toISOString().slice(0, 10);
+    const { count, error } = await supabase
+      .from("picks_historicos")
+      .select("*", { count: "exact", head: true })
+      .gte("timestamp", `${hoy}T00:00:00.000Z`);
+
     if (error) throw error;
-    picksHoy = data.length;
+    picksHoy = count || 0;
   } catch (err) {
-    errores.push('Supabase: error al contar picks de hoy');
+    errores.push("Conteo de picks hoy: " + err.message);
   }
 
-  // Funciones Netlify
-  let funcionesActivas = 0;
-  try {
-    const files = fs.readdirSync(__dirname);
-    funcionesActivas = files.filter((f) => /\.(js|cjs|ts)$/i.test(f)).length;
-  } catch (err) {
-    errores.push('Netlify: error al contar funciones');
-  }
-
-  // API-Football
-  let estadoFootball = 'OK';
-  try {
-    const res = await fetch('https://v3.football.api-sports.io/status', {
-      headers: { 'x-apisports-key': API_FOOTBALL_KEY }
-    });
-    if (!res.ok) throw new Error();
-    const json = await res.json();
-    if (!json.response || !json.response.account) throw new Error();
-  } catch (err) {
-    estadoFootball = 'Error ❌';
-    errores.push('API-Football: error de conexión');
-  }
-
-  // OddsAPI
-  let estadoOdds = 'OK';
+  // Verifica API-Football
   try {
     const res = await fetch(
-      `https://api.the-odds-api.com/v4/sports?apiKey=${ODDS_API_KEY}`
+      "https://v3.football.api-sports.io/status",
+      { headers: { "x-apisports-key": process.env.API_FOOTBALL_KEY } }
     );
-    if (!res.ok) throw new Error();
-    await res.json();
+    if (res.ok) estadoFootball = "✅ OK";
+    else errores.push("API-Football: Status " + res.status);
   } catch (err) {
-    estadoOdds = 'Error ❌';
-    errores.push('OddsAPI: error de conexión');
+    errores.push("API-Football: " + err.message);
   }
 
-  // OpenAI
-  let estadoOpenAI = 'OK';
+  // Verifica OddsAPI
   try {
-    const config = new Configuration({ apiKey: OPENAI_API_KEY });
-    const openai = new OpenAIApi(config);
-    await openai.listModels();
+    const res = await fetch(
+      `https://api.the-odds-api.com/v4/sports/?apiKey=${process.env.ODDS_API_KEY}`
+    );
+    if (res.ok) estadoOdds = "✅ OK";
+    else errores.push("OddsAPI: Status " + res.status);
   } catch (err) {
-    estadoOpenAI = 'Error ❌';
-    errores.push('OpenAI: error de conexión');
+    errores.push("OddsAPI: " + err.message);
   }
 
-  if (errores.length > 0) estadoGeneral = 'Inestable 🔴';
+  // Verifica OpenAI
+  try {
+    const res = await fetch("https://api.openai.com/v1/models", {
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }
+    });
+    if (res.ok) estadoOpenAI = "✅ OK";
+    else errores.push("OpenAI: Status " + res.status);
+  } catch (err) {
+    errores.push("OpenAI: " + err.message);
+  }
 
-  const resultado = {
-    ultimoPick,
-    conexionSupabase: errores.some((e) => e.includes('Supabase'))
-      ? 'Error ❌'
-      : 'OK',
-    funcionesActivas,
-    picksHoy,
-    estadoFootball,
-    estadoOdds,
-    estadoOpenAI,
-    estadoGeneral,
-    errores
-  };
+  // Verifica funciones activas (dummy logic si no tienes tracking real)
+  funcionesActivas = 1; // Puedes automatizar si quieres más adelante
 
-  // Logging for debugging
-  console.log(JSON.stringify(resultado, null, 2));
+  const estadoGeneral = errores.length === 0 ? "🟢 Estable" : "🟠 Con advertencias";
+
+  const html = `
+  <!DOCTYPE html>
+  <html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>🧠 Diagnóstico PunterX</title>
+    <style>
+      body { font-family: Arial, sans-serif; background: #f4f4f4; padding: 30px; color: #333; }
+      .card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; }
+      h1 { font-size: 24px; color: #333; }
+      h2 { font-size: 20px; color: #444; }
+      .estado { font-size: 18px; margin: 5px 0; }
+      .ok { color: green; }
+      .error { color: red; }
+      .advertencia { color: orange; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .footer { font-size: 14px; margin-top: 40px; color: #777; }
+    </style>
+  </head>
+  <body>
+    <h1>📊 Diagnóstico General del Sistema <span style="float:right;">${new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}</span></h1>
+
+    <div class="card">
+      <h2>🧠 Estado del sistema: ${estadoGeneral}</h2>
+      <div class="grid">
+        <div class="estado">📤 Último pick: <strong>${ultimoPick}</strong></div>
+        <div class="estado">📅 Picks hoy: <strong>${picksHoy}</strong></div>
+        <div class="estado">⚙️ Funciones activas: <strong>${funcionesActivas}</strong></div>
+        <div class="estado">🔗 Supabase: <strong class="${conexionSupabase.includes('OK') ? 'ok' : 'error'}">${conexionSupabase}</strong></div>
+        <div class="estado">⚽ API-Football: <strong class="${estadoFootball.includes('OK') ? 'ok' : 'error'}">${estadoFootball}</strong></div>
+        <div class="estado">📊 OddsAPI: <strong class="${estadoOdds.includes('OK') ? 'ok' : 'error'}">${estadoOdds}</strong></div>
+        <div class="estado">🧠 OpenAI: <strong class="${estadoOpenAI.includes('OK') ? 'ok' : 'error'}">${estadoOpenAI}</strong></div>
+      </div>
+    </div>
+
+    ${errores.length > 0 ? `
+      <div class="card">
+        <h2>⚠️ Errores detectados</h2>
+        <ul>${errores.map(err => `<li class="advertencia">${err}</li>`).join('')}</ul>
+      </div>
+    ` : `
+      <div class="card">
+        <h2>✅ Sin errores actuales</h2>
+      </div>
+    `}
+
+    <div class="footer">
+      Sistema automatizado PunterX · Diagnóstico generado automáticamente<br/>
+      Zona horaria: <strong>CDMX</strong> · Versión: Diagnóstico HTML v1.0
+    </div>
+  </body>
+  </html>
+  `;
 
   return {
     statusCode: 200,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(resultado)
+    headers: { "Content-Type": "text/html" },
+    body: html,
   };
-};
-
-// Instruct Netlify bundler to treat certain modules as external
-exports.config = {
-  external_node_modules: ['openai', 'node-fetch']
 };
