@@ -1,7 +1,5 @@
 // autopick-vip.js FINAL PRO MAX - IA con todos los módulos activados
 
-console.log("Despliegue forzado con nuevo nombre");
-
 const fetch = globalThis.fetch;
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
@@ -44,18 +42,21 @@ exports.handler = async function () {
   const fechaHoy = horaCDMX.toISOString().split("T")[0];
   const timestamp = Date.now();
 
-  async function guardarPickEnHistorial(data) {
+  async function guardarPickEnSupabase(data) {
     try {
-      const response = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos`, {
-        method: "POST",
-        headers: {
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          "Content-Type": "application/json",
-          Prefer: "return=representation",
-        },
-        body: JSON.stringify([data]),
-      });
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/picks_historicos?on_conflict=fixture_id`,
+        {
+          method: "POST",
+          headers: {
+            apikey: SUPABASE_KEY,
+            Authorization: `Bearer ${SUPABASE_KEY}`,
+            "Content-Type": "application/json",
+            Prefer: "resolution=merge-duplicates,return=representation",
+          },
+          body: JSON.stringify([data]),
+        }
+      );
       const result = await response.json();
       console.log("✅ Pick guardado en historial:", result);
     } catch (e) {
@@ -64,7 +65,10 @@ exports.handler = async function () {
   }
 
   function calcularEV(prob, cuota) {
-    return Math.round((prob * cuota - 1) * 100);
+    const p = Number(prob);
+    const c = Number(cuota);
+    if (!isFinite(p) || !isFinite(c) || c <= 0) return 0;
+    return Math.round((p * c - 1) * 100);
   }
 
   function clasificarNivel(ev) {
@@ -212,12 +216,33 @@ exports.handler = async function () {
 
   async function obtenerCuotas(partido) {
     try {
-      const res = await fetch(
-        `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h,over_under_2_5,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`
-      );
-      const data = await res.json();
-      const removeAccents = (txt) =>
-        txt.normalize("NFD").replace(/[̀-ͯ]/g, "");
+      const url =
+        `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h,over_under_2_5,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.error(`❌ HTTP ${res.status} al obtener cuotas`);
+        return [];
+      }
+      const raw = await res.json();
+      if (raw && raw.success === false) {
+        console.error(`❌ OddsAPI respondió con error: ${raw.message || raw.msg}`);
+        return [];
+      }
+      const data = Array.isArray(raw) ? raw : Array.isArray(raw.data) ? raw.data : [];
+      return obtenerMejoresCuotasSeguras(data, partido);
+    } catch (err) {
+      console.error("❌ Error obteniendo cuotas:", err.message);
+      return [];
+    }
+  }
+
+  function obtenerMejoresCuotasSeguras(data, partido) {
+    try {
+      if (!Array.isArray(data)) {
+        console.warn("⚠️ Formato de cuotas no es un array:", data);
+        return [];
+      }
+      const removeAccents = (txt) => txt.normalize("NFD").replace(/[̀-ͯ]/g, "");
       const nombreLocal = removeAccents(partido.teams.home.name.toLowerCase());
       const nombreVisita = removeAccents(partido.teams.away.name.toLowerCase());
       const fechaPartido = new Date(partido.fixture.date)
@@ -225,8 +250,9 @@ exports.handler = async function () {
         .split("T")[0];
 
       const evento = data.find((e) => {
-        const evLocal = removeAccents(e.home_team.toLowerCase());
-        const evVisita = removeAccents(e.away_team.toLowerCase());
+        if (!e || !e.home_team || !e.away_team) return false;
+        const evLocal = removeAccents(String(e.home_team).toLowerCase());
+        const evVisita = removeAccents(String(e.away_team).toLowerCase());
         const fechaEvento = new Date(e.commence_time)
           .toISOString()
           .split("T")[0];
@@ -237,8 +263,13 @@ exports.handler = async function () {
         );
       });
 
-      if (!evento || !evento.bookmakers || evento.bookmakers.length === 0)
+      if (!evento || !Array.isArray(evento.bookmakers) || evento.bookmakers.length === 0) {
+        console.warn(
+          "⚠️ Evento no encontrado o sin bookmakers:",
+          partido?.fixture?.id
+        );
         return [];
+      }
 
       let mejorHome = 0,
         mejorDraw = 0,
@@ -247,9 +278,10 @@ exports.handler = async function () {
       const extras = [];
 
       for (const bm of evento.bookmakers) {
+        if (!Array.isArray(bm.markets)) continue;
         for (const market of bm.markets) {
-          if (!market.outcomes) continue;
-          market.outcomes.forEach((o) => {
+          if (!Array.isArray(market.outcomes)) continue;
+          for (const o of market.outcomes) {
             const name = o.name.toLowerCase();
             const price = o.price;
             if (market.key === "h2h") {
@@ -286,7 +318,7 @@ exports.handler = async function () {
                 bookie: bm.title,
               });
             }
-          });
+          }
         }
       }
 
@@ -299,7 +331,7 @@ exports.handler = async function () {
         ...extras,
       ];
     } catch (err) {
-      console.error("❌ Error obteniendo cuotas:", err.message);
+      console.error("❌ Error procesando cuotas:", err.message);
       return [];
     }
   }
@@ -429,25 +461,6 @@ exports.handler = async function () {
     console.log("✅ Enviado a Telegram:", await res.text());
   }
 
-  async function guardarEnMemoriaSupabase(pick) {
-    try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          Prefer: "return=representation",
-        },
-        body: JSON.stringify(pick),
-      });
-      const data = await res.json();
-      console.log("🧠 Pick guardado en Supabase:", data);
-    } catch (err) {
-      console.error("❌ Error guardando pick en Supabase:", err.message);
-    }
-  }
-
   const partidos = filtrarPartidos(await obtenerPartidos());
 
   for (const partido of partidos) {
@@ -492,7 +505,7 @@ exports.handler = async function () {
     const ev = calcularEV(probabilidadEstimada, cuotaMinima);
     const nivel = clasificarNivel(ev);
 
-    if (ev < 15) continue;
+    if (ev < 14) continue;
 
     const yaEnviado = await yaFueEnviado(partido.fixture.id);
     if (yaEnviado) {
@@ -543,7 +556,11 @@ exports.handler = async function () {
     await enviarMensaje(mensajeGratis);
     await enviarMensaje(mensajeVIP);
 
-    const insertData = {
+    const cuotaLocal = cuotas.find((c) => c.linea === "Local")?.valor || null;
+    const cuotaEmpate = cuotas.find((c) => c.linea === "Empate")?.valor || null;
+    const cuotaVisitante = cuotas.find((c) => c.linea === "Visitante")?.valor || null;
+
+    const pickData = {
       timestamp: new Date().toISOString(),
       fixture_id: partido.fixture.id,
       evento: `${partido.teams.home.name} vs ${partido.teams.away.name}`,
@@ -552,39 +569,24 @@ exports.handler = async function () {
       analisis: infoVIP.analisis || "No disponible",
       apuesta: infoVIP.apuesta || "No definida",
       tipo_pick: nivel || "Sin nivel",
-      ev: Number.isFinite(ev) ? Number(ev.toFixed(2)) : undefined,
-      probabilidad: Number.isFinite(probabilidadEstimada)
+      ev: Number.isFinite(ev) ? Number(ev.toFixed(2)) : null,
+      probabilidad_estimada: Number.isFinite(probabilidadEstimada)
         ? Number(probabilidadEstimada.toFixed(2))
-        : undefined,
+        : null,
       nivel: nivel || "Sin clasificar",
-    };
-    for (const k of Object.keys(insertData)) {
-      if (insertData[k] === undefined || insertData[k] === null) {
-        delete insertData[k];
-      }
-    }
-    await guardarPickEnHistorial(insertData);
-
-    const cuotaLocal = cuotas.find((c) => c.linea === "Local")?.valor || 0;
-    const cuotaEmpate = cuotas.find((c) => c.linea === "Empate")?.valor || 0;
-    const cuotaVisitante =
-      cuotas.find((c) => c.linea === "Visitante")?.valor || 0;
-
-    await guardarEnMemoriaSupabase({
-      equipo_local: partido.teams.home.name,
-      equipo_visitante: partido.teams.away.name,
-      liga: partido.league.name,
-      pais: partido.league.country,
       cuota_local: cuotaLocal,
       cuota_visitante: cuotaVisitante,
       cuota_empate: cuotaEmpate,
-      ev,
-      nivel,
       hora_local: hora,
       mensaje: mensajeVIP,
       es_vip: true,
-      probabilidad_estimada: probabilidadEstimada,
-    });
+    };
+    for (const k of Object.keys(pickData)) {
+      if (pickData[k] === undefined || pickData[k] === null) {
+        delete pickData[k];
+      }
+    }
+    await guardarPickEnSupabase(pickData);
 
     await registrarPickEnviado(partido.fixture.id);
   }
