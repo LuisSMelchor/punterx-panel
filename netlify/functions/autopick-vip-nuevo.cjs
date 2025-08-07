@@ -218,11 +218,18 @@ exports.handler = async function () {
   try {
     const url = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h,over_under_2_5,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`;
 
+    console.log(`🔍 Consultando cuotas para: ${partido.equipos || 'Sin nombre definido'}`);
+    console.log(`📦 Datos del partido:`, {
+      liga: partido.liga,
+      fixture_id: partido.fixture_id,
+      equipos: partido.equipos,
+    });
+
     const res = await fetch(url);
 
     if (!res.ok) {
       const errorText = await res.text(); // Detalles del error
-      console.warn(`⚠️ Cuotas no válidas para el partido: ${partido.equipos || 'Partido sin nombre'}`);
+      console.warn(`⚠️ Cuotas no válidas para: ${partido.equipos || 'Partido sin nombre'}`);
       console.warn(`❌ HTTP ${res.status} al obtener cuotas → ${errorText}`);
       return [];
     }
@@ -236,9 +243,10 @@ exports.handler = async function () {
 
     const data = Array.isArray(raw) ? raw : Array.isArray(raw.data) ? raw.data : [];
 
+    console.log(`✅ Cuotas recibidas correctamente para: ${partido.equipos || 'Sin nombre'}`);
     return obtenerMejoresCuotasSeguras(data, partido);
   } catch (err) {
-    console.warn(`❌ Error de red o ejecución al obtener cuotas para ${partido.equipos || 'Partido sin nombre'}:`, err.message);
+    console.warn(`❌ Error al obtener cuotas para ${partido.equipos || 'Partido sin nombre'}:`, err.message);
     return [];
     }
   }
