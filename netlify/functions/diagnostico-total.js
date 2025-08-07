@@ -3,18 +3,20 @@ const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
 const { Configuration, OpenAIApi } = require('openai');
 
-// ENV vars requeridas
+// Optional: load environment variables locally. In Netlify, they are provided automatically.
+require('dotenv').config();
+
+// Environment variables
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
 
-// Supabase
+// Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Función principal
-(async () => {
+exports.handler = async () => {
   let errores = [];
   let estadoGeneral = 'Estable 🟢';
 
@@ -27,9 +29,11 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
       .order('timestamp', { ascending: false })
       .limit(1);
     if (error) throw error;
-    if (dataUltimo.length > 0) {
+    if (dataUltimo && dataUltimo.length > 0) {
       const fecha = new Date(dataUltimo[0].timestamp);
-      ultimoPick = fecha.toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
+      ultimoPick = fecha.toLocaleString('es-MX', {
+        timeZone: 'America/Mexico_City'
+      });
     }
   } catch (err) {
     errores.push('Supabase: error al obtener último pick');
@@ -76,7 +80,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   // OddsAPI
   let estadoOdds = 'OK';
   try {
-    const res = await fetch(`https://api.the-odds-api.com/v4/sports?apiKey=${ODDS_API_KEY}`);
+    const res = await fetch(
+      `https://api.the-odds-api.com/v4/sports?apiKey=${ODDS_API_KEY}`
+    );
     if (!res.ok) throw new Error();
     await res.json();
   } catch (err) {
@@ -97,13 +103,31 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
   if (errores.length > 0) estadoGeneral = 'Inestable 🔴';
 
-  // Resultado final
-  console.log(`🔄 Último pick enviado: ${ultimoPick}`);
-  console.log(`✅ Conexión a Supabase: OK`);
-  console.log(`⚙️ Funciones activas en Netlify: ${funcionesActivas}`);
-  console.log(`📅 Picks registrados hoy: ${picksHoy}`);
-  console.log(`🌐 API-FOOTBALL: ${estadoFootball}`);
-  console.log(`📊 OddsAPI: ${estadoOdds}`);
-  console.log(`🤖 OpenAI: ${estadoOpenAI}`);
-  console.log(`🚀 Estado general: ${estadoGeneral}`);
-})();
+  const resultado = {
+    ultimoPick,
+    conexionSupabase: errores.some((e) => e.includes('Supabase'))
+      ? 'Error ❌'
+      : 'OK',
+    funcionesActivas,
+    picksHoy,
+    estadoFootball,
+    estadoOdds,
+    estadoOpenAI,
+    estadoGeneral,
+    errores
+  };
+
+  // Logging for debugging
+  console.log(JSON.stringify(resultado, null, 2));
+
+  return {
+    statusCode: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(resultado)
+  };
+};
+
+// Instruct Netlify bundler to treat certain modules as external
+exports.config = {
+  external_node_modules: ['openai', 'node-fetch']
+};
