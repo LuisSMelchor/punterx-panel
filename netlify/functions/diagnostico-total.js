@@ -1,9 +1,6 @@
 
 const { createClient } = require('@supabase/supabase-js');
-const dayjs = require('dayjs');
 dayjs.locale('es');
-require('dayjs/locale/es');
-require('dotenv').config();
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
