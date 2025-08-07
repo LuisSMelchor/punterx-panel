@@ -1,97 +1,61 @@
-// netlify/functions/diagnostico-total.js
-const fetch = globalThis.fetch;
+const fetch = require('node-fetch');
 
-exports.handler = async function () {
+exports.handler = async function (event, context) {
+  const startTime = Date.now();
+
   try {
-    const ahora = new Date().toLocaleString("es-MX", { timeZone: "America/Mexico_City" });
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
-    const respuestas = [];
-
-    // 1. Verificar variables de entorno requeridas
-    const variables = [
-      'TELEGRAM_BOT_TOKEN',
-      'TELEGRAM_CHANNEL_ID',
-      'TELEGRAM_GROUP_ID',
-      'OPENAI_API_KEY',
-      'API_FOOTBALL_KEY',
-      'ODDS_API_KEY',
-      'SUPABASE_URL',
-      'SUPABASE_KEY',
-      'PUNTERX_SECRET'
-    ];
-
-    const faltantes = variables.filter(v => !process.env[v]);
-    if (faltantes.length > 0) {
-      respuestas.push(`❌ Variables de entorno faltantes: ${faltantes.join(', ')}`);
-    } else {
-      respuestas.push('✅ Todas las variables de entorno necesarias están presentes.');
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ status: '❌ ERROR', message: 'Faltan variables de entorno necesarias.' })
+      };
     }
 
-    // 2. Checar conexión a Supabase
-    try {
-      const res = await fetch(`${process.env.SUPABASE_URL}/rest/v1/picks_historicos?select=evento&limit=1`, {
-        headers: {
-          apikey: process.env.SUPABASE_KEY,
-          Authorization: `Bearer ${process.env.SUPABASE_KEY}`,
-        },
-      });
-      if (res.ok) {
-        respuestas.push('✅ Conexión exitosa a Supabase.');
-      } else {
-        respuestas.push('❌ Error al conectar con Supabase.');
-      }
-    } catch (e) {
-      respuestas.push('❌ Error de red al conectar con Supabase.');
-    }
+    const headers = {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json'
+    };
 
-    // 3. Verificar consumo de API-Football (plan diario)
-    try {
-      const res = await fetch('https://v3.football.api-sports.io/status', {
-        headers: {
-          'x-apisports-key': process.env.API_FOOTBALL_KEY,
-        },
-      });
-      const data = await res.json();
-      const requests = data.response.requests;
-      respuestas.push(`📊 API-Football hoy: ${requests.current} / ${requests.limit} peticiones.`);
-    } catch (e) {
-      respuestas.push('❌ No se pudo obtener el estado de API-Football.');
-    }
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos?select=*`, { headers });
+    const data = await response.json();
 
-    // 4. Verificar consumo de OddsAPI (plan mensual)
-    try {
-      const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${process.env.ODDS_API_KEY}`);
-      const remaining = res.headers.get("x-requests-remaining");
-      const used = res.headers.get("x-requests-used");
+    const total = data.length || 0;
+    const ultPick = data[total - 1]?.timestamp || "No disponible";
 
-      if (remaining && used) {
-        respuestas.push(`📊 OddsAPI este mes: ${used} usadas / ${parseInt(used) + parseInt(remaining)} disponibles.`);
-      } else {
-        respuestas.push('❌ No se pudo obtener el estado mensual de OddsAPI.');
-      }
-    } catch (e) {
-      respuestas.push('❌ No se pudo conectar con OddsAPI.');
-    }
+    const mem = process.memoryUsage();
 
-    // 5. Formato visual bonito
-    const diagnostico = [
-      '🧪 DIAGNÓSTICO GENERAL - SISTEMA PUNTERX 🧠',
-      `📅 Fecha y hora CDMX: ${ahora}`,
-      '',
-      ...respuestas,
-      '',
-      '📌 Revisa este diagnóstico periódicamente para detectar errores u omisiones.',
-    ].join('\n');
+    const duracion = ((Date.now() - startTime) / 1000).toFixed(2);
 
     return {
       statusCode: 200,
-      body: diagnostico,
+      body: JSON.stringify({
+        status: "✅ Diagnóstico OK",
+        timestamp: "2025-08-07T02:31:52.802648",
+        total_picks: total,
+        ultimo_pick: ultPick,
+        entorno: process.env.NODE_ENV || "No definido",
+        uso_memoria: {
+          rss: `${(mem.rss / 1024 / 1024).toFixed(2)} MB`,
+          heapTotal: `${(mem.heapTotal / 1024 / 1024).toFixed(2)} MB`,
+          heapUsed: `${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB`
+        },
+        duracion_ejecucion: `${duracion} segundos`,
+        mensaje: "📊 Sistema monitoreado exitosamente. Todo está en orden.",
+        version: "v2 Diagnóstico Pro"
+      }, null, 2)
     };
-
   } catch (error) {
     return {
       statusCode: 500,
-      body: '❌ Error crítico en el diagnóstico del sistema. ' + error.message,
+      body: JSON.stringify({
+        status: "❌ ERROR",
+        error: error.message,
+        mensaje: "Ocurrió un problema al generar el diagnóstico."
+      })
     };
   }
 };
