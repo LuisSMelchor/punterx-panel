@@ -43,17 +43,16 @@ exports.handler = async () => {
     console.log('Picks registrados hoy:', picksHoy);
 
     // Contar funciones de Netlify
-    const functionsDir = __dirname;
-    const funcionesActivas = fs
-      .readdirSync(functionsDir)
-      .filter((f) =>
-        /\.(js|cjs|ts)$/i.test(f) &&
-        !f.includes('diagnostico-total')
-      ).length;
-    console.log('Funciones activas detectadas:', funcionesActivas);
-
-    let estadoGeneral = 'Estable 🟢';
-    const resultadosApis = [];
+let funcionesActivas = 0;
+try {
+  const functionsRoot = `${process.env.LAMBDA_TASK_ROOT}/netlify/functions`;
+  funcionesActivas = fs
+    .readdirSync(functionsRoot)
+    .filter((f) => /\.(js|cjs|ts)$/i.test(f)).length;
+  console.log('Funciones activas detectadas:', funcionesActivas);
+} catch (e) {
+  console.log('Error al contar funciones:', e.message);
+  funcionesActivas = 0;
 
     // API-FOOTBALL
     try {
