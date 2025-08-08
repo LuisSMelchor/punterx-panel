@@ -251,7 +251,19 @@ const globalResumen = {
 
 // =============== OBTENER PARTIDOS (OddsAPI) =================
 async function obtenerPartidosDesdeOddsAPI() {
-  const url = `https://api.the-odds-api.com/v4/sports/soccer/odds?apiKey=${ODDS_API_KEY}&regions=eu,us,uk&markets=h2h,totals,spreads&oddsFormat=decimal`;
+  // Calcula ventana de tiempo para pedir SOLO los partidos en rango (35–55m desde ahora)
+  const now = new Date();
+  const fromISO = new Date(now.getTime() + WINDOW_MIN * 60000).toISOString();
+  const toISO   = new Date(now.getTime() + WINDOW_MAX * 60000).toISOString();
+
+  const url = `https://api.the-odds-api.com/v4/sports/soccer/odds` +
+    `?apiKey=${ODDS_API_KEY}` +
+    `&regions=eu,us,uk` +
+    `&markets=h2h,totals,spreads` +
+    `&oddsFormat=decimal` +
+    `&dateFormat=iso` +
+    `&commenceTimeFrom=${encodeURIComponent(fromISO)}` +
+    `&commenceTimeTo=${encodeURIComponent(toISO)}`;
 
   let res;
   try {
@@ -277,68 +289,37 @@ async function obtenerPartidosDesdeOddsAPI() {
 
   const ahora = Date.now();
 
-  const result = data
+  // Normaliza todos los eventos y separa en ventana / fuera de ventana con motivos
+  const mapeados = data
     .map(evento => normalizeOddsEvent(evento, ahora))
-    .filter(e => e && e.minutosFaltantes >= WINDOW_MIN && e.minutosFaltantes <= WINDOW_MAX);
+    .filter(Boolean);
 
-  console.log(`OddsAPI: recibidos=${data.length}, en_ventana=${result.length} (35–55m)`);
-  // actualiza resumen global
-  globalResumen.encontrados = data.length;
-  return result;
-}
+  const enVentana = [];
+  const fueraVentana = [];
 
-// Normaliza un evento de OddsAPI a una estructura amigable
-function normalizeOddsEvent(evento, ahoraTs) {
-  try {
-    const inicio = new Date(evento.commence_time).getTime();
-    const minutosFaltantes = (inicio - ahoraTs) / 60000;
-
-    const marketsRaw = evento.bookmakers?.flatMap(b => b.markets || []) || [];
-    const markets = { h2h: [], totals: [], spreads: [] };
-
-    for (const m of marketsRaw) {
-      if (!m || !m.key || !m.outcomes) continue;
-      const key = m.key; // 'h2h' | 'totals' | 'spreads'
-      if (!markets[key]) continue;
-      markets[key].push(...m.outcomes);
+  for (const e of mapeados) {
+    if (e.minutosFaltantes >= WINDOW_MIN && e.minutosFaltantes <= WINDOW_MAX) {
+      enVentana.push(e);
+    } else {
+      fueraVentana.push({
+        id: e.id,
+        equipos: e.equipos,
+        minutosFaltantes: Math.round(e.minutosFaltantes),
+        motivo: e.minutosFaltantes < WINDOW_MIN ? 'muy_cercano' : 'muy_lejano',
+        commence_iso: new Date(e.timestamp).toISOString()
+      });
     }
-
-    // mejor global
-    const mejorOutcome = marketsRaw.flatMap(m => m.outcomes || [])
-      .reduce((max, o) => (o?.price > (max?.price || 0) ? o : max), null);
-
-    // mejores por mercado (simple)
-    const bestH2H = arrBest(markets.h2h);
-    const bestTotalsOver = arrBest(markets.totals?.filter(o => /over/i.test(o?.name)));
-    const bestTotalsUnder = arrBest(markets.totals?.filter(o => /under/i.test(o?.name)));
-    const bestSpreads = arrBest(markets.spreads);
-
-    return {
-      id: evento.id,
-      equipos: `${evento.home_team} vs ${evento.away_team}`,
-      home: evento.home_team,
-      away: evento.away_team,
-      timestamp: inicio,
-      minutosFaltantes,
-      mejorCuota: (mejorOutcome ? { valor: Number(mejorOutcome.price), casa: mejorOutcome.name || 'Desconocida' } : null),
-      marketsBest: {
-        h2h: bestH2H ? { valor: Number(bestH2H.price), label: bestH2H.name } : null,
-        totals: {
-          over: bestTotalsOver ? { valor: Number(bestTotalsOver.price), point: bestTotalsOver.point } : null,
-          under: bestTotalsUnder ? { valor: Number(bestTotalsUnder.price), point: bestTotalsUnder.point } : null
-        },
-        spreads: bestSpreads ? { valor: Number(bestSpreads.price), label: bestSpreads.name, point: bestSpreads.point } : null
-      }
-    };
-  } catch (e) {
-    console.error('normalizeOddsEvent error:', e?.message || e);
-    return null;
   }
-}
 
-function arrBest(arr) {
-  if (!Array.isArray(arr) || arr.length === 0) return null;
-  return arr.reduce((max, o) => (o?.price > (max?.price || 0) ? o : max), null);
+  console.log(`OddsAPI: recibidos=${data.length}, en_ventana=${enVentana.length} (35–55m)`);
+  if (fueraVentana.length) {
+    console.log('Fuera de ventana (ejemplos):', JSON.stringify(fueraVentana.slice(0, 6)));
+  }
+
+  // para el resumen global del ciclo
+  globalResumen.encontrados = data.length;
+
+  return enVentana;
 }
 
 // =============== ENRIQUECER (API-FOOTBALL) =================
