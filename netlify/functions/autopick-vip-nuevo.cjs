@@ -53,7 +53,7 @@ async function obtenerPartidos(fechaHoy) {
 async function obtenerCuotas(partido) {
   try {
     const sportKey = mapaLigasOddsAPI[partido.liga] || "soccer";
-    const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=eu&markets=h2h,totals,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`;
+    const url = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h,totals,spreads&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`;
 
     console.log(`🔍 Consultando cuotas para: ${partido.equipos || "Sin nombre definido"}`);
 
