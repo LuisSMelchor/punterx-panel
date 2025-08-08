@@ -1,21 +1,34 @@
+// netlify/functions/autopick-vip-nuevo.cjs
+
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 const { Configuration, OpenAIApi } = require('openai');
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const configuration = new Configuration({ apiKey: process.env.OPENAI_API_KEY });
+// ================== ENV & CLIENTES ==================
+const {
+  SUPABASE_URL,
+  SUPABASE_KEY,
+  OPENAI_API_KEY,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_CHANNEL_ID,
+  TELEGRAM_GROUP_ID,
+  ODDS_API_KEY,
+  API_FOOTBALL_KEY,
+} = process.env;
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
 const openai = new OpenAIApi(configuration);
 
-const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHANNEL = process.env.TELEGRAM_CHANNEL_ID;
-const TELEGRAM_GROUP = process.env.TELEGRAM_GROUP_ID;
-
-// --------------------- CONFIG PATCH v1 --------------------
+// ================== CONFIG PATCH v1 ==================
 const K_MAX = 5;                  // Máx partidos “caros” por ciclo (enriquecer + GPT)
 const WINDOW_MIN = 35;            // Ventana inferior (minutos)
 const WINDOW_MAX = 55;            // Ventana superior (minutos)
-// ---------------------------------------------------------
+const TELEGRAM_TOKEN = TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHANNEL = TELEGRAM_CHANNEL_ID;
+const TELEGRAM_GROUP = TELEGRAM_GROUP_ID;
 
+// ================== HANDLER ==================
 exports.handler = async function () {
   try {
     const partidos = await obtenerPartidosDesdeOddsAPI();
@@ -23,10 +36,8 @@ exports.handler = async function () {
       return { statusCode: 200, body: JSON.stringify({ mensaje: 'Sin partidos en ventana' }) };
     }
 
-    // Prioriza por tiempo de inicio más cercano y limita a K_MAX (cap suave)
-    const candidatos = partidos
-      .sort((a, b) => a.timestamp - b.timestamp)
-      .slice(0, K_MAX);
+    // Prioriza por inicio más próximo y limita a K_MAX (cap suave)
+    const candidatos = partidos.sort((a, b) => a.timestamp - b.timestamp).slice(0, K_MAX);
 
     for (const partido of candidatos) {
       const traceId = `[evt:${partido.id}]`;
@@ -34,19 +45,22 @@ exports.handler = async function () {
       const yaExiste = await verificarSiYaFueEnviado(partido.id);
       if (yaExiste) { console.log(traceId, 'Ya enviado, salto'); continue; }
 
-      // Enriquecer (no bloqueante si falla)
-      const enriquecido = await enriquecerPartidoConAPIFootball(partido);
-      if (!enriquecido || Object.keys(enriquecido).length === 0) {
-        console.warn(traceId, 'Sin datos Football útiles, salto');
-        continue;
+      // Enriquecimiento Football (tolerante a fallos; NO bloquea el flujo)
+      let enriquecido = null;
+      try {
+        enriquecido = await enriquecerPartidoConAPIFootball(partido);
+      } catch (e) {
+        console.warn(traceId, 'Error enriqueciendo Football:', e?.message || e);
       }
+      const infoEnriquecida = (enriquecido && Object.keys(enriquecido).length > 0) ? enriquecido : {};
 
-      // Memoria similar
+      // Memoria similar (tolerante a fallos)
       const memoria = await obtenerMemoriaSimilar(partido);
 
-      // Prompt V2 (pide probabilidad)
-      const prompt = construirPrompt(partido, enriquecido, memoria);
+      // Prompt V2 (pide probabilidad explícita)
+      const prompt = construirPrompt(partido, infoEnriquecida, memoria);
 
+      // -------- Llamada a OpenAI --------
       let pick;
       try {
         const completion = await openai.createChatCompletion({
@@ -76,29 +90,27 @@ exports.handler = async function () {
         continue;
       }
 
-      // Probabilidad y EV (EV = p*cuota - 1)
-      const pDec = estimarProbabilidadDecimal(pick, partido.mejorCuota?.valor);
-      const ev = calcularEVDesdeProb(pDec, partido.mejorCuota?.valor);
+      // -------- Probabilidad & EV --------
+      const probPct = estimarProbabilidad(pick, partido);        // % entero
+      const ev = calcularEV(probPct, partido.mejorCuota?.valor); // % entero
       if (ev == null) { console.warn(traceId, 'EV nulo'); continue; }
 
-      // Filtro por EV mínimo (mantiene tu lógica de envío)
       if (ev < 10) { console.log(traceId, `EV ${ev}% < 10% → descartado`); continue; }
 
       const nivel = clasificarPickPorEV(ev);
       const tipo_pick = ev >= 15 ? 'vip' : 'gratuito';
 
-      const probPercent = Math.round((pDec || 0) * 100);
-
+      // -------- Mensaje --------
       const mensaje = tipo_pick === 'vip'
-        ? construirMensajeVIP(partido, pick, probPercent, ev, nivel)
+        ? construirMensajeVIP(partido, pick, probPct, ev, nivel)
         : construirMensajeFree(partido, pick);
 
-      // Envío a Telegram con verificación
+      // -------- Telegram --------
       const okTelegram = await enviarMensajeTelegram(mensaje, tipo_pick);
       if (!okTelegram) { console.error(traceId, 'Fallo Telegram, continúo'); }
 
-      // Guardar en Supabase con verificación
-      const okSave = await guardarEnSupabase(partido, pick, tipo_pick, nivel, probPercent, ev);
+      // -------- Supabase --------
+      const okSave = await guardarEnSupabase(partido, pick, tipo_pick, nivel, probPct, ev);
       if (!okSave) { console.error(traceId, 'Fallo guardar en Supabase'); }
     }
 
@@ -115,11 +127,17 @@ exports.handler = async function () {
   }
 };
 
-// --------------------- HELPERS ----------------------------
+// ================== HELPERS ==================
 
-// PATCH v1: URL en una línea + btts + res.ok + validaciones + ventana 35–55
+// OddsAPI: URL en 1 línea, markets válidos, res.ok, ventana 35–55
 async function obtenerPartidosDesdeOddsAPI() {
-  const url = `https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey=${ODDS_API_KEY}&regions=eu&markets=h2h,totals,spreads`;
+  if (!ODDS_API_KEY) {
+    console.error('ODDS_API_KEY no definida en el entorno.');
+    return [];
+  }
+
+  const url = `https://api.the-odds-api.com/v4/sports/soccer/odds?apiKey=${ODDS_API_KEY}&regions=eu,us,uk&markets=h2h,totals,spreads&oddsFormat=decimal`;
+
   let res;
   try {
     res = await fetch(url);
@@ -128,7 +146,8 @@ async function obtenerPartidosDesdeOddsAPI() {
     return [];
   }
   if (!res.ok) {
-    console.error('OddsAPI no ok:', res.status, await safeText(res));
+    const body = await safeText(res);
+    console.error('Error al obtener datos de OddsAPI', res.status, body);
     return [];
   }
 
@@ -147,7 +166,7 @@ async function obtenerPartidosDesdeOddsAPI() {
       const inicio = new Date(evento.commence_time).getTime();
       const minutosFaltantes = (inicio - ahora) / 60000;
 
-      // Flatten markets para obtener una mejor cuota global (manteniendo tu enfoque)
+      // Mejor cuota global (simple, de cualquier market)
       const mercados = evento.bookmakers?.flatMap(b => b.markets || []) || [];
       const mejorOutcome = mercados.flatMap(m => m.outcomes || [])
         .reduce((max, o) => (o?.price > (max?.price || 0) ? o : max), null);
@@ -166,15 +185,14 @@ async function obtenerPartidosDesdeOddsAPI() {
     .filter(e => e.minutosFaltantes >= WINDOW_MIN && e.minutosFaltantes <= WINDOW_MAX);
 }
 
-// PATCH v1: res.ok + retorno seguro; NOTA: el id de OddsAPI no es id de equipo en Football.
-// Lo dejamos tolerante a fallos; si no hay datos útiles, devolvemos null y seguimos.
+// Football: tolerante; el id de OddsAPI NO es id de equipo Football. No bloqueamos si falla.
 async function enriquecerPartidoConAPIFootball(partido) {
+  if (!API_FOOTBALL_KEY) return null;
+
   const url = `https://v3.football.api-sports.io/fixtures?team=${encodeURIComponent(partido.id)}`;
   let res;
   try {
-    res = await fetch(url, {
-      headers: { 'x-apisports-key': process.env.API_FOOTBALL_KEY }
-    });
+    res = await fetch(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } });
   } catch (e) {
     console.error(`[evt:${partido.id}] Error de red Football:`, e?.message || e);
     return null;
@@ -196,7 +214,6 @@ async function enriquecerPartidoConAPIFootball(partido) {
   const info = data?.response?.[0] || null;
   if (!info) return null;
 
-  // Añadimos liga si está disponible (para evitar "No especificada")
   const liga =
     info?.league
       ? `${info.league?.country || ''}${info.league?.country ? ' - ' : ''}${info.league?.name || ''}`.trim()
@@ -206,7 +223,6 @@ async function enriquecerPartidoConAPIFootball(partido) {
     ...partido,
     liga: liga || partido.liga || null,
     fixture_id: info?.fixture?.id || null,
-    // (Dejamos el resto de datos complejos para Patch v2 con matching por nombre/fecha)
   };
 }
 
@@ -223,7 +239,7 @@ async function verificarSiYaFueEnviado(idEvento) {
   return !!(data && data.length > 0);
 }
 
-// PATCH v1: Prompt V2, pidiendo "probabilidad" explícita (0–1)
+// Prompt V2: pide probabilidad explícita (0.05–0.85)
 function construirPrompt(partido, info, memoria) {
   const datosClave = {
     liga: info?.liga || 'No especificada',
@@ -231,17 +247,16 @@ function construirPrompt(partido, info, memoria) {
     hora_estimada: 'Comienza en menos de 1 hora',
     cuota_maxima: partido.mejorCuota?.valor,
     bookie: partido.mejorCuota?.casa,
-    // Futuro: adjuntar más campos clave si están disponibles de Football (alineaciones, árbitro, etc.)
   };
 
   return `
 Eres un analista deportivo profesional. Devuelve SOLO JSON válido con estas claves:
 - analisis_gratuito (máx 5-6 oraciones, conciso y claro)
 - analisis_vip (máx 5-6 oraciones, táctico y con argumentos de datos)
-- apuesta (ejemplos: "Más de 2.5 goles", "Ambos anotan", "1X2 local", etc.)
+- apuesta (ej.: "Más de 2.5 goles", "Ambos anotan", "1X2 local")
 - apuestas_extra (texto breve con 1-3 ideas extra si hay señales)
 - frase_motivacional (1 línea, sin emojis)
-- probabilidad (número decimal entre 0.05 y 0.85 que representa prob de acierto de la apuesta principal; ej: 0.62)
+- probabilidad (número decimal entre 0.05 y 0.85 que representa prob. de acierto de la apuesta principal; ej: 0.62)
 
 No inventes datos no proporcionados. Sé específico.
 
@@ -253,32 +268,28 @@ ${JSON.stringify((memoria || []).slice(0,3))}
 `.trim();
 }
 
-// PATCH v1: Probabilidad segura (usa la de GPT si está; si no, fallback a 1/cuota con penalización)
-function estimarProbabilidadDecimal(pick, cuota) {
-  let p = null;
+// Probabilidad: usa la de la IA si viene; si no, fallback a implícita 100/cuota
+function estimarProbabilidad(pick, partido) {
   if (pick && typeof pick.probabilidad !== 'undefined') {
     const v = Number(pick.probabilidad);
     if (!Number.isNaN(v)) {
-      if (v > 0 && v < 1) p = v;
-      else if (v > 1 && v <= 100) p = v / 100;
+      if (v > 0 && v < 1) return Math.round(v * 100); // 0–1 → %
+      if (v >= 1 && v <= 100) return Math.round(v);   // ya viene en %
     }
   }
-  if (!p && cuota) {
-    // Fallback conservador: prob implícita penalizada
-    const c = Number(cuota);
-    if (c > 1.01) p = Math.min(0.85, Math.max(0.05, (1 / c) * 0.92));
-  }
-  return p;
+  const cuota = Number(partido?.mejorCuota?.valor);
+  if (!cuota || cuota <= 1.01) return 0;
+  return Math.round(100 / cuota);
 }
 
-// PATCH v1: EV correcto (devuelve en % redondeado)
-function calcularEVDesdeProb(probDecimal, cuota) {
-  if (!probDecimal || !cuota) return null;
-  const evDecimal = probDecimal * Number(cuota) - 1;
-  return Math.round(evDecimal * 100);
+// EV% = (p*cuota - 1)*100, donde p es decimal
+function calcularEV(probabilidadPct, cuota) {
+  const p = Number(probabilidadPct) / 100;
+  const c = Number(cuota);
+  if (!p || !c) return null;
+  return Math.round((p * c - 1) * 100);
 }
 
-// (Mantengo tu clasificación por EV)
 function clasificarPickPorEV(ev) {
   if (ev >= 40) return 'Ultra Elite';
   if (ev >= 30) return 'Élite Mundial';
@@ -287,7 +298,6 @@ function clasificarPickPorEV(ev) {
   return 'Informativo';
 }
 
-// (Mantengo tus plantillas de mensajes; solo paso prob% ya calculado)
 function construirMensajeVIP(partido, pick, probabilidadPct, ev, nivel) {
   return `
 🎯 PICK NIVEL: ${nivel}
@@ -328,8 +338,8 @@ ${pick.analisis_gratuito}
 `.trim();
 }
 
-// PATCH v1: Telegram con verificación de estado
 async function enviarMensajeTelegram(texto, tipo) {
+  if (!TELEGRAM_TOKEN) { console.error('TELEGRAM_BOT_TOKEN no definido'); return false; }
   const chatId = tipo === 'vip' ? TELEGRAM_GROUP : TELEGRAM_CHANNEL;
   const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
   try {
@@ -339,7 +349,8 @@ async function enviarMensajeTelegram(texto, tipo) {
       body: JSON.stringify({ chat_id: chatId, text: texto })
     });
     if (!res.ok) {
-      console.error('Telegram no ok:', res.status, await safeText(res));
+      const body = await safeText(res);
+      console.error('Error Telegram:', res.status, body);
       return false;
     }
     return true;
@@ -349,7 +360,6 @@ async function enviarMensajeTelegram(texto, tipo) {
   }
 }
 
-// PATCH v1: Supabase con control de error
 async function guardarEnSupabase(partido, pick, tipo_pick, nivel, probabilidadPct, ev) {
   try {
     const { error } = await supabase.from('picks_historicos').insert([{
@@ -375,7 +385,6 @@ async function guardarEnSupabase(partido, pick, tipo_pick, nivel, probabilidadPc
   }
 }
 
-// Mantengo tu función, añado control básico por si falla split.
 async function obtenerMemoriaSimilar(partido) {
   try {
     const local = (partido?.equipos || '').split(' vs ')[0] || '';
@@ -397,7 +406,6 @@ async function obtenerMemoriaSimilar(partido) {
   }
 }
 
-// Validación mínima del pick IA
 function validatePick(pick) {
   if (!pick) return false;
   if (!pick.analisis_vip || !pick.analisis_gratuito) return false;
@@ -405,7 +413,6 @@ function validatePick(pick) {
   return true;
 }
 
-// Helper pequeño para leer error body
 async function safeText(res) {
   try { return await res.text(); } catch { return ''; }
 }
