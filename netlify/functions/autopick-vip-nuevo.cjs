@@ -251,10 +251,10 @@ const globalResumen = {
 
 // =============== OBTENER PARTIDOS (OddsAPI) =================
 async function obtenerPartidosDesdeOddsAPI() {
-  // Calcula ventana de tiempo para pedir SOLO los partidos en rango (35–55m desde ahora)
+  // Calcula ventana y genera ISO sin milisegundos (YYYY-MM-DDTHH:MM:SSZ)
   const now = new Date();
-  const fromISO = new Date(now.getTime() + WINDOW_MIN * 60000).toISOString();
-  const toISO   = new Date(now.getTime() + WINDOW_MAX * 60000).toISOString();
+  const fromISO = new Date(now.getTime() + WINDOW_MIN * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const toISO   = new Date(now.getTime() + WINDOW_MAX * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
   const url = `https://api.the-odds-api.com/v4/sports/soccer/odds` +
     `?apiKey=${ODDS_API_KEY}` +
@@ -262,8 +262,8 @@ async function obtenerPartidosDesdeOddsAPI() {
     `&markets=h2h,totals,spreads` +
     `&oddsFormat=decimal` +
     `&dateFormat=iso` +
-    `&commenceTimeFrom=${encodeURIComponent(fromISO)}` +
-    `&commenceTimeTo=${encodeURIComponent(toISO)}`;
+    `&commenceTimeFrom=${fromISO}` +
+    `&commenceTimeTo=${toISO}`;
 
   let res;
   try {
@@ -275,6 +275,7 @@ async function obtenerPartidosDesdeOddsAPI() {
   if (!res || !res.ok) {
     const body = res ? await safeText(res) : '';
     console.error('❌ Error al obtener datos de OddsAPI', res?.status, body);
+    console.log('URL usada:', url);
     return [];
   }
 
@@ -306,12 +307,12 @@ async function obtenerPartidosDesdeOddsAPI() {
         equipos: e.equipos,
         minutosFaltantes: Math.round(e.minutosFaltantes),
         motivo: e.minutosFaltantes < WINDOW_MIN ? 'muy_cercano' : 'muy_lejano',
-        commence_iso: new Date(e.timestamp).toISOString()
+        commence_iso: new Date(e.timestamp).toISOString().replace(/\.\d{3}Z$/, 'Z')
       });
     }
   }
 
-  console.log(`OddsAPI: recibidos=${data.length}, en_ventana=${enVentana.length} (35–55m)`);
+  console.log(`OddsAPI: recibidos=${data.length}, en_ventana=${enVentana.length} (${WINDOW_MIN}–${WINDOW_MAX}m)`);
   if (fueraVentana.length) {
     console.log('Fuera de ventana (ejemplos):', JSON.stringify(fueraVentana.slice(0, 6)));
   }
