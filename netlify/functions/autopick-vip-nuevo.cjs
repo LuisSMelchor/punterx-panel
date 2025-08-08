@@ -1,214 +1,120 @@
-// ✅ AUTOPICK-VIP-NUEVO COMPLETO - MONITOREO GLOBAL CON ODDSAPI + ENRIQUECIDO POR API-FOOTBALL + IA
-
 const fetch = globalThis.fetch;
-const crypto = await import('node:crypto');
 
-// 🔐 ENV VARIABLES
-const {
-  ODDS_API_KEY,
-  API_FOOTBALL_KEY,
+const ODDS_API_KEY = process.env.ODDS_API_KEY;
+const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const PANEL_ENDPOINT = process.env.PANEL_ENDPOINT;
+const AUTH_CODE = process.env.AUTH_CODE;
+const SECRET = process.env.PUNTERX_SECRET;
+
+const required = {
   SUPABASE_URL,
   SUPABASE_KEY,
   OPENAI_API_KEY,
-  PANEL_ENDPOINT,
-  AUTH_CODE,
-  PUNTERX_SECRET,
-} = process.env;
-
-// ✅ VALIDACIÓN ENV VARIABLES
-for (const [key, val] of Object.entries({
-  ODDS_API_KEY,
   API_FOOTBALL_KEY,
-  SUPABASE_URL,
-  SUPABASE_KEY,
-  OPENAI_API_KEY,
+  ODDS_API_KEY,
   PANEL_ENDPOINT,
   AUTH_CODE,
-  PUNTERX_SECRET,
-})) {
-  if (!val) throw new Error(`❌ Falta la variable de entorno: ${key}`);
+  SECRET,
+};
+
+for (const [key, val] of Object.entries(required)) {
+  if (!val) throw new Error(`❌ Variable de entorno faltante: ${key}`);
 }
 
-// 📆 OBTENER FECHA EN ZONA CDMX
-function obtenerFechaHoraCDMX() {
-  const hoy = new Date().toLocaleString("en-US", {
-    timeZone: "America/Mexico_City",
-  });
-  return new Date(hoy);
-}
+const mapaLigasOddsAPI = {
+  "Premier League": "soccer_epl",
+  "La Liga": "soccer_spain_la_liga",
+  "Liga MX": "soccer_mexico_liga_mex",
+  "Serie A": "soccer_italy_serie_a",
+  "Bundesliga": "soccer_germany_bundesliga",
+  "Ligue 1": "soccer_france_ligue_one",
+};
 
-// 📅 DENTRO DE RANGO DE 45-55 MINUTOS
-function estaDentroDelRango(fechaInicio) {
-  const ahora = obtenerFechaHoraCDMX();
-  const diffMin = (fechaInicio - ahora) / (1000 * 60);
-  return diffMin >= 45 && diffMin <= 55;
-}
+async function obtenerPartidos(fechaHoy) {
+  const res = await fetch(
+    `https://v3.football.api-sports.io/fixtures?date=${fechaHoy}`,
+    {
+      headers: { "x-apisports-key": API_FOOTBALL_KEY },
+    }
+  );
+  const data = await res.json();
 
-// 🔁 OBTENER PARTIDOS DESDE ODDSAPI
-async function obtenerPartidosDesdeOddsAPI() {
-  const url = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu&markets=h2h,totals,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    const errorText = await res.text();
-    console.error(`❌ Error al obtener partidos: ${res.status} → ${errorText}`);
+  if (!Array.isArray(data.response)) {
+    console.error("❌ Error al obtener fixtures:", data);
     return [];
   }
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
+
+  return data.response;
 }
 
-// 📋 MAPEAR INFO DEL PARTIDO
-function mapearPartidoOdds(raw) {
-  const equipos = `${raw.home_team} vs ${raw.away_team}`;
-  const fecha = new Date(raw.commence_time);
-  return {
-    equipos,
-    fecha,
-    id_odds: raw.id,
-    source: raw,
-  };
-}
+async function obtenerCuotas(partido) {
+  try {
+    const sportKey = mapaLigasOddsAPI[partido.liga] || "soccer";
+    const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=eu&markets=h2h,totals,btts,double_chance&bookmakers=bet365,10bet,williamhill,pinnacle,bwin&apiKey=${ODDS_API_KEY}`;
 
-// 🔎 VALIDAR Y ENRIQUECER CON API-FOOTBALL
-async function obtenerFixtureDesdeAPIFootball(equipos, fecha) {
-  const fechaISO = fecha.toISOString().split("T")[0];
-  const url = `https://v3.football.api-sports.io/fixtures?date=${fechaISO}`;
-  const res = await fetch(url, {
-    headers: { "x-apisports-key": API_FOOTBALL_KEY },
-  });
-  const data = await res.json();
-  const lista = Array.isArray(data.response) ? data.response : [];
-  return lista.find(f => f.teams.home.name.includes(equipos.split(" vs ")[0]));
-}
+    console.log(`🔍 Consultando cuotas para: ${partido.equipos || "Sin nombre definido"}`);
 
-// 📈 CALCULAR EV
-function calcularValorEsperado(probabilidad, cuota) {
-  return (cuota * probabilidad - 1).toFixed(2);
-}
+    const res = await fetch(url);
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.warn(`❌ HTTP ${res.status} al obtener cuotas → ${errorText}`);
+      return [];
+    }
 
-// 📊 CLASIFICAR NIVEL
-function clasificarNivelEV(ev) {
-  const val = parseFloat(ev);
-  if (val >= 0.4) return "🟣 Ultra Elite";
-  if (val >= 0.3) return "🎯 Élite Mundial";
-  if (val >= 0.2) return "🥈 Avanzado";
-  if (val >= 0.15) return "🥉 Competitivo";
-  if (val >= 0.1) return "📄 Informativo";
-  return null;
-}
+    const data = await res.json();
+    if (!Array.isArray(data)) {
+      console.warn("⚠️ Respuesta inesperada de OddsAPI:", data);
+      return [];
+    }
 
-// 🤖 ESTIMAR PROBABILIDAD Y ANÁLISIS CON IA
-async function generarAnalisisIA(partido, cuota) {
-  const prompt = `Dado el partido ${partido.equipos}, y una cuota de ${cuota}, analiza ambos equipos y genera:
-  - Probabilidad estimada de éxito
-  - Análisis breve profesional (VIP)
-  - Frase teaser atractiva (para canal gratuito)
-
-Devuélvelo en JSON con campos: probabilidad, analisis, teaser`;
-
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: "gpt-4",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
-    }),
-  });
-
-  const data = await res.json();
-  const text = data.choices?.[0]?.message?.content || "";
-  return JSON.parse(text);
-}
-
-// 🧪 GUARDAR EN SUPABASE
-async function guardarPickEnSupabase(pick) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/picks_historicos`, {
-    method: "POST",
-    headers: {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=minimal",
-    },
-    body: JSON.stringify(pick),
-  });
-
-  if (!res.ok) {
-    const txt = await res.text();
-    console.error("❌ Error al guardar en Supabase:", txt);
+    return data;
+  } catch (error) {
+    console.error("❌ Error al obtener cuotas:", error);
+    return [];
   }
 }
 
-// 📤 ENVIAR A TELEGRAM
-async function enviarMensajeTelegram(mensaje, isVIP) {
-  const payload = {
-    authCode: AUTH_CODE,
-    timestamp: Date.now(),
-    match: mensaje,
-  };
-
-  const signature = crypto.createHmac("sha256", PUNTERX_SECRET)
-    .update(`${payload.timestamp}:${payload.match}`)
-    .digest("hex");
-
-  const body = {
-    ...payload,
-    signature,
-  };
-
-  await fetch(PANEL_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-// 🚀 HANDLER PRINCIPAL
 exports.handler = async function () {
-  const partidosOdds = await obtenerPartidosDesdeOddsAPI();
-  for (const raw of partidosOdds) {
-    const partido = mapearPartidoOdds(raw);
-    if (!estaDentroDelRango(partido.fecha)) continue;
+  try {
+    const fechaHoy = new Date().toISOString().split("T")[0];
+    const partidos = await obtenerPartidos(fechaHoy);
 
-    const fixture = await obtenerFixtureDesdeAPIFootball(partido.equipos, partido.fecha);
-    if (!fixture) continue;
+    if (partidos.length === 0) {
+      console.log("⚠️ No se encontraron partidos hoy.");
+    } else {
+      console.log(`📅 ${partidos.length} partidos encontrados para hoy ${fechaHoy}.`);
+    }
 
-    const cuota = raw.bookmakers?.[0]?.markets?.[0]?.outcomes?.[0]?.price;
-    if (!cuota) continue;
+    // Simulación de lectura de cuotas para el primer partido (solo como prueba)
+    const partidoPrueba = partidos[0];
+    if (partidoPrueba) {
+      const cuotas = await obtenerCuotas({
+        liga: partidoPrueba.league?.name,
+        equipos: `${partidoPrueba.teams?.home?.name} vs ${partidoPrueba.teams?.away?.name}`,
+      });
 
-    const analisis = await generarAnalisisIA(partido, cuota);
-    const ev = calcularValorEsperado(analisis.probabilidad, cuota);
-    const nivel = clasificarNivelEV(ev);
-    if (!nivel) continue;
+      if (cuotas.length === 0) {
+        console.log("⚪ No se encontraron cuotas para este partido.");
+      } else {
+        console.log(`✅ Cuotas obtenidas: ${cuotas.length} mercados encontrados.`);
+      }
+    }
 
-    const pick = {
-      evento: partido.equipos,
-      liga: fixture.league.name + " - " + fixture.league.country,
-      equipos: partido.equipos,
-      analisis: analisis.analisis,
-      teaser: analisis.teaser,
-      apuesta: `Cuota ${cuota}`,
-      ev,
-      probabilidad: analisis.probabilidad,
-      tipo_pick: nivel,
-      timestamp: new Date().toISOString(),
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        ok: true,
+        msg: "🟢 Script ejecutado con éxito. Validación y prueba completadas.",
+      }),
     };
-
-    await guardarPickEnSupabase(pick);
-
-    const mensaje = nivel.includes("Elite") ?
-      `🎯 PICK NIVEL: ${nivel}\n${pick.liga} | ${pick.evento}\nEV: ${ev}, Prob: ${analisis.probabilidad}\n${analisis.analisis}\n👉 ${pick.apuesta}` :
-      `📡 RADAR DE VALOR\n${pick.liga} | ${pick.evento}\n${analisis.teaser}\nÚnete gratis al VIP: @punterxpicks`;
-
-    await enviarMensajeTelegram(mensaje, nivel.includes("Elite"));
+  } catch (err) {
+    console.error("❌ Error durante ejecución:", err);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: "Fallo en ejecución del handler" }),
+    };
   }
-
-  return {
-    statusCode: 200,
-    body: JSON.stringify({ ok: true, msg: "✅ Picks generados y enviados correctamente." }),
-  };
 };
