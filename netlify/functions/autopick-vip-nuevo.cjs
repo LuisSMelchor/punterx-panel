@@ -1,161 +1,203 @@
-// autopick-vip-nuevo.cjs COMPLETO CON TODO INTEGRADO
-import fetch from 'node-fetch';
-import { Configuration, OpenAIApi } from 'openai';
-import { createClient } from '@supabase/supabase-js';
-import crypto from 'crypto';
+// autopick-vip-nuevo.cjs
+const fetch = require('node-fetch');
+const { createClient } = require('@supabase/supabase-js');
+const { Configuration, OpenAIApi } = require('openai');
 
-const openai = new OpenAIApi(new Configuration({ apiKey: process.env.OPENAI_API_KEY }));
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+exports.handler = async function () {
+  // ✅ VALIDACIÓN DE VARIABLES DE ENTORNO
+  const {
+    OPENAI_API_KEY,
+    SUPABASE_URL,
+    SUPABASE_KEY,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_CHANNEL_ID,
+    TELEGRAM_GROUP_ID,
+    ODDS_API_KEY,
+    API_FOOTBALL_KEY,
+    PUNTERX_SECRET,
+    AUTH_CODE
+  } = process.env;
 
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
-const TELEGRAM_GROUP_ID = process.env.TELEGRAM_GROUP_ID;
-
-const getTodayDate = () => new Date().toISOString().split('T')[0];
-
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-const obtenerPartidosOddsAPI = async () => {
-  const url = `https://api.the-odds-api.com/v4/sports/soccer/odds?regions=eu&oddsFormat=decimal&dateFormat=iso&apiKey=${process.env.ODDS_API_KEY}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`❌ Error al obtener partidos: ${res.statusText}`);
-  return await res.json();
-};
-
-const obtenerDetallesApiFootball = async (fixtureId) => {
-  const headers = { 'x-apisports-key': process.env.API_FOOTBALL_KEY };
-
-  const endpoints = {
-    alineaciones: `https://v3.football.api-sports.io/fixtures/lineups?fixture=${fixtureId}`,
-    arbitro: `https://v3.football.api-sports.io/fixtures?id=${fixtureId}`,
-    historial: `https://v3.football.api-sports.io/fixtures/headtohead?h2h=${fixtureId}`,
-    estadisticasLocales: `https://v3.football.api-sports.io/teams/statistics?team=HOME_TEAM_ID&season=2024&league=LEAGUE_ID`,
-    estadisticasVisitantes: `https://v3.football.api-sports.io/teams/statistics?team=AWAY_TEAM_ID&season=2024&league=LEAGUE_ID`,
+  const requiredVars = {
+    OPENAI_API_KEY,
+    SUPABASE_URL,
+    SUPABASE_KEY,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_CHANNEL_ID,
+    TELEGRAM_GROUP_ID,
+    ODDS_API_KEY,
+    API_FOOTBALL_KEY,
+    PUNTERX_SECRET,
+    AUTH_CODE
   };
 
-  const results = {};
-  for (const [key, url] of Object.entries(endpoints)) {
-    const res = await fetch(url, { headers });
-    const data = await res.json();
-    results[key] = data.response;
-    await delay(100); // delay para evitar rate limit
+  for (const [key, value] of Object.entries(requiredVars)) {
+    if (!value) {
+      console.error(`❌ Missing environment variable: ${key}`);
+      return {
+        statusCode: 500,
+        body: `Missing environment variable: ${key}`
+      };
+    }
   }
-  return results;
-};
 
-const calcularEV = (probabilidad, cuota) => {
-  const ev = (probabilidad / 100) * cuota - 1;
-  return Math.round(ev * 100);
-};
+  // 🧠 INICIALIZACIÓN DE SERVICIOS
+  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  const openai = new OpenAIApi(new Configuration({ apiKey: OPENAI_API_KEY }));
 
-const generarMensajeIA = async (datos) => {
-  const prompt = `Eres un analista deportivo experto. Analiza este partido:
+  try {
+    console.log("📅 Buscando partidos...");
 
-Datos:
-${JSON.stringify(datos, null, 2)}
+    const now = new Date();
+    const partidos = await obtenerPartidosDesdeOddsAPI(now, ODDS_API_KEY);
 
-Devuélveme un JSON con los siguientes campos:
-- analisis_gratuito
-- analisis_vip
-- apuesta
-- apuestas_extra
-- frase_motivacional`;
+    if (!Array.isArray(partidos)) {
+      throw new Error("La respuesta de partidos no es un array válido");
+    }
 
-  const completion = await openai.createChatCompletion({
-    model: 'gpt-4',
-    messages: [{ role: 'user', content: prompt }],
-  });
+    console.log(`📅 ${partidos.length} partidos encontrados para hoy ${now.toISOString().split('T')[0]}`);
 
-  const respuesta = completion.data.choices[0].message.content;
-  return JSON.parse(respuesta);
-};
+    for (const partido of partidos) {
+      try {
+        const enriquecido = await enriquecerPartidoConAPIFootball(partido, API_FOOTBALL_KEY);
+        if (!enriquecido) continue;
 
-const enviarTelegram = async (chatId, text) => {
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
-  });
-  return await res.json();
-};
+        const prompt = construirPromptIA(enriquecido);
+        const iaResponse = await openai.createChatCompletion({
+          model: 'gpt-4',
+          messages: [{ role: 'user', content: prompt }]
+        });
 
-export async function handler() {
-  const partidos = await obtenerPartidosOddsAPI();
-  console.log(`📅 ${partidos.length} partidos encontrados para hoy ${getTodayDate()}.`);
+        const pick = JSON.parse(iaResponse.data.choices[0].message.content);
 
-  for (const partido of partidos) {
-    const horaPartido = new Date(partido.commence_time).getTime();
-    const ahora = new Date().getTime();
-    const minutos = (horaPartido - ahora) / (1000 * 60);
+        const ev = calcularEV(enriquecido, pick);
+        const nivel = clasificarPickPorEV(ev);
 
-    if (minutos < 45 || minutos > 55) continue;
+        if (!nivel) continue;
 
-    const equipos = `${partido.home_team} vs ${partido.away_team}`;
-    console.log(`🔍 Analizando: ${equipos}`);
+        const mensajeVIP = construirMensajeVIP(enriquecido, pick, ev, nivel);
+        const mensajeFREE = construirMensajeFree(enriquecido, pick);
 
-    const fixtureId = 'USAR_ID_REAL'; // deberás mapear partido de OddsAPI a fixtureId de API-FOOTBALL
-    const detalles = await obtenerDetallesApiFootball(fixtureId);
+        if (nivel !== '📄 Informativo') {
+          await enviarTelegram(mensajeVIP, TELEGRAM_GROUP_ID, TELEGRAM_BOT_TOKEN);
+        } else {
+          await enviarTelegram(mensajeFREE, TELEGRAM_CHANNEL_ID, TELEGRAM_BOT_TOKEN);
+        }
 
-    const datosIA = {
-      equipos,
-      liga: partido.sport_key,
-      horario_aproximado: `Comienza en ${Math.round(minutos)} minutos`,
-      alineaciones: detalles.alineaciones,
-      arbitro: detalles.arbitro,
-      historial: detalles.historial,
-      estadisticas_locales: detalles.estadisticasLocales,
-      estadisticas_visitantes: detalles.estadisticasVisitantes,
+        await guardarPickSupabase(supabase, enriquecido, pick, ev, nivel);
+
+        await delay(1000);
+      } catch (error) {
+        console.error("⚠️ Error procesando partido:", error.message);
+      }
+    }
+
+    return {
+      statusCode: 200,
+      body: "Proceso completado correctamente."
     };
-
-    const analisis = await generarMensajeIA(datosIA);
-
-    const cuota = parseFloat(partido.bookmakers[0]?.markets[0]?.outcomes[0]?.price || 1.5);
-    const probabilidad = 60; // estimación inicial, puede venir de IA
-    const ev = calcularEV(probabilidad, cuota);
-
-    const mensajeVIP = `🎯 PICK NIVEL: Hallazgo VIP
-${equipos} (${partido.sport_title})
-Hora: ${datosIA.horario_aproximado}
-Probabilidad estimada: ${probabilidad}%
-EV: ${ev}%
-Apuesta sugerida: ${analisis.apuesta}
-Apuestas extra: ${analisis.apuestas_extra}
-
-${analisis.analisis_vip}
-
-⚠️ Este contenido es informativo. Apostar conlleva riesgo.`;
-
-    const mensajeGratis = `📡 RADAR DE VALOR
-${equipos} (${partido.sport_title})
-Hora: ${datosIA.horario_aproximado}
-
-${analisis.analisis_gratuito}
-
-${analisis.frase_motivacional}
-Únete al grupo VIP gratis 15 días: @punterxpicks`;
-
-    if (ev >= 15) await enviarTelegram(TELEGRAM_GROUP_ID, mensajeVIP);
-    else if (ev >= 10) await enviarTelegram(TELEGRAM_CHANNEL_ID, mensajeGratis);
-
-    await supabase.from('picks_historicos').insert({
-      evento: equipos,
-      analisis: analisis.analisis_vip,
-      apuesta: analisis.apuesta,
-      tipo_pick: 'VIP',
-      liga: partido.sport_title,
-      equipos,
-      ev,
-      probabilidad,
-      nivel: 'Hallazgo VIP',
-      timestamp: new Date().toISOString(),
-    });
-
-    await delay(1000);
+  } catch (error) {
+    console.error("❌ Error general en la función:", error.message);
+    return {
+      statusCode: 500,
+      body: `Error general: ${error.message}`
+    };
   }
+};
 
-  return {
-    statusCode: 200,
-    body: JSON.stringify({ success: true })
-  };
+// 🧩 FUNCIONES AUXILIARES SIMPLIFICADAS PARA ILUSTRACIÓN
+async function obtenerPartidosDesdeOddsAPI(date, apiKey) {
+  try {
+    const res = await fetch(`https://api.the-odds-api.com/v4/sports/soccer/odds?apiKey=${apiKey}&regions=eu&markets=totals,spreads,h2h&oddsFormat=decimal`);
+    if (!res.ok) throw new Error("Fallo la solicitud a OddsAPI");
+    const data = await res.json();
+    return data.filter(p => partidoEnRango(p.commence_time));
+  } catch (err) {
+    console.error("❌ Error en OddsAPI:", err.message);
+    return [];
+  }
+}
+
+function partidoEnRango(hora) {
+  const ahora = new Date();
+  const inicio = new Date(hora);
+  const minutos = (inicio - ahora) / 60000;
+  return minutos >= 45 && minutos <= 55;
+}
+
+async function enriquecerPartidoConAPIFootball(partido, apiKey) {
+  try {
+    // Aquí irían todas las llamadas a API-Football para alineaciones, árbitro, historial, clima...
+    return {
+      ...partido,
+      liga: "España - La Liga",
+      equipos: `${partido.home_team} vs. ${partido.away_team}`,
+      fixture_id: partido.id // Usar el ID real que venga desde OddsAPI
+    };
+  } catch (err) {
+    console.error("❌ Error enriqueciendo partido:", err.message);
+    return null;
+  }
+}
+
+function construirPromptIA(info) {
+  return `Genera un JSON con análisis gratuito y VIP para el partido ${info.equipos} de la liga ${info.liga}. Incluye: análisis_gratuito, análisis_vip, apuesta, apuestas_extra, frase_motivacional.`;
+}
+
+function calcularEV(info, pick) {
+  return Math.floor(Math.random() * 41); // Simulación de EV
+}
+
+function clasificarPickPorEV(ev) {
+  if (ev >= 40) return '🟣 Ultra Elite';
+  if (ev >= 30) return '🎯 Élite Mundial';
+  if (ev >= 20) return '🥈 Avanzado';
+  if (ev >= 15) return '🥉 Competitivo';
+  if (ev >= 10) return '📄 Informativo';
+  return null;
+}
+
+function construirMensajeVIP(info, pick, ev, nivel) {
+  return `🎯 PICK NIVEL: ${nivel}\n${info.liga}\n${info.equipos}\nHora: Comienza en 50 min\nApuesta sugerida: ${pick.apuesta}\nEV: +${ev}%\n${pick.analisis_vip}\n${pick.apuestas_extra}`;
+}
+
+function construirMensajeFree(info, pick) {
+  return `📡 RADAR DE VALOR\n${info.liga}\n${info.equipos}\nHora: Comienza en 50 min\n${pick.analisis_gratuito}\n${pick.frase_motivacional}\nÚnete al VIP gratis por 15 días ➜ @punterxpicks`;
+}
+
+async function enviarTelegram(mensaje, chatId, token) {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: mensaje })
+    });
+    if (!res.ok) throw new Error("Fallo envío Telegram");
+  } catch (err) {
+    console.error("📵 Telegram error:", err.message);
+  }
+}
+
+async function guardarPickSupabase(supabase, info, pick, ev, nivel) {
+  try {
+    const { error } = await supabase.from("picks_historicos").insert({
+      evento: `${info.equipos}`,
+      analisis: pick.analisis_vip,
+      apuesta: pick.apuesta,
+      tipo_pick: nivel,
+      liga: info.liga,
+      equipos: info.equipos,
+      ev: ev,
+      probabilidad: null,
+      nivel: nivel,
+      timestamp: new Date().toISOString()
+    });
+    if (error) throw new Error(error.message);
+  } catch (err) {
+    console.error("❌ Supabase error:", err.message);
+  }
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
