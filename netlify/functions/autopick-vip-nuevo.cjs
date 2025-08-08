@@ -151,19 +151,13 @@ exports.handler = async function () {
 
 // ===================== OBTENER PARTIDOS (OddsAPI) =====================
 async function obtenerPartidosDesdeOddsAPI() {
-  // Filtro de tiempo en la propia API — evita traer partidos fuera de ventana
-  const now = new Date();
-  const fromISO = new Date(now.getTime() + WINDOW_MIN * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
-  const toISO   = new Date(now.getTime() + WINDOW_MAX * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
-
+  // Llamada simple (sin commenceTimeFrom/To). Filtramos localmente.
   const url = `https://api.the-odds-api.com/v4/sports/soccer/odds` +
     `?apiKey=${ODDS_API_KEY}` +
     `&regions=eu,us,uk` +
     `&markets=h2h,totals,spreads` +
     `&oddsFormat=decimal` +
-    `&dateFormat=iso` +
-    `&commenceTimeFrom=${fromISO}` +
-    `&commenceTimeTo=${toISO}`;
+    `&dateFormat=iso`;
 
   let res;
   try {
@@ -175,7 +169,7 @@ async function obtenerPartidosDesdeOddsAPI() {
   if (!res || !res.ok) {
     const body = res ? await safeText(res) : '';
     console.error('❌ Error al obtener datos de OddsAPI', res?.status, body);
-    console.log('URL usada:', url);
+    console.log('URL usada (sin filtros de tiempo):', url);
     return [];
   }
 
@@ -189,14 +183,13 @@ async function obtenerPartidosDesdeOddsAPI() {
   if (!Array.isArray(data)) return [];
 
   const ahora = Date.now();
-
   const mapeados = data
     .map(evento => normalizeOddsEvent(evento, ahora))
     .filter(Boolean);
 
+  // Ventana base
   const enVentana = [];
   const fueraVentana = [];
-
   for (const e of mapeados) {
     if (e.minutosFaltantes >= WINDOW_MIN && e.minutosFaltantes <= WINDOW_MAX) {
       enVentana.push(e);
@@ -215,8 +208,20 @@ async function obtenerPartidosDesdeOddsAPI() {
   if (fueraVentana.length) {
     console.log('Fuera de ventana (ejemplos):', JSON.stringify(fueraVentana.slice(0, 6)));
   }
-
   globalResumen.encontrados = data.length;
+
+  // Fallback adaptativo 30–60 solo si hay data pero nada en ventana base
+  if (data.length > 0 && enVentana.length === 0) {
+    const FALLBACK_MIN = 30;
+    const FALLBACK_MAX = 60;
+    const enFallback = mapeados.filter(e =>
+      e.minutosFaltantes >= FALLBACK_MIN && e.minutosFaltantes <= FALLBACK_MAX
+    );
+    if (enFallback.length > 0) {
+      console.log(`⚠️ Fallback activado: ${enFallback.length} partidos en ${FALLBACK_MIN}–${FALLBACK_MAX}m (ciclo actual)`);
+      return enFallback;
+    }
+  }
 
   return enVentana;
 }
