@@ -1,93 +1,118 @@
+// netlify/functions/diagnostico-total.cjs
 const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
+const { OPENAI_API_KEY, API_FOOTBALL_KEY, ODDS_API_KEY, SUPABASE_URL, SUPABASE_KEY } = process.env;
 
-exports.handler = async () => {
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+exports.handler = async function () {
+  const errores = [];
+
+  // Verificar conexión Supabase
+  let conexionSupabase = 'OK';
   try {
-    // Configuración
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_KEY;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const { error } = await supabase.from('picks_historicos').select('*').limit(1);
+    if (error) throw error;
+  } catch (err) {
+    conexionSupabase = 'Error';
+    errores.push(`Supabase: ${err.message}`);
+  }
 
-    // Verificar conexión a Supabase
-    const { data: picks, error: errorPicks } = await supabase
+  // Verificar estado API-Football
+  let estadoFootball = 'OK';
+  try {
+    const res = await fetch('https://v3.football.api-sports.io/status', {
+      headers: { 'x-apisports-key': API_FOOTBALL_KEY },
+    });
+    const json = await res.json();
+    if (!json || json.errors) throw new Error('No responde correctamente');
+  } catch (err) {
+    estadoFootball = 'Error';
+    errores.push(`API-Football: ${err.message}`);
+  }
+
+  // Verificar estado OddsAPI
+  let estadoOdds = 'OK';
+  try {
+    const res = await fetch(`https://api.the-odds-api.com/v4/sports`, {
+      headers: { 'x-api-key': ODDS_API_KEY },
+    });
+    const json = await res.json();
+    if (!Array.isArray(json)) throw new Error('No responde correctamente');
+  } catch (err) {
+    estadoOdds = 'Error';
+    errores.push(`OddsAPI: ${err.message}`);
+  }
+
+  // Verificar estado OpenAI
+  let estadoOpenAI = 'OK';
+  try {
+    const res = await fetch('https://api.openai.com/v1/models', {
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    });
+    const json = await res.json();
+    if (!json || json.error) throw new Error('No responde correctamente');
+  } catch (err) {
+    estadoOpenAI = 'Error';
+    errores.push(`OpenAI: ${err.message}`);
+  }
+
+  // Consultar último pick
+  let ultimoPick = 'No disponible';
+  try {
+    const { data } = await supabase
       .from('picks_historicos')
-      .select('*')
+      .select('evento, timestamp, ev, nivel')
       .order('timestamp', { ascending: false })
       .limit(1);
-
-    const { data: picksHoy, error: errorHoy } = await supabase
-      .from('picks_historicos')
-      .select('id', { count: 'exact', head: true })
-      .gte('timestamp', new Date().toISOString().split('T')[0]);
-
-    const ultimoPick = picks?.[0]?.evento || 'No disponible';
-    const cantidadHoy = picksHoy?.length || 0;
-    const estadoSupabase = errorPicks || errorHoy ? '❌ Error' : '✅ OK';
-
-    // Verificar API-Football
-    const resFootball = await fetch('https://v3.football.api-sports.io/status', {
-      headers: { 'x-apisports-key': process.env.API_FOOTBALL_KEY }
-    });
-    const estadoFootball = resFootball.ok ? '✅ OK' : '❌ Error';
-
-    // Verificar OddsAPI
-    const resOdds = await fetch(`https://api.the-odds-api.com/v4/sports`, {
-      headers: { 'x-api-key': process.env.ODDS_API_KEY }
-    });
-    const estadoOdds = resOdds.ok ? '✅ OK' : '❌ Error';
-
-    // Verificar OpenAI
-    const resOpenAI = await fetch('https://api.openai.com/v1/models', {
-      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }
-    });
-    const estadoOpenAI = resOpenAI.ok ? '✅ OK' : '❌ Error';
-
-    // Evaluar estado general
-    const todoOK = [estadoSupabase, estadoFootball, estadoOdds, estadoOpenAI].every((e) => e === '✅ OK');
-    const estadoGeneral = todoOK ? '🟢 Estable' : '🔴 Inestable';
-
-    // HTML de respuesta
-    const html = `
-      <!DOCTYPE html>
-      <html lang="es">
-      <head>
-        <meta charset="UTF-8" />
-        <title>Diagnóstico PunterX</title>
-        <style>
-          body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; color: #333; }
-          h1 { color: #222; }
-          .ok { color: green; }
-          .error { color: red; }
-          .panel { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 0 10px #ccc; }
-          .status { font-size: 18px; margin-bottom: 10px; }
-        </style>
-      </head>
-      <body>
-        <div class="panel">
-          <h1>📊 Diagnóstico del sistema PunterX</h1>
-          <div class="status"><strong>🧠 Supabase:</strong> <span class="${estadoSupabase.includes('✅') ? 'ok' : 'error'}">${estadoSupabase}</span></div>
-          <div class="status"><strong>⚽ API-Football:</strong> <span class="${estadoFootball.includes('✅') ? 'ok' : 'error'}">${estadoFootball}</span></div>
-          <div class="status"><strong>📈 OddsAPI:</strong> <span class="${estadoOdds.includes('✅') ? 'ok' : 'error'}">${estadoOdds}</span></div>
-          <div class="status"><strong>🤖 OpenAI:</strong> <span class="${estadoOpenAI.includes('✅') ? 'ok' : 'error'}">${estadoOpenAI}</span></div>
-          <hr />
-          <div class="status"><strong>📌 Último pick enviado:</strong> ${ultimoPick}</div>
-          <div class="status"><strong>📅 Picks enviados hoy:</strong> ${cantidadHoy}</div>
-          <hr />
-          <div class="status"><strong>🔍 Estado general:</strong> <span class="${todoOK ? 'ok' : 'error'}">${estadoGeneral}</span></div>
-        </div>
-      </body>
-      </html>
-    `;
-
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'text/html' },
-      body: html
-    };
-  } catch (error) {
-    return {
-      statusCode: 500,
-      body: `<h1>Error al generar diagnóstico</h1><pre>${error.message}</pre>`
-    };
+    if (data && data.length > 0) {
+      const pick = data[0];
+      const fecha = new Date(pick.timestamp).toLocaleString('es-MX', {
+        timeZone: 'America/Mexico_City',
+      });
+      ultimoPick = `${pick.evento} | EV: ${pick.ev}% | ${pick.nivel} | ${fecha}`;
+    }
+  } catch (err) {
+    errores.push(`Historial: ${err.message}`);
   }
+
+  // Picks hoy
+  let picksHoy = 0;
+  try {
+    const inicioDia = new Date();
+    inicioDia.setUTCHours(0, 0, 0, 0);
+    const finDia = new Date();
+    finDia.setUTCHours(23, 59, 59, 999);
+    const { data } = await supabase
+      .from('picks_historicos')
+      .select('id', { count: 'exact' })
+      .gte('timestamp', inicioDia.toISOString())
+      .lte('timestamp', finDia.toISOString());
+    picksHoy = data?.length || 0;
+  } catch (err) {
+    errores.push(`Picks hoy: ${err.message}`);
+  }
+
+  // Simulación funciones activas
+  const funcionesActivas = 1; // Manual por ahora
+
+  // Diagnóstico general
+  let estadoGeneral = 'Estable 🟢';
+  if (errores.length > 0) estadoGeneral = 'Alerta ⚠️';
+
+  return {
+    statusCode: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      estadoGeneral,
+      conexionSupabase,
+      estadoFootball,
+      estadoOdds,
+      estadoOpenAI,
+      funcionesActivas,
+      picksHoy,
+      ultimoPick,
+      errores,
+    }),
+  };
 };
