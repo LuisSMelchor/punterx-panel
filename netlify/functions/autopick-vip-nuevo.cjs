@@ -1,10 +1,12 @@
 // netlify/functions/autopick-vip-nuevo.cjs
+// Patch v2.1 — paralelismo, retries/backoff, filtro por tiempo en OddsAPI, top-3 bookies (VIP),
+// upsert antes de enviar (evita duplicados), cuota coherente con la apuesta, logs extendidos.
 
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 const { Configuration, OpenAIApi } = require('openai');
 
-// =============== ENV & CLIENTES =================
+// ===================== ENV =====================
 const {
   SUPABASE_URL,
   SUPABASE_KEY,
@@ -14,7 +16,7 @@ const {
   TELEGRAM_GROUP_ID,
   ODDS_API_KEY,
   API_FOOTBALL_KEY,
-  OPENAI_MODEL // opcional, por defecto gpt-4
+  OPENAI_MODEL // opcional
 } = process.env;
 
 function assertEnv() {
@@ -31,16 +33,17 @@ function assertEnv() {
   }
 }
 
+// ===================== CLIENTES =====================
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
 const openai = new OpenAIApi(configuration);
 const MODEL = OPENAI_MODEL || 'gpt-4';
 
-// =============== CONFIG PATCH v2 =================
+// ===================== CONFIG =====================
 const WINDOW_MIN = 35; // minutos
 const WINDOW_MAX = 55; // minutos
 
-const K_MIN = 3;       // cap mínimo por ciclo (fase cara)
+const K_MIN = 3;       // cap mínimo por ciclo
 const K_MAX = 6;       // cap máximo por ciclo
 const CONCURRENCY = 3; // cuántos partidos "caros" en paralelo
 
@@ -48,7 +51,10 @@ const REQUEST_TIMEOUT_MS = 8000;
 const RETRIES = 2;
 const BACKOFF_MS = 600;
 
-// =============== UTILS (fetch c/ retry & timeout) ===============
+// ===================== UTILS =====================
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+async function safeText(res) { try { return await res.text(); } catch { return ''; } }
+
 async function fetchWithRetry(url, options = {}, cfg = {}) {
   const retries = cfg.retries ?? RETRIES;
   const backoff = cfg.backoffMs ?? BACKOFF_MS;
@@ -64,7 +70,6 @@ async function fetchWithRetry(url, options = {}, cfg = {}) {
       const res = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(id);
       if (!res.ok) {
-        // Reintentos solo en 429/5xx
         if ((res.status === 429 || (res.status >= 500 && res.status < 600)) && attempt < retries) {
           const body = await safeText(res);
           console.warn(`⚠️ ${url} -> ${res.status} retry ${attempt + 1}/${retries}`, body);
@@ -90,10 +95,30 @@ async function fetchWithRetry(url, options = {}, cfg = {}) {
   return null;
 }
 
-function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-async function safeText(res) { try { return await res.text(); } catch { return ''; } }
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
 
-// =============== HANDLER =================
+function includesLoose(a, b) {
+  if (!a || !b) return false;
+  const na = normalizeStr(a);
+  const nb = normalizeStr(b);
+  return na.includes(nb) || nb.includes(na);
+}
+function normalizeStr(s) {
+  return String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+// ===================== RESUMEN GLOBAL =====================
+const globalResumen = {
+  encontrados: 0, candidatos: 0, procesados: 0, descartados_ev: 0,
+  intentos_vip: 0, intentos_free: 0, enviados_vip: 0, enviados_free: 0,
+  guardados_ok: 0, guardados_fail: 0
+};
+
+// ===================== HANDLER =====================
 exports.handler = async function () {
   try {
     assertEnv();
@@ -104,154 +129,29 @@ exports.handler = async function () {
       return { statusCode: 200, body: JSON.stringify({ mensaje: 'Sin partidos en ventana' }) };
     }
 
-    // Prioriza por inicio más próximo
     const ordenados = partidos.sort((a, b) => a.timestamp - b.timestamp);
-
-    // Cap dinámico simple: si hay muchos partidos, usa K_MAX; si hay pocos, al menos K_MIN
     const K = Math.max(K_MIN, Math.min(K_MAX, ordenados.length));
     const candidatos = ordenados.slice(0, K);
 
-    // Resumen de ciclo
-    const resumen = {
-      encontrados: partidos.length,
-      candidatos: candidatos.length,
-      procesados: 0,
-      descartados_ev: 0,
-      intentos_vip: 0,
-      intentos_free: 0,
-      enviados_vip: 0,
-      enviados_free: 0,
-      guardados_ok: 0,
-      guardados_fail: 0
-    };
+    globalResumen.candidatos = candidatos.length;
 
-    // Procesa en paralelo controlado
     const chunks = chunkArray(candidatos, CONCURRENCY);
     for (const grupo of chunks) {
-      const tasks = grupo.map(partido => procesarPartido(partido, resumen));
+      const tasks = grupo.map(partido => procesarPartido(partido));
       await Promise.allSettled(tasks);
     }
 
-    console.log('Resumen ciclo:', JSON.stringify(resumen));
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ mensaje: 'Picks procesados correctamente', resumen })
-    };
+    console.log('Resumen ciclo:', JSON.stringify(globalResumen));
+    return { statusCode: 200, body: JSON.stringify({ mensaje: 'Picks procesados correctamente', resumen: globalResumen }) };
   } catch (error) {
     console.error('❌ Error general en autopick-vip-nuevo:', error);
     return { statusCode: 500, body: JSON.stringify({ error: 'Error interno del servidor' }) };
   }
 };
 
-// =============== PIPELINE POR PARTIDO =================
-async function procesarPartido(partido) {
-  const traceId = `[evt:${partido.id}]`;
-  try {
-    // Evita duplicados
-    const yaExiste = await verificarSiYaFueEnviado(partido.id);
-    if (yaExiste) { console.log(traceId, 'Ya enviado, salto'); return; }
-
-    // Enriquecimiento Football + memoria (en paralelo, tolerante a fallos)
-    const [enriqRes, memRes] = await Promise.allSettled([
-      enriquecerPartidoConAPIFootball(partido),
-      obtenerMemoriaSimilar(partido)
-    ]);
-
-    const enriquecido = (enriqRes.status === 'fulfilled' && enriqRes.value) ? enriqRes.value : null;
-    const memoria = (memRes.status === 'fulfilled' && Array.isArray(memRes.value)) ? memRes.value : [];
-
-    // Merge no bloqueante: si Football trae liga/fixture, úsalo
-    const P = { ...partido, ...(enriquecido || {}) };
-
-    const prompt = construirPrompt(P, enriquecido || {}, memoria);
-
-    // -------- Llamada a OpenAI --------
-    let pick;
-    try {
-      const completion = await openai.createChatCompletion({
-        model: MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        // max_tokens opcional; si tu prompt crece, limítalo (p.ej. 400)
-      });
-
-      const respuesta = completion?.data?.choices?.[0]?.message?.content;
-      if (!respuesta || typeof respuesta !== 'string') {
-        console.error(traceId, 'Respuesta GPT vacía');
-        return;
-      }
-
-      try {
-        pick = JSON.parse(respuesta);
-      } catch (e) {
-        console.error(traceId, 'JSON inválido de GPT:', respuesta.slice(0, 300));
-        return;
-      }
-
-      if (!validatePick(pick)) {
-        console.warn(traceId, 'Pick incompleto', pick);
-        return;
-      }
-    } catch (error) {
-      console.error(traceId, 'Error GPT:', error?.message || error);
-      return;
-    }
-
-    // -------- Selección de cuota según apuesta --------
-    const cuotaSeleccionada = seleccionarCuotaSegunApuesta(P, pick.apuesta);
-    if (!cuotaSeleccionada || !cuotaSeleccionada.valor) {
-      console.warn(traceId, 'No se encontró cuota coherente con la apuesta; uso mejorCuota global');
-    }
-    const cuota = (cuotaSeleccionada && cuotaSeleccionada.valor) ? cuotaSeleccionada.valor : P?.mejorCuota?.valor;
-
-    // -------- Probabilidad & EV --------
-    const probPct = clampProb(estimarlaProbabilidadPct(pick, cuota)); // 5–85
-    const ev = calcularEV(probPct, cuota); // % entero
-    if (ev == null) { console.warn(traceId, 'EV nulo'); return; }
-
-    // Contador procesados
-    globalResumen.procesados++;
-
-    if (ev < 10) { globalResumen.descartados_ev++; console.log(traceId, `EV ${ev}% < 10% → descartado`); return; }
-
-    const nivel = clasificarPickPorEV(ev);
-    const tipo_pick = ev >= 15 ? 'vip' : 'gratuito';
-
-    if (tipo_pick === 'vip') globalResumen.intentos_vip++;
-    else globalResumen.intentos_free++;
-
-    // -------- Mensaje --------
-    const mensaje = tipo_pick === 'vip'
-      ? construirMensajeVIP(P, pick, probPct, ev, nivel)
-      : construirMensajeFree(P, pick);
-
-    // -------- Telegram --------
-    const okTelegram = await enviarMensajeTelegram(mensaje, tipo_pick);
-    if (okTelegram) {
-      if (tipo_pick === 'vip') globalResumen.enviados_vip++;
-      else globalResumen.enviados_free++;
-    } else {
-      console.error(traceId, 'Fallo Telegram (no bloquea)');
-    }
-
-    // -------- Supabase --------
-    const okSave = await guardarEnSupabase(P, pick, tipo_pick, nivel, probPct, ev);
-    if (okSave) globalResumen.guardados_ok++;
-    else { globalResumen.guardados_fail++; console.error(traceId, 'Fallo guardar en Supabase'); }
-  } catch (e) {
-    console.error(traceId, 'Excepción procesando partido:', e?.message || e);
-  }
-}
-
-// variable interna para el resumen (mutado dentro de procesarPartido)
-const globalResumen = {
-  encontrados: 0, candidatos: 0, procesados: 0, descartados_ev: 0,
-  intentos_vip: 0, intentos_free: 0, enviados_vip: 0, enviados_free: 0,
-  guardados_ok: 0, guardados_fail: 0
-};
-
-// =============== OBTENER PARTIDOS (OddsAPI) =================
+// ===================== OBTENER PARTIDOS (OddsAPI) =====================
 async function obtenerPartidosDesdeOddsAPI() {
-  // Calcula ventana y genera ISO sin milisegundos (YYYY-MM-DDTHH:MM:SSZ)
+  // Filtro de tiempo en la propia API — evita traer partidos fuera de ventana
   const now = new Date();
   const fromISO = new Date(now.getTime() + WINDOW_MIN * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
   const toISO   = new Date(now.getTime() + WINDOW_MAX * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -290,7 +190,6 @@ async function obtenerPartidosDesdeOddsAPI() {
 
   const ahora = Date.now();
 
-  // Normaliza todos los eventos y separa en ventana / fuera de ventana con motivos
   const mapeados = data
     .map(evento => normalizeOddsEvent(evento, ahora))
     .filter(Boolean);
@@ -317,18 +216,91 @@ async function obtenerPartidosDesdeOddsAPI() {
     console.log('Fuera de ventana (ejemplos):', JSON.stringify(fueraVentana.slice(0, 6)));
   }
 
-  // para el resumen global del ciclo
   globalResumen.encontrados = data.length;
 
   return enVentana;
 }
 
-// =============== ENRIQUECER (API-FOOTBALL) =================
-// Matching por nombre + fecha (search + filtro por cercanía de hora)
+// ===================== NORMALIZAR EVENTO =====================
+function arrBest(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  return arr.reduce((max, o) => (o?.price > (max?.price || 0) ? o : max), null);
+}
+
+function normalizeOddsEvent(evento, ahoraTs) {
+  try {
+    const inicio = new Date(evento.commence_time).getTime();
+    const minutosFaltantes = (inicio - ahoraTs) / 60000;
+
+    // Recolecta outcomes por mercado y bookie para poder sacar top-3
+    const marketsOutcomes = { h2h: [], totals_over: [], totals_under: [], spreads: [] };
+
+    const marketsRaw = evento.bookmakers || [];
+    for (const bk of marketsRaw) {
+      const bookie = bk?.title || bk?.key || 'Desconocida';
+      const ms = bk?.markets || [];
+      for (const m of ms) {
+        const key = m?.key; // 'h2h' | 'totals' | 'spreads'
+        const outs = m?.outcomes || [];
+        for (const o of outs) {
+          const name = (o?.name || '').toLowerCase();
+          const item = {
+            bookie,
+            name: o?.name || '',
+            price: Number(o?.price),
+            point: typeof o?.point !== 'undefined' ? o.point : null
+          };
+          if (key === 'h2h') {
+            marketsOutcomes.h2h.push(item);
+          } else if (key === 'totals') {
+            if (/over/.test(name)) marketsOutcomes.totals_over.push(item);
+            else if (/under/.test(name)) marketsOutcomes.totals_under.push(item);
+          } else if (key === 'spreads') {
+            marketsOutcomes.spreads.push(item);
+          }
+        }
+      }
+    }
+
+    // Mejor global
+    const mejorOutcome = Object.values(marketsOutcomes)
+      .flat()
+      .reduce((max, o) => (o?.price > (max?.price || 0) ? o : max), null);
+
+    // Mejores por mercado (simple)
+    const bestH2H = arrBest(marketsOutcomes.h2h);
+    const bestTotalsOver = arrBest(marketsOutcomes.totals_over);
+    const bestTotalsUnder = arrBest(marketsOutcomes.totals_under);
+    const bestSpreads = arrBest(marketsOutcomes.spreads);
+
+    return {
+      id: evento.id,
+      equipos: `${evento.home_team} vs ${evento.away_team}`,
+      home: evento.home_team,
+      away: evento.away_team,
+      timestamp: inicio,
+      minutosFaltantes,
+      mejorCuota: (mejorOutcome ? { valor: Number(mejorOutcome.price), casa: mejorOutcome.bookie } : null),
+      marketsBest: {
+        h2h: bestH2H ? { valor: Number(bestH2H.price), label: bestH2H.name } : null,
+        totals: {
+          over: bestTotalsOver ? { valor: Number(bestTotalsOver.price), point: bestTotalsOver.point } : null,
+          under: bestTotalsUnder ? { valor: Number(bestTotalsUnder.price), point: bestTotalsUnder.point } : null
+        },
+        spreads: bestSpreads ? { valor: Number(bestSpreads.price), label: bestSpreads.name, point: bestSpreads.point } : null
+      },
+      marketsOffers: marketsOutcomes // para top-3 por mercado
+    };
+  } catch (e) {
+    console.error('normalizeOddsEvent error:', e?.message || e);
+    return null;
+  }
+}
+
+// ===================== ENRIQUECER (API-FOOTBALL) =====================
 async function enriquecerPartidoConAPIFootball(partido) {
   if (!API_FOOTBALL_KEY) return null;
 
-  // Usamos 'search' con ambos nombres; luego filtramos por cercanía de fecha/hora
   const q = `${partido.home} ${partido.away}`;
   const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}`;
 
@@ -356,7 +328,6 @@ async function enriquecerPartidoConAPIFootball(partido) {
   const list = Array.isArray(data?.response) ? data.response : [];
   if (list.length === 0) return null;
 
-  // Selecciona el fixture cuya fecha/teams más se acerque
   const targetTs = partido.timestamp;
   let best = null;
   let bestDiff = Infinity;
@@ -367,10 +338,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
     const ts = it?.fixture?.date ? new Date(it.fixture.date).getTime() : null;
     if (!ts) continue;
 
-    // simple heuristic: nombres incluidos y diferencia < 24h
-    const namesOk =
-      includesLoose(thome, partido.home) &&
-      includesLoose(taway, partido.away);
+    const namesOk = includesLoose(thome, partido.home) && includesLoose(taway, partido.away);
     const diff = Math.abs(ts - targetTs);
 
     if (namesOk && diff < bestDiff && diff <= 24 * 3600 * 1000) {
@@ -392,17 +360,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
   };
 }
 
-function includesLoose(a, b) {
-  if (!a || !b) return false;
-  const na = normalizeStr(a);
-  const nb = normalizeStr(b);
-  return na.includes(nb) || nb.includes(na);
-}
-function normalizeStr(s) {
-  return String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
-
-// =============== MEMORIA =================
+// ===================== MEMORIA =====================
 async function obtenerMemoriaSimilar(partido) {
   try {
     const { data, error } = await supabase
@@ -422,7 +380,7 @@ async function obtenerMemoriaSimilar(partido) {
   }
 }
 
-// =============== OPENAI PROMPT =================
+// ===================== OPENAI PROMPT =====================
 function construirPrompt(partido, info, memoria) {
   const datosClave = {
     liga: partido?.liga || 'No especificada',
@@ -437,12 +395,12 @@ function construirPrompt(partido, info, memoria) {
 Eres un analista deportivo profesional. Devuelve SOLO JSON válido con estas claves:
 - analisis_gratuito (máx 5-6 oraciones, conciso y claro)
 - analisis_vip (máx 5-6 oraciones, táctico y con argumentos de datos)
-- apuesta (ej.: "Más de 2.5 goles", "Menos de 2.5 goles", "1X2 local", "Hándicap", etc.)
+- apuesta (ej.: "Más de 2.5 goles", "Menos de 2.5 goles", "1X2 local/visitante", "Hándicap", etc.)
 - apuestas_extra (texto breve con 1-3 ideas extra si hay señales)
 - frase_motivacional (1 línea, sin emojis)
-- probabilidad (número decimal entre 0.05 y 0.85 que representa prob. de acierto de la apuesta principal; ej: 0.62)
+- probabilidad (número decimal ENTRE 0.05 y 0.85; representa la prob. de acierto de la apuesta principal; ej: 0.62)
 
-No inventes datos no proporcionados. Sé específico.
+No inventes datos no proporcionados. Si faltan datos críticos, sé conservador.
 
 Datos_clave:
 ${JSON.stringify(datosClave)}
@@ -452,7 +410,7 @@ ${JSON.stringify((memoria || []).slice(0,3))}
 `.trim();
 }
 
-// =============== PROBABILIDAD & EV =================
+// ===================== EV & PROBABILIDAD =====================
 function estimarlaProbabilidadPct(pick, cuota) {
   let pct = null;
   if (pick && typeof pick.probabilidad !== 'undefined') {
@@ -488,48 +446,90 @@ function clasificarPickPorEV(ev) {
   return 'Informativo';
 }
 
-// =============== SELECCIÓN DE CUOTA POR MERCADO =================
-function seleccionarCuotaSegunApuesta(partido, apuesta) {
-  const text = String(apuesta || '').toLowerCase();
-
-  const m = partido?.marketsBest || {};
-  // totals
-  if (text.includes('más de') || text.includes('over') || text.includes('total')) {
-    // preferimos over si existe; si no, under
-    if (m.totals && m.totals.over) return { valor: m.totals.over.valor, label: 'over', point: m.totals.over.point };
-    if (m.totals && m.totals.under) return { valor: m.totals.under.valor, label: 'under', point: m.totals.under.point };
-  }
-  if (text.includes('menos de') || text.includes('under')) {
-    if (m.totals && m.totals.under) return { valor: m.totals.under.valor, label: 'under', point: m.totals.under.point };
-    if (m.totals && m.totals.over) return { valor: m.totals.over.valor, label: 'over', point: m.totals.over.point };
-  }
-
-  // spreads / handicap
-  if (text.includes('hándicap') || text.includes('handicap') || text.includes('spread')) {
-    if (m.spreads) return { valor: m.spreads.valor, label: m.spreads.label, point: m.spreads.point };
-  }
-
-  // default: h2h
-  if (m.h2h) return { valor: m.h2h.valor, label: m.h2h.label };
-  // fallback global
-  if (partido?.mejorCuota?.valor) return partido.mejorCuota;
-  return null;
+// ===================== MERCADOS / TOP-3 =====================
+function inferMarketFromApuesta(apuestaText) {
+  const t = String(apuestaText || '').toLowerCase();
+  if (t.includes('más de') || t.includes('over')) return { market: 'totals', side: 'over' };
+  if (t.includes('menos de') || t.includes('under')) return { market: 'totals', side: 'under' };
+  if (t.includes('hándicap') || t.includes('handicap') || t.includes('spread')) return { market: 'spreads', side: null };
+  return { market: 'h2h', side: null };
 }
 
-// =============== MENSAJES =================
-function construirMensajeVIP(partido, pick, probabilidadPct, ev, nivel) {
+function top3ForSelectedMarket(partido, apuestaText) {
+  const info = inferMarketFromApuesta(apuestaText);
+  const offers = partido?.marketsOffers || {};
+  let arr = [];
+
+  if (info.market === 'totals') {
+    arr = (info.side === 'over') ? (offers.totals_over || []) : (offers.totals_under || []);
+  } else if (info.market === 'spreads') {
+    arr = offers.spreads || [];
+  } else {
+    arr = offers.h2h || [];
+  }
+
+  const top = [...arr]
+    .filter(o => Number.isFinite(o.price))
+    .sort((a, b) => b.price - a.price)
+    .slice(0, 3)
+    .map(o => ({
+      bookie: o.bookie || 'N/D',
+      price: Number(o.price),
+      point: typeof o.point !== 'undefined' && o.point !== null ? o.point : null
+    }));
+
+  return top;
+}
+
+function seleccionarCuotaSegunApuesta(partido, apuesta) {
+  const text = String(apuesta || '').toLowerCase();
+  const m = partido?.marketsBest || {};
+  let selected = null;
+
+  if (text.includes('más de') || text.includes('over') || text.includes('total')) {
+    if (m.totals && m.totals.over) selected = { valor: m.totals.over.valor, label: 'over', point: m.totals.over.point };
+    else if (m.totals && m.totals.under) selected = { valor: m.totals.under.valor, label: 'under', point: m.totals.under.point };
+  } else if (text.includes('menos de') || text.includes('under')) {
+    if (m.totals && m.totals.under) selected = { valor: m.totals.under.valor, label: 'under', point: m.totals.under.point };
+    else if (m.totals && m.totals.over) selected = { valor: m.totals.over.valor, label: 'over', point: m.totals.over.point };
+  } else if (text.includes('hándicap') || text.includes('handicap') || text.includes('spread')) {
+    if (m.spreads) selected = { valor: m.spreads.valor, label: m.spreads.label, point: m.spreads.point };
+  } else {
+    if (m.h2h) selected = { valor: m.h2h.valor, label: m.h2h.label };
+  }
+
+  if (!selected && partido?.mejorCuota?.valor) selected = partido.mejorCuota;
+
+  const top3 = top3ForSelectedMarket(partido, apuesta);
+  return { ...selected, top3 };
+}
+
+// ===================== MENSAJES =====================
+function construirMensajeVIP(partido, pick, probabilidadPct, ev, nivel, cuotaInfo) {
+  const cuotaTxt = cuotaInfo?.valor || (Number(partido?.mejorCuota?.valor || 0).toFixed(2));
+  const labelTxt = cuotaInfo?.label || partido?.mejorCuota?.casa || 'N/D';
+
+  let top3Txt = '';
+  if (Array.isArray(cuotaInfo?.top3) && cuotaInfo.top3.length) {
+    const lines = cuotaInfo.top3.map((o, i) => {
+      const pt = (typeof o.point === 'number' && !Number.isNaN(o.point)) ? ` @${o.point}` : '';
+      return `#${i+1} ${o.bookie}: ${o.price}${pt}`;
+    });
+    top3Txt = `\n🔎 Mejores cuotas (mismo mercado):\n${lines.join('\n')}`;
+  }
+
   return `
 🎯 PICK NIVEL: ${nivel}
 🏆 Liga: ${partido.liga || 'No especificada'}
 📅 ${partido.home} vs ${partido.away}
 🕒 Comienza en menos de 1 hora
 
-📊 Cuota: ${Number(partido?.mejorCuota?.valor || 0).toFixed(2)} (${partido?.mejorCuota?.casa || 'N/D'})
+📊 Cuota: ${cuotaTxt} (${labelTxt})
 📈 Probabilidad estimada: ${Math.round(probabilidadPct)}%
 💰 Valor esperado: ${ev}%
 
 💡 Apuesta sugerida: ${pick.apuesta}
-🎯 Apuestas extra: ${pick.apuestas_extra || 'N/A'}
+🎯 Apuestas extra: ${pick.apuestas_extra || 'N/A'}${top3Txt}
 
 📌 Datos avanzados:
 ${pick.analisis_vip}
@@ -557,7 +557,7 @@ ${pick.analisis_gratuito}
 `.trim();
 }
 
-// =============== TELEGRAM =================
+// ===================== TELEGRAM =====================
 async function enviarMensajeTelegram(texto, tipo) {
   const chatId = tipo === 'vip' ? TELEGRAM_GROUP_ID : TELEGRAM_CHANNEL_ID;
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
@@ -581,23 +581,10 @@ async function enviarMensajeTelegram(texto, tipo) {
   }
 }
 
-// =============== SUPABASE =================
-async function verificarSiYaFueEnviado(idEvento) {
-  const { data, error } = await supabase
-    .from('picks_historicos')
-    .select('evento')
-    .eq('evento', idEvento);
-
-  if (error) {
-    console.error('Supabase error al verificar:', error.message);
-    return false;
-  }
-  return !!(data && data.length > 0);
-}
-
+// ===================== SUPABASE =====================
 async function guardarEnSupabase(partido, pick, tipo_pick, nivel, probabilidadPct, ev) {
   try {
-    const { error } = await supabase.from('picks_historicos').insert([{
+    const payload = {
       evento: partido.id,
       analisis: pick.analisis_vip,
       apuesta: pick.apuesta,
@@ -608,19 +595,27 @@ async function guardarEnSupabase(partido, pick, tipo_pick, nivel, probabilidadPc
       probabilidad: probabilidadPct,
       nivel,
       timestamp: new Date().toISOString()
-    }]);
+    };
+
+    // upsert por 'evento' para evitar duplicados en carreras
+    const { data, error } = await supabase
+      .from('picks_historicos')
+      .upsert([payload], { onConflict: 'evento', ignoreDuplicates: true });
+
     if (error) {
-      console.error('Supabase insert error:', error.message);
+      console.error('Supabase upsert error:', error.message);
       return false;
     }
-    return true;
+
+    const inserted = Array.isArray(data) ? data.length > 0 : false;
+    return inserted; // true => yo gané la carrera
   } catch (e) {
-    console.error('Supabase excepción insert:', e?.message || e);
+    console.error('Supabase excepción upsert:', e?.message || e);
     return false;
   }
 }
 
-// =============== VALIDACIONES BÁSICAS =================
+// ===================== VALIDACIÓN PICK =====================
 function validatePick(pick) {
   if (!pick) return false;
   if (!pick.analisis_vip || !pick.analisis_gratuito) return false;
@@ -628,9 +623,105 @@ function validatePick(pick) {
   return true;
 }
 
-// =============== HELPERS =================
-function chunkArray(arr, size) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
+// ===================== PROCESAR PARTIDO =====================
+async function procesarPartido(partido) {
+  const traceId = `[evt:${partido.id}]`;
+  try {
+    // Enriquecimiento + memoria en paralelo (no bloquean si fallan)
+    const [enriqRes, memRes] = await Promise.allSettled([
+      enriquecerPartidoConAPIFootball(partido),
+      obtenerMemoriaSimilar(partido)
+    ]);
+
+    const enriquecido = (enriqRes.status === 'fulfilled' && enriqRes.value) ? enriqRes.value : null;
+    const memoria = (memRes.status === 'fulfilled' && Array.isArray(memRes.value)) ? memRes.value : [];
+
+    const P = { ...partido, ...(enriquecido || {}) };
+
+    const prompt = construirPrompt(P, enriquecido || {}, memoria);
+
+    // ---------- OpenAI ----------
+    let pick;
+    try {
+      const completion = await openai.createChatCompletion({
+        model: MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        // max_tokens: 400, // opcional
+      });
+
+      const respuesta = completion?.data?.choices?.[0]?.message?.content;
+      if (!respuesta || typeof respuesta !== 'string') {
+        console.error(traceId, 'Respuesta GPT vacía');
+        return;
+      }
+
+      try {
+        pick = JSON.parse(respuesta);
+      } catch (e) {
+        console.error(traceId, 'JSON inválido de GPT:', respuesta.slice(0, 300));
+        return;
+      }
+
+      if (!validatePick(pick)) {
+        console.warn(traceId, 'Pick incompleto', pick);
+        return;
+      }
+    } catch (error) {
+      console.error(traceId, 'Error GPT:', error?.message || error);
+      return;
+    }
+
+    // ---------- Cuota coherente con la apuesta ----------
+    const cuotaSel = seleccionarCuotaSegunApuesta(P, pick.apuesta);
+    if (!cuotaSel || !cuotaSel.valor) {
+      console.warn(traceId, 'No se encontró cuota coherente con la apuesta; uso mejorCuota global');
+    }
+    const cuota = (cuotaSel && cuotaSel.valor) ? cuotaSel.valor : P?.mejorCuota?.valor;
+
+    // ---------- Prob & EV ----------
+    const probPct = clampProb(estimarlaProbabilidadPct(pick, cuota));
+    const ev = calcularEV(probPct, cuota);
+    if (ev == null) { console.warn(traceId, 'EV nulo'); return; }
+
+    globalResumen.procesados++;
+
+    if (ev < 10) { globalResumen.descartados_ev++; console.log(traceId, `EV ${ev}% < 10% → descartado`); return; }
+
+    const nivel = clasificarPickPorEV(ev);
+    const tipo_pick = ev >= 15 ? 'vip' : 'gratuito';
+
+    if (tipo_pick === 'vip') globalResumen.intentos_vip++;
+    else globalResumen.intentos_free++;
+
+    // ---------- Mensaje (con top-3) ----------
+    const cuotaInfo = {
+      valor: Number(cuota).toFixed(2),
+      label: (cuotaSel?.label || P?.mejorCuota?.casa || 'N/D'),
+      top3: cuotaSel?.top3 || []
+    };
+
+    const mensaje = tipo_pick === 'vip'
+      ? construirMensajeVIP(P, pick, probPct, ev, nivel, cuotaInfo)
+      : construirMensajeFree(P, pick);
+
+    // ---------- Supabase primero (claim) ----------
+    const okSave = await guardarEnSupabase(P, pick, tipo_pick, nivel, probPct, ev);
+    if (!okSave) {
+      globalResumen.guardados_fail++;
+      console.error(traceId, 'No soy el dueño (duplicado) o fallo al guardar → NO envío');
+      return;
+    }
+    globalResumen.guardados_ok++;
+
+    // ---------- Telegram (solo si guardé yo) ----------
+    const okTelegram = await enviarMensajeTelegram(mensaje, tipo_pick);
+    if (okTelegram) {
+      if (tipo_pick === 'vip') globalResumen.enviados_vip++;
+      else globalResumen.enviados_free++;
+    } else {
+      console.error(traceId, 'Fallo Telegram (no bloquea)');
+    }
+  } catch (e) {
+    console.error(traceId, 'Excepción procesando partido:', e?.message || e);
+  }
 }
