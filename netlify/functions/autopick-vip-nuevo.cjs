@@ -597,7 +597,7 @@ async function guardarEnSupabase(partido, pick, tipo_pick, nivel, probabilidadPc
       evento: partido.id,
       analisis: pick.analisis_vip,
       apuesta: pick.apuesta,
-      tipo_pick,
+      tipo_pick: String(tipo_pick).toUpperCase(), // 'VIP' | 'GRATUITO' para cumplir el CHECK
       liga: partido.liga || 'No especificada',
       equipos: `${partido.home} vs ${partido.away}`,
       ev, // EV puede ser negativo o >100; la tabla no debería restringirlo de momento
