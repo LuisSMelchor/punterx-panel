@@ -590,6 +590,9 @@ async function enviarMensajeTelegram(texto, tipo) {
 // ===================== SUPABASE =====================
 async function guardarEnSupabase(partido, pick, tipo_pick, nivel, probabilidadPct, ev) {
   try {
+    // Blindaje: probabilidad 0–100 entero
+    const safeProb = Math.max(0, Math.min(100, Math.round(Number(probabilidadPct) || 0)));
+
     const payload = {
       evento: partido.id,
       analisis: pick.analisis_vip,
@@ -597,24 +600,25 @@ async function guardarEnSupabase(partido, pick, tipo_pick, nivel, probabilidadPc
       tipo_pick,
       liga: partido.liga || 'No especificada',
       equipos: `${partido.home} vs ${partido.away}`,
-      ev,
-      probabilidad: probabilidadPct,
+      ev, // EV puede ser negativo o >100; la tabla no debería restringirlo de momento
+      probabilidad: safeProb,
       nivel,
       timestamp: new Date().toISOString()
     };
 
-    // upsert por 'evento' para evitar duplicados en carreras
     const { data, error } = await supabase
       .from('picks_historicos')
       .upsert([payload], { onConflict: 'evento', ignoreDuplicates: true });
 
     if (error) {
       console.error('Supabase upsert error:', error.message);
+      // Log controlado para depurar (sin reventar)
+      console.error('Payload rechazado por Supabase:', JSON.stringify(payload));
       return false;
     }
 
     const inserted = Array.isArray(data) ? data.length > 0 : false;
-    return inserted; // true => yo gané la carrera
+    return inserted; // true => insert propio (yo envío)
   } catch (e) {
     console.error('Supabase excepción upsert:', e?.message || e);
     return false;
