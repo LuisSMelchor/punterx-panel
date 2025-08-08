@@ -1,8 +1,8 @@
 const { createClient } = require('@supabase/supabase-js');
 
 exports.handler = async function () {
-  const supabaseUrl = process.env.supabaseUrl;
-  const supabaseKey = process.env.supabaseKey;
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_KEY;
 
   const openaiKey = process.env.OPENAI_API_KEY;
   const oddsKey = process.env.ODDS_API_KEY;
