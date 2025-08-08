@@ -510,13 +510,14 @@ function construirMensajeVIP(partido, pick, probabilidadPct, ev, nivel, cuotaInf
   const labelTxt = cuotaInfo?.label || partido?.mejorCuota?.casa || 'N/D';
 
   let top3Txt = '';
-  if (Array.isArray(cuotaInfo?.top3) && cuotaInfo.top3.length) {
-    const lines = cuotaInfo.top3.map((o, i) => {
-      const pt = (typeof o.point === 'number' && !Number.isNaN(o.point)) ? ` @${o.point}` : '';
-      return `#${i+1} ${o.bookie}: ${o.price}${pt}`;
-    });
-    top3Txt = `\n🔎 Mejores cuotas (mismo mercado):\n${lines.join('\n')}`;
-  }
+if (Array.isArray(cuotaInfo?.top3) && cuotaInfo.top3.length) {
+  const idxEmoji = ['1️⃣','2️⃣','3️⃣'];
+  const lines = cuotaInfo.top3.map((o, i) => {
+    const pt = (typeof o.point === 'number' && !Number.isNaN(o.point)) ? ` @${o.point}` : '';
+    return `${idxEmoji[i] || `#${i+1}`} ${o.bookie}: ${Number(o.price).toFixed(2)}${pt}`;
+  });
+  top3Txt = `\n📊 Ranking en vivo de cuotas para este partido:\n${lines.join('\n')}`;
+}
 
   return `
 🎯 PICK NIVEL: ${nivel}
