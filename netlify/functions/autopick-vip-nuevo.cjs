@@ -119,7 +119,7 @@ exports.handler = async function () {
 
 // PATCH v1: URL en una línea + btts + res.ok + validaciones + ventana 35–55
 async function obtenerPartidosDesdeOddsAPI() {
-  const url = `https://api.the-odds-api.com/v4/sports/soccer/odds?apiKey=${process.env.ODDS_API_KEY}&regions=eu,us,uk&markets=h2h,totals,btts&oddsFormat=decimal`;
+  const url = `https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey=${ODDS_API_KEY}&regions=eu&markets=h2h,totals,spreads`;
   let res;
   try {
     res = await fetch(url);
