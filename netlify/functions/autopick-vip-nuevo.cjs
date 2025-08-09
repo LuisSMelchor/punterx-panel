@@ -453,15 +453,35 @@ Restricciones:
 `.trim();
 }
 
+// === Helper: payload OpenAI compatible (gpt-5 / 4o / 4.1 / o3 vs legacy) ===
+function buildOpenAIPayload(model, prompt, maxOut = 450) {
+  const base = {
+    model,
+    temperature: 0.2,
+    response_format: { type: 'json_object' },
+    messages: [{ role: 'user', content: prompt }],
+  };
+  // Modelos nuevos exigen max_completion_tokens
+  if (/gpt-5|gpt-4\.1|4o|o3|mini/i.test(String(model))) {
+    base.max_completion_tokens = maxOut;
+  } else {
+    base.max_tokens = maxOut;
+  }
+  return base;
+}
+
 async function pedirPickConModelo(modelo, prompt) {
   resumen.oai_calls++;
-  const completion = await openai.createChatCompletion({
-    model: modelo,
-    response_format: { type: 'json_object' }, // ← fuerza JSON
-    max_tokens: 450,                          // ← techo para no gastar de más
-    temperature: 0.2,                         // ← más estable
-    messages: [{ role: 'user', content: prompt }],
-  });
+- const completion = await openai.createChatCompletion({
+-   model: modelo,
+-   response_format: { type: 'json_object' },
+-   max_tokens: 450,
+-   temperature: 0.2,
+-   messages: [{ role: 'user', content: prompt }],
+- });
++ const completion = await openai.createChatCompletion(
++   buildOpenAIPayload(modelo, prompt, 450)
++ );
   const respuesta = completion?.data?.choices?.[0]?.message?.content;
   if (!respuesta || typeof respuesta !== 'string') return null;
   try {
