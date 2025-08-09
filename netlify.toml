@@ -1,5 +1,5 @@
 [build]
-  command = "npm run build"
+  command = "node --check netlify/functions/autopick-vip-nuevo.cjs && npm run build"
   publish = "."
   functions = "netlify/functions"
 
