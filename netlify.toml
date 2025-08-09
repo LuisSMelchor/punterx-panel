@@ -15,3 +15,7 @@
 
 [functions."analisis-semanal"]
   schedule = "0 10 * * 1" # Cada lunes a las 10:00am (hora del servidor)
+
+[functions."diagnostico-total"]
+  name = 
+  schedule = "*/10 * * * *"   # refresco del dashboard
