@@ -563,47 +563,99 @@ function buildOpenAIPayload(model, prompt, maxOut = 450) {
   if (!/gpt-5|o3/.test(m)) { base.temperature = 0.2; }
   return base;
 }
+
+// === Helpers: extraer y reparar JSON del modelo ===
+function extractFirstJsonBlock(text) {
+  if (!text) return null;
+  // limpia fences tipo ```json ... ```
+  const t = String(text).replace(/```json|```/gi, '').trim();
+  const start = t.indexOf('{');
+  const end = t.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return null;
+  const candidate = t.slice(start, end + 1);
+  try { return JSON.parse(candidate); } catch { return null; }
+}
+
+function ensurePickShape(p) {
+  if (!p || typeof p !== 'object') p = {};
+  return {
+    analisis_gratuito: p.analisis_gratuito ?? 's/d',
+    analisis_vip: p.analisis_vip ?? 's/d',
+    apuesta: p.apuesta ?? '',
+    apuestas_extra: p.apuestas_extra ?? '',
+    frase_motivacional: p.frase_motivacional ?? 's/d'
+  };
+}
+
+async function repairPickJSON(modelo, rawText) {
+  const prompt = `Reescribe el contenido en un JSON válido con estas claves EXACTAS:
+{
+  "analisis_gratuito": "",
+  "analisis_vip": "",
+  "apuesta": "",
+  "apuestas_extra": "",
+  "frase_motivacional": ""
+}
+Si algún dato no aparece, coloca "s/d". Responde SOLO el JSON sin comentarios ni texto adicional.
+Contenido:
+${rawText || ''}`;
+
+  const completion = await openai.createChatCompletion(
+    buildOpenAIPayload(modelo, prompt, 250)
+  );
+  const content = completion?.data?.choices?.[0]?.message?.content || '';
+  return extractFirstJsonBlock(content);
+}
+
 async function pedirPickConModelo(modelo, prompt) {
+  resumen.oai_calls++;
   const completion = await openai.createChatCompletion(
     buildOpenAIPayload(modelo, prompt, 450)
   );
-  const respuesta = completion?.data?.choices?.[0]?.message?.content;
-  if (!respuesta || typeof respuesta !== 'string') return null;
-  try {
-    return JSON.parse(respuesta);
-  } catch {
-    console.error('JSON inválido de GPT (primeros 300):', respuesta.slice(0,300));
-    return null;
-  }
-}
 
-async function pedirPickConRetry(modelo, prompt) {
-  // backoff suave en 2 intentos totales
-  for (let i = 0; i < 2; i++) {
+  const raw = completion?.data?.choices?.[0]?.message?.content;
+  if (!raw || typeof raw !== 'string') return null;
+
+  // 1) intentar parse directo/extraído
+  let obj = extractFirstJsonBlock(raw);
+
+  // 2) si falla, pedir REPARACIÓN rápida (solo formateo a JSON)
+  if (!obj) {
     try {
-      const r = await pedirPickConModelo(modelo, prompt);
-      if (r) return r;
+      obj = await repairPickJSON(modelo, raw);
+      if (obj) obj._repaired = true;
     } catch (e) {
-      console.warn('OpenAI fallo intento', i+1, e?.message || e);
+      console.warn('[REPAIR] fallo reformateo:', e?.message || e);
     }
-    await sleep(500 + Math.floor(Math.random()*500)); // 0.5–1.0s
   }
-  return null;
+
+  if (!obj) return null;
+
+  // 3) Claves completas
+  const pick = ensurePickShape(obj);
+  return pick;
 }
 
 async function obtenerPickConFallback(prompt) {
   let modeloUsado = MODEL;
-  let pick = await pedirPickConRetry(MODEL, prompt);
+
+  // 1) Intento con modelo principal
+  let pick = await pedirPickConModelo(MODEL, prompt);
+
+  // 2) Si NO está completo pero YA reparamos con el principal, no hagas fallback.
+  //    Deja que el flujo decida (descartar o enviar canal free si lo permites).
+  if (!pickCompleto(pick) && pick && pick._repaired) {
+    return { pick, modeloUsado };
+  }
+
+  // 3) Si NO está completo y NO hubo reparación (o falló todo), usa fallback una sola vez
   if (!pickCompleto(pick)) {
     console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
     modeloUsado = MODEL_FALLBACK;
-    pick = await pedirPickConRetry(MODEL_FALLBACK, prompt);
+    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt);
   }
-  return { pick, modeloUsado };
-}
 
-function pickCompleto(p) {
-  return !!(p && p.analisis_vip && p.analisis_gratuito && p.apuesta);
+  return { pick, modeloUsado };
 }
 
 // =============== PROMPT ===============
