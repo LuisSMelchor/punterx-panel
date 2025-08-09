@@ -7,6 +7,8 @@
 // modelo OpenAI 5 con fallback y reintento, guardrails anti-inconsistencias, prefiltro que prioriza sin descartar,
 // Telegram con rate-limit handling, Supabase idempotente.
 
+console.log("[TEST][AUTODEPLOY] " + new Date().toISOString());
+
 // =============== IMPORTS ===============
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
