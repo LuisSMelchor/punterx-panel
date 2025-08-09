@@ -488,13 +488,24 @@ function pickCompleto(p) {
 }
 
 async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
-  if (resumenRef) resumenRef.oai_calls++;
+  // 1) Contar intento de llamada a OAI
+  if (resumenRef) {
+    resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;              // ya la tienes
+    resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1; // NUEVA
+  }
+
   console.log('[OAI] modelo=', modelo);
   console.log('[OAI] prompt.len=', (prompt || '').length);
 
+  // 2) Hacer la llamada a OpenAI
   const completion = await openai.createChatCompletion(
     buildOpenAIPayload(modelo, prompt, 450)
   );
+
+  // 3) Contar éxito si la llamada no lanzó error
+  if (resumenRef) {
+    resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1; // NUEVA
+  }
 
   const raw = completion?.data?.choices?.[0]?.message?.content || '';
   console.log('[OAI] raw.len=', raw.length);
