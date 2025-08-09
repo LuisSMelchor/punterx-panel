@@ -88,14 +88,16 @@ async function safeText(res) {
   try { return await res.text(); } catch { return ''; }
 }
 
-function nowMx() {
+function nowMx() { // nowMx() solo para mostrar; para cálculos usar Date.now() y Date.parse()
+
   return new Date(new Date().toLocaleString('en-US', { timeZone: TIMEZONE }));
 }
 
 function minutesUntil(dateIso) {
-  const now = nowMx();
-  const d = new Date(dateIso);
-  return Math.round((d - now) / 60000);
+  // Comparación directa en epoch; ignora zona horaria del servidor
+  const targetMs = Date.parse(dateIso); // OddsAPI entrega ISO con Z: correcto
+  const nowMs = Date.now();
+  return Math.round((targetMs - nowMs) / 60000);
 }
 
 function clampProb(p) {
@@ -164,6 +166,23 @@ async function listarPartidosConCuotas() {
     return (minutos >= WINDOW_MIN && minutos <= WINDOW_MAX);
   });
 
+// 🔍 Depuración: muestra los 3 primeros partidos con su minuto calculado
+for (const e of data.slice(0, 3)) {
+  console.log('DBG commence_time=', e.commence_time, 'mins=', minutesUntil(e.commence_time));
+}
+
+// Fallback temporal si no hay nada en 45–55
+if (enVentana.length === 0) {
+  enVentana = data.filter(e => {
+    const m = minutesUntil(e.commence_time);
+    e.minutosFaltantes = m;
+    return (m >= 35 && m <= 65);
+  });
+  if (enVentana.length) {
+    console.log('⚠️ Ventana ampliada 35–65 solo este ciclo:', enVentana.length);
+  }
+}
+  
   console.log(`OddsAPI: recibidos=${data.length}, en_ventana=${enVentana.length} (${WINDOW_MIN}–${WINDOW_MAX}m)`);
   return enVentana.slice(0, MAX_PARTIDOS_POR_CICLO);
 }
