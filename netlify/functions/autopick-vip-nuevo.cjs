@@ -597,30 +597,40 @@ async function guardarEnSupabase(partido, pick, tipo_pick, nivel, probabilidadPc
       evento: partido.id,
       analisis: pick.analisis_vip,
       apuesta: pick.apuesta,
-      tipo_pick: String(tipo_pick).toUpperCase(), // 'VIP' | 'GRATUITO' para cumplir el CHECK
+      // Cumple la CHECK de la BD (VIP/GRATUITO)
+      tipo_pick: String(tipo_pick).toUpperCase(),
       liga: partido.liga || 'No especificada',
       equipos: `${partido.home} vs ${partido.away}`,
-      ev, // EV puede ser negativo o >100; la tabla no debería restringirlo de momento
+      ev,
       probabilidad: safeProb,
       nivel,
       timestamp: new Date().toISOString()
     };
 
+    // 1) Intentar INSERT a secas (requiere UNIQUE(evento) en la tabla)
     const { data, error } = await supabase
       .from('picks_historicos')
-      .upsert([payload], { onConflict: 'evento', ignoreDuplicates: true });
+      .insert([payload])
+      .select(); // en v2, para que devuelva filas
 
     if (error) {
-      console.error('Supabase upsert error:', error.message);
-      // Log controlado para depurar (sin reventar)
+      // Si es violación de UNIQUE (evento ya existe), NO somos dueños → no enviamos
+      const msg = error.message || '';
+      const code = error.code || '';
+      if (code === '23505' || /duplicate key value/i.test(msg)) {
+        // Ya existe ese evento; otro proceso/ciclo lo insertó
+        return false;
+      }
+      console.error('Supabase insert error:', error.message);
       console.error('Payload rechazado por Supabase:', JSON.stringify(payload));
       return false;
     }
 
-    const inserted = Array.isArray(data) ? data.length > 0 : false;
-    return inserted; // true => insert propio (yo envío)
+    // Si insertó, data tendrá 1 fila: somos dueños → enviamos
+    const inserted = Array.isArray(data) && data.length > 0;
+    return inserted;
   } catch (e) {
-    console.error('Supabase excepción upsert:', e?.message || e);
+    console.error('Supabase excepción insert:', e?.message || e);
     return false;
   }
 }
