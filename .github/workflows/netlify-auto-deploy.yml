@@ -8,10 +8,6 @@ on:
 jobs:
   check-and-deploy:
     runs-on: ubuntu-latest
-    # ⚠️ SOLO descomenta la línea de "environment" si tu secreto
-    # NETLIFY_BUILD_HOOK lo guardaste en Settings → Environments (no en Repository secrets).
-    # environment: production   # <-- pon aquí el nombre EXACTO del environment donde metiste el secret
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,16 +17,33 @@ jobs:
         with:
           node-version: '20'
 
-      # ✅ Chequeo de sintaxis ANTES de disparar Netlify (falla aquí si hay un "}" mal)
-      - name: Syntax check (todas las serverless de Netlify)
+      # Chequeo de sintaxis: recorre *.js y *.cjs en netlify/functions
+      - name: Syntax check (serverless functions)
+        shell: bash
         run: |
           set -e
+          echo "Node version:"
           node --version
-          # chequea una por una
-          find netlify/functions -type f \( -name "*.js" -o -name "*.cjs" \) -print -exec node --check {} \;
+          echo "Archivos a checar:"
+          files=$(ls netlify/functions/*.js netlify/functions/*.cjs 2>/dev/null || true)
+          if [ -z "$files" ]; then
+            echo "No hay archivos .js/.cjs en netlify/functions; continúo."
+          else
+            for f in $files; do
+              echo "→ Checando $f"
+              node --check "$f"
+            done
+          fi
 
-      # ✅ Si TODO OK, dispara tu Build Hook de Netlify
+      # Si pasó el check, dispara el Build Hook de Netlify
       - name: Trigger Netlify Build Hook
-        run: curl -X POST -sS -H "Content-Type: application/json" -d '{}' "$NETLIFY_BUILD_HOOK"
         env:
           NETLIFY_BUILD_HOOK: ${{ secrets.NETLIFY_BUILD_HOOK }}
+        run: |
+          if [ -z "$NETLIFY_BUILD_HOOK" ]; then
+            echo "ERROR: Falta el secret NETLIFY_BUILD_HOOK en GitHub → Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "Llamando hook de Netlify…"
+          curl -sS -X POST -H "Content-Type: application/json" -d '{}' "$NETLIFY_BUILD_HOOK"
+          echo "Hook enviado."
