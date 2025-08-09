@@ -2,8 +2,12 @@ name: Netlify Auto Deploy (con chequeo de sintaxis)
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
+    paths:
+      - "netlify/functions/**"
+      - "netlify.toml"
+      - ".github/workflows/netlify-auto-deploy.yml"
+  workflow_dispatch:
 
 jobs:
   check-and-deploy:
