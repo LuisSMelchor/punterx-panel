@@ -472,16 +472,16 @@ function buildOpenAIPayload(model, prompt, maxOut = 450) {
 
 async function pedirPickConModelo(modelo, prompt) {
   resumen.oai_calls++;
-- const completion = await openai.createChatCompletion({
--   model: modelo,
--   response_format: { type: 'json_object' },
--   max_tokens: 450,
--   temperature: 0.2,
--   messages: [{ role: 'user', content: prompt }],
-- });
-+ const completion = await openai.createChatCompletion(
-+   buildOpenAIPayload(modelo, prompt, 450)
-+ );
+ const completion = await openai.createChatCompletion({
+   model: modelo,
+   response_format: { type: 'json_object' },
+   max_tokens: 450,
+   temperature: 0.2,
+   messages: [{ role: 'user', content: prompt }],
+ });
+ const completion = await openai.createChatCompletion(
+   buildOpenAIPayload(modelo, prompt, 450)
+ );
   const respuesta = completion?.data?.choices?.[0]?.message?.content;
   if (!respuesta || typeof respuesta !== 'string') return null;
   try {
