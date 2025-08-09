@@ -56,6 +56,7 @@ function logFiltradoPartidos(partidos, etiqueta) {
     const enVentana = partidos.filter(p => p.enVentanaPrincipal).length;
     const enFallback = partidos.filter(p => p.enVentanaFallback).length;
     console.log(`📊 Filtrado (${etiqueta}): Principal=${enVentana} | Fallback=${enFallback} | Total recibidos=${partidos.length}`);
+}
 
 const CONCURRENCY      = Number(process.env.CONCURRENCY || 6);
 const CYCLE_SOFT_BUDGET_MS = Number(process.env.CYCLE_SOFT_BUDGET_MS || 70000);
