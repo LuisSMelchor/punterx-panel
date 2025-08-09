@@ -1,0 +1,16 @@
+name: Netlify Auto Deploy
+
+on:
+  push:
+    branches:
+      - main  # Solo cuando se suba algo a main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Netlify Hook
+        run: |
+          curl -X POST -d {} "$NETLIFY_BUILD_HOOK"
+        env:
+          NETLIFY_BUILD_HOOK: ${{ secrets.NETLIFY_BUILD_HOOK }}
