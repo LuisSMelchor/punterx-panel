@@ -196,10 +196,6 @@ async function obtenerPartidosDesdeOddsAPI() {
   const url = `https://api.the-odds-api.com/v4/sports/soccer/odds?apiKey=${ODDS_API_KEY}&regions=eu,us,uk&markets=h2h,totals,spreads&oddsFormat=decimal&dateFormat=iso`;
 
   let res;
-  try { res = await fetchWithRetry(url, {}, { retries: 1 }); }
-  catch (e) { console.error('❌ Error red OddsAPI:', e?.message || e); return []; }
-
-  let res;
 try {
   res = await fetchWithRetry(url, {}, { retries: 1 });
 } catch (e) {
