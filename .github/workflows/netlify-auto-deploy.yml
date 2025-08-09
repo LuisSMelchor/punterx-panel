@@ -1,16 +1,36 @@
-name: Netlify Auto Deploy
+name: Netlify Auto Deploy (con chequeo de sintaxis)
 
 on:
   push:
     branches:
-      - main  # Solo cuando se suba algo a main
+      - main
 
 jobs:
-  deploy:
+  check-and-deploy:
     runs-on: ubuntu-latest
+    # ⚠️ SOLO descomenta la línea de "environment" si tu secreto
+    # NETLIFY_BUILD_HOOK lo guardaste en Settings → Environments (no en Repository secrets).
+    # environment: production   # <-- pon aquí el nombre EXACTO del environment donde metiste el secret
+
     steps:
-      - name: Trigger Netlify Hook
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ✅ Chequeo de sintaxis ANTES de disparar Netlify (falla aquí si hay un "}" mal)
+      - name: Syntax check (todas las serverless de Netlify)
         run: |
-          curl -X POST -d {} "$NETLIFY_BUILD_HOOK"
+          set -e
+          node --version
+          # chequea una por una
+          find netlify/functions -type f \( -name "*.js" -o -name "*.cjs" \) -print -exec node --check {} \;
+
+      # ✅ Si TODO OK, dispara tu Build Hook de Netlify
+      - name: Trigger Netlify Build Hook
+        run: curl -X POST -sS -H "Content-Type: application/json" -d '{}' "$NETLIFY_BUILD_HOOK"
         env:
           NETLIFY_BUILD_HOOK: ${{ secrets.NETLIFY_BUILD_HOOK }}
