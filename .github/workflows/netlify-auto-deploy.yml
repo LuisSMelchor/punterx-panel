@@ -16,30 +16,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Use Node 20
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
-      # Chequeo de sintaxis: recorre *.js y *.cjs en netlify/functions
       - name: Syntax check (serverless functions)
         shell: bash
         run: |
           set -e
           echo "Node version:"
-          node --version
+          node -v
           echo "Archivos a checar:"
-          files=$(ls netlify/functions/*.js netlify/functions/*.cjs 2>/dev/null || true)
-          if [ -z "$files" ]; then
-            echo "No hay archivos .js/.cjs en netlify/functions; continúo."
-          else
-            for f in $files; do
-              echo "→ Checando $f"
-              node --check "$f"
-            done
-          fi
+          for f in $(ls -1 netlify/functions/*.{js,cjs} 2>/dev/null || true); do
+            echo "→ Checando $f"
+            node --check "$f"
+          done
 
-      # Si pasó el check, dispara el Build Hook de Netlify
       - name: Trigger Netlify Build Hook
         env:
           NETLIFY_BUILD_HOOK: ${{ secrets.NETLIFY_BUILD_HOOK }}
