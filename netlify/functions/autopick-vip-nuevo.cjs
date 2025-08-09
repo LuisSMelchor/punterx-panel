@@ -487,7 +487,7 @@ function pickCompleto(p) {
   return !!(p && p.analisis_vip && p.analisis_gratuito && p.apuesta && typeof p.probabilidad === 'number');
 }
 
-async function pedirPickConModelo(modelo, prompt, resumenRef) {
+async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
   if (resumenRef) resumenRef.oai_calls++;
   console.log('[OAI] modelo=', modelo);
   console.log('[OAI] prompt.len=', (prompt || '').length);
@@ -530,17 +530,18 @@ async function pedirPickConModelo(modelo, prompt, resumenRef) {
   return pick;
 }
 
-async function obtenerPickConFallback(prompt, resumenRef) {
-  let modeloUsado = MODEL;
-
-  // 1) Intento con modelo principal
-  let pick = await pedirPickConModelo(MODEL, prompt);
-
-  // 1.a) Si la IA decidió explícitamente NO recomendar, no usar fallback
-  if (esNoPick(pick)) {
-    console.log('[IA] no_pick=true →', pick?.motivo_no_pick || 's/d');
-    return { pick, modeloUsado };
+async function obtenerPickConFallback(prompt, resumenRef = null) {
+  // intento principal
+  let pick = await pedirPickConModelo(MODEL, prompt, resumenRef);
+  if (esNoPick(pick)) return { pick, modeloUsado: MODEL };
+  // fallback
+  if (!pickCompleto(pick)) {
+    console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
+    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
+    return { pick, modeloUsado: MODEL_FALLBACK };
   }
+  return { pick, modeloUsado: MODEL };
+}
 
   // 2) Si no está completo (pero no dijo no_pick), probar fallback UNA vez
   if (!pickCompleto(pick)) {
