@@ -455,18 +455,26 @@ Restricciones:
 
 // === Helper: payload OpenAI compatible (gpt-5 / 4o / 4.1 / o3 vs legacy) ===
 function buildOpenAIPayload(model, prompt, maxOut = 450) {
+  const m = String(model || '').toLowerCase();
+  const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
+
   const base = {
     model,
-    temperature: 0.2,
     response_format: { type: 'json_object' },
     messages: [{ role: 'user', content: prompt }],
   };
-  // Modelos nuevos → usan max_completion_tokens
-  if (/gpt-5|gpt-4\.1|4o|o3|mini/i.test(String(model))) {
-    base.max_completion_tokens = maxOut;
-  } else {
-    base.max_tokens = maxOut;
+
+  // Tokens: modern → max_completion_tokens; legacy → max_tokens
+  if (modern) base.max_completion_tokens = maxOut;
+  else base.max_tokens = maxOut;
+
+  // Temperatura: gpt-5 (y algunos modernos) no permiten valores ≠ 1
+  // → omitimos el parámetro para que use el default del modelo.
+  if (!/gpt-5|o3/.test(m)) {
+    // Modelos que sí aceptan temperatura (p.ej. 4o, 4.1, algunos mini)
+    base.temperature = 0.2;
   }
+
   return base;
 }
 
