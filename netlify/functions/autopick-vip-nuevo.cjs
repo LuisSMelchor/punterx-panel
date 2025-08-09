@@ -48,6 +48,15 @@ const WINDOW_MAX       = Number(process.env.WINDOW_MAX || 60);
 const WINDOW_FB_MIN    = Number(process.env.WINDOW_FALLBACK_MIN || 35);
 const WINDOW_FB_MAX    = Number(process.env.WINDOW_FALLBACK_MAX || 70);
 
+// Log de configuración de ventanas
+console.log(`⚙️ Config ventana principal: ${WINDOW_MIN}–${WINDOW_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
+
+// Función para log de filtrado
+function logFiltradoPartidos(partidos, etiqueta) {
+    const enVentana = partidos.filter(p => p.enVentanaPrincipal).length;
+    const enFallback = partidos.filter(p => p.enVentanaFallback).length;
+    console.log(`📊 Filtrado (${etiqueta}): Principal=${enVentana} | Fallback=${enFallback} | Total recibidos=${partidos.length}`);
+
 const CONCURRENCY      = Number(process.env.CONCURRENCY || 6);
 const CYCLE_SOFT_BUDGET_MS = Number(process.env.CYCLE_SOFT_BUDGET_MS || 70000);
 const MAX_OAI_CALLS_PER_CYCLE = Number(process.env.MAX_OAI_CALLS_PER_CYCLE || 0); // 0 = sin tope
@@ -222,6 +231,9 @@ async function obtenerPartidosDesdeOddsAPI() {
   // Hard stop: nunca < 35 min
   enVentana = enVentana.filter(e => e.minutosFaltantes >= 35);
 
+  // 📊 Log filtrado detallado
+logFiltradoPartidos(data, "OddsAPI");
+
   resumen.enVentana = enVentana.length;
   console.log(`OddsAPI: recibidos=${data.length}, en_ventana=${enVentana.length} (${WINDOW_MIN}–${WINDOW_MAX}m)`);
 
@@ -376,6 +388,9 @@ async function enriquecerPartidoConAPIFootball(partido) {
   const list = Array.isArray(data?.response) ? data.response : [];
   if (!list.length) return null;
 
+// Log de filtrado API-Football
+logFiltradoPartidos(list, "API-FOOTBALL");
+  
   const targetTs = partido.timestamp;
   let best = null, bestDiff = Infinity;
 
