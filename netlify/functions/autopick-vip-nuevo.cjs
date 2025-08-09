@@ -607,6 +607,11 @@ ${rawText || ''}`;
   return extractFirstJsonBlock(content);
 }
 
+// Valida si el pick está completo para VIP (y también sirve para decidir fallback)
+function pickCompleto(p) {
+  return !!(p && p.analisis_vip && p.analisis_gratuito && p.apuesta);
+}
+
 async function pedirPickConModelo(modelo, prompt) {
   resumen.oai_calls++;
   const completion = await openai.createChatCompletion(
