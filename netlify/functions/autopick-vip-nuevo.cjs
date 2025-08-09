@@ -1,4 +1,8 @@
-// netlify/functions/autopick-vip-nuevo.cjs
+FILE: netlify/functions/autopick-vip-nuevo.cjs
+SHA256: 6f79835ae23d297d3aa05e444cd910bb79aa29273d86bedc1b47ab4068572660
+LINES: 819
+---8<---START FILE---8<---
+﻿// netlify/functions/autopick-vip-nuevo.cjs
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–60 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrails anti-inconsistencias, prefiltro que prioriza sin descartar,
 // Telegram con rate-limit handling, Supabase idempotente.
@@ -554,15 +558,6 @@ async function obtenerPickConFallback(prompt, resumenRef = null) {
   return { pick, modeloUsado: MODEL };
 }
 
-  // 2) Si no está completo (pero no dijo no_pick), probar fallback UNA vez
-  if (!pickCompleto(pick)) {
-    console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
-    modeloUsado = MODEL_FALLBACK;
-    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
-  }
-
-  return { pick, modeloUsado };
-}
 
 // =============== PROMPT ===============
 function construirOpcionesApostables(mejoresMercados) {
@@ -601,11 +596,11 @@ function construirPrompt(partido, info, memoria) {
   const prompt = [
     `Eres un analista de apuestas experto. Devuelve SOLO un JSON EXACTO con esta forma:`,
     `{`,
-    `  "analisis_gratuito": "",`,
-    `  "analisis_vip": "",`,
+    `  "analisis_gratuito": ""`,
+    `  "analisis_vip": ""`,
     `  "apuesta": "",                 // Debe ser EXACTAMENTE una de las opciones_apostables`,
     `  "apuestas_extra": "",          // Opcional`,
-    `  "frase_motivacional": "",`,
+    `  "frase_motivacional": ""`,
     `  "probabilidad": 0.0,           // decimal 0.05–0.85`,
     `  "no_pick": false,              // true si NO recomiendas apostar`,
     `  "motivo_no_pick": ""           // breve justificación si no_pick=true`,
@@ -826,3 +821,4 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuota, tip
     return false;
   }
 }
+---8<---END FILE---8<---
