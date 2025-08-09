@@ -553,18 +553,8 @@ async function obtenerPickConFallback(prompt, resumenRef = null) {
   }
   return { pick, modeloUsado: MODEL };
 }
-
-  // 2) Si no está completo (pero no dijo no_pick), probar fallback UNA vez
-  if (!pickCompleto(pick)) {
-    console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
-    modeloUsado = MODEL_FALLBACK;
-    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
-  }
-
-  return { pick, modeloUsado };
-}
-
 // =============== PROMPT ===============
+// BUILD_MARK: 2025-08-09T16:38:03Z
 function construirOpcionesApostables(mejoresMercados) {
   if (!Array.isArray(mejoresMercados)) return [];
   return mejoresMercados.map(m => {
