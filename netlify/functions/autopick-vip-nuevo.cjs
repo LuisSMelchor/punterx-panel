@@ -199,10 +199,32 @@ async function obtenerPartidosDesdeOddsAPI() {
   try { res = await fetchWithRetry(url, {}, { retries: 1 }); }
   catch (e) { console.error('❌ Error red OddsAPI:', e?.message || e); return []; }
 
-  if (!res || !res.ok) {
-    console.error('❌ OddsAPI no ok:', res?.status, await safeText(res));
-    return [];
-  }
+  let res;
+try {
+  res = await fetchWithRetry(url, {}, { retries: 1 });
+} catch (e) {
+  console.error('❌ Error red OddsAPI:', e?.message || e);
+  return [];
+}
+
+if (!res) { console.error('❌ OddsAPI sin respuesta'); return []; }
+
+if (res.status === 429) {
+  const txt = await safeText(res);
+  console.warn('⚠️ OddsAPI 429 (rate limit). Pausa breve y seguimos. Detalle:', txt?.slice(0,200));
+  await sleep(1500); // pausa corta; si se repite, igual continuamos para no bloquear el ciclo
+  return [];
+}
+
+if (res.status === 422) {
+  console.warn('⚠️ OddsAPI 422 (request inválida):', await safeText(res));
+  return [];
+}
+
+if (!res.ok) {
+  console.error('❌ OddsAPI no ok:', res.status, await safeText(res));
+  return [];
+}
 
   let data;
   try { data = await res.json(); } catch { console.error('❌ JSON OddsAPI inválido'); return []; }
@@ -232,7 +254,7 @@ async function obtenerPartidosDesdeOddsAPI() {
   // Hard stop: nunca < 35 min
 enVentana = enVentana.filter(e => e.minutosFaltantes >= 35);
 
-// 📊 Log filtrado detallado (marcamos flags sobre mapeados)
+// 📊 Log filtrado detallado: marcamos banderas sobre TODOS los mapeados
 const marcados = mapeados.map(e => ({
   ...e,
   enVentanaPrincipal: (e.minutosFaltantes >= WINDOW_MIN && e.minutosFaltantes <= WINDOW_MAX),
@@ -480,6 +502,9 @@ async function obtenerMemoriaSimilar(partido) {
 async function pedirPickConModelo(modelo, prompt) {
   const completion = await openai.createChatCompletion({
     model: modelo,
+    response_format: { type: 'json_object' }, // ← fuerza JSON
+    max_tokens: 450,                          // ← techo para no gastar de más
+    temperature: 0.2,                         // ← más estable
     messages: [{ role: 'user', content: prompt }],
   });
   const respuesta = completion?.data?.choices?.[0]?.message?.content;
@@ -493,14 +518,17 @@ async function pedirPickConModelo(modelo, prompt) {
 }
 
 async function pedirPickConRetry(modelo, prompt) {
-  try {
-    return await pedirPickConModelo(modelo, prompt);
-  } catch (e) {
-    console.warn('OpenAI fallo, reintento 1:', e?.message || e);
-    await sleep(500);
-    try { return await pedirPickConModelo(modelo, prompt); }
-    catch { return null; }
+  // backoff suave en 2 intentos totales
+  for (let i = 0; i < 2; i++) {
+    try {
+      const r = await pedirPickConModelo(modelo, prompt);
+      if (r) return r;
+    } catch (e) {
+      console.warn('OpenAI fallo intento', i+1, e?.message || e);
+    }
+    await sleep(500 + Math.floor(Math.random()*500)); // 0.5–1.0s
   }
+  return null;
 }
 
 async function obtenerPickConFallback(prompt) {
@@ -632,13 +660,13 @@ function seleccionarCuotaSegunApuesta(partido, apuesta) {
 }
 
 function apuestaCoincideConOutcome(apuestaTxt, outcomeTxt, homeTeam, awayTeam) {
-  const a = (apuestaTxt || '').toLowerCase();
-  const o = (outcomeTxt || '').toLowerCase();
-  const home = (homeTeam || '').toLowerCase();
-  const away = (awayTeam || '').toLowerCase();
+  const a = normalizeStr(apuestaTxt || '');
+  const o = normalizeStr(outcomeTxt || '');
+  const home = normalizeStr(homeTeam || '');
+  const away = normalizeStr(awayTeam || '');
 
-  const esLocal = a.includes('local') || a.includes('home') || a.includes('1');
-  const esVisit = a.includes('visitante') || a.includes('away') || a.includes('2');
+  const esLocal = a.includes('local') || a.includes('home') || a.includes(' 1') || a.startsWith('1x2 1');
+  const esVisit = a.includes('visitante') || a.includes('away') || a.includes(' 2') || a.startsWith('1x2 2');
   const nombraHome = home && a.includes(home);
   const nombraAway = away && a.includes(away);
 
@@ -709,26 +737,34 @@ async function enviarMensajeTelegram(texto, tipo) {
   const MAX_TELEGRAM = 4096;
 
   const sendOnce = async (payload) => {
-    const res = await fetchWithRetry(url, {
+    let res = await fetchWithRetry(url, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload)
+}, { retries: 0, timeoutMs: 15000 });
+
+if (res && res.status === 429) {
+  const body = await safeJson(res);
+  const retryAfter = Number(body?.parameters?.retry_after || 0);
+  if (retryAfter > 0 && retryAfter <= 10) {
+    console.warn('Telegram 429, reintento en', retryAfter, 's');
+    await sleep(retryAfter * 1000);
+    res = await fetchWithRetry(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     }, { retries: 0, timeoutMs: 15000 });
-
-    if (res && res.status === 429) {
-      const body = await safeJson(res);
-      const retryAfter = Number(body?.parameters?.retry_after || 0);
-      if (retryAfter > 0 && retryAfter <= 10) {
-        console.warn('Telegram 429, reintento en', retryAfter, 's');
-        await sleep(retryAfter * 1000);
-        return await fetchWithRetry(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        }, { retries: 0, timeoutMs: 15000 });
-      }
-    }
-    return res;
+  }
+} else if (res && res.status >= 500) {
+  console.warn('Telegram 5xx, reintento rápido');
+  await sleep(800);
+  res = await fetchWithRetry(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }, { retries: 0, timeoutMs: 15000 });
+}
+return res;
   };
 
   // Troceo
