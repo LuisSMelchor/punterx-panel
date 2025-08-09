@@ -461,7 +461,7 @@ function buildOpenAIPayload(model, prompt, maxOut = 450) {
     response_format: { type: 'json_object' },
     messages: [{ role: 'user', content: prompt }],
   };
-  // Modelos nuevos exigen max_completion_tokens
+  // Modelos nuevos → usan max_completion_tokens
   if (/gpt-5|gpt-4\.1|4o|o3|mini/i.test(String(model))) {
     base.max_completion_tokens = maxOut;
   } else {
@@ -472,16 +472,9 @@ function buildOpenAIPayload(model, prompt, maxOut = 450) {
 
 async function pedirPickConModelo(modelo, prompt) {
   resumen.oai_calls++;
- const completion = await openai.createChatCompletion({
-   model: modelo,
-   response_format: { type: 'json_object' },
-   max_tokens: 450,
-   temperature: 0.2,
-   messages: [{ role: 'user', content: prompt }],
- });
- const completion = await openai.createChatCompletion(
-   buildOpenAIPayload(modelo, prompt, 450)
- );
+  const completion = await openai.createChatCompletion(
+    buildOpenAIPayload(modelo, prompt, 450)
+  );
   const respuesta = completion?.data?.choices?.[0]?.message?.content;
   if (!respuesta || typeof respuesta !== 'string') return null;
   try {
