@@ -1,7 +1,7 @@
-FILE: netlify/functions/autopick-vip-nuevo.cjs
-SHA256: 6f79835ae23d297d3aa05e444cd910bb79aa29273d86bedc1b47ab4068572660
-LINES: 819
----8<---START FILE---8<---
+// FILE: netlify/functions/autopick-vip-nuevo.cjs
+// SHA256: 6f79835ae23d297d3aa05e444cd910bb79aa29273d86bedc1b47ab4068572660
+// LINES: 819
+// ---8<---START FILE---8<---
 ﻿// netlify/functions/autopick-vip-nuevo.cjs
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–60 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrails anti-inconsistencias, prefiltro que prioriza sin descartar,
@@ -821,4 +821,4 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuota, tip
     return false;
   }
 }
----8<---END FILE---8<---
+// ---8<---END FILE---8<---
