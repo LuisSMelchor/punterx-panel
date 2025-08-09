@@ -18,3 +18,7 @@
 
 [functions."diagnostico-total"]
   schedule = "*/10 * * * *"   # refresco del dashboard
+
+ [functions."autopick-outrights"]
+  schedule = "*/30 * * * *"  # cada 30 min (ajustable)
+
