@@ -185,7 +185,7 @@ exports.handler = async (event, context) => {
         // D) OpenAI (fallback + 1 reintento en cada modelo)
         let pick, modeloUsado = MODEL;
         try {
-          const r = await obtenerPickConFallback(prompt);
+          const r = await obtenerPickConFallback(prompt, resumen);
           pick = r.pick; modeloUsado = r.modeloUsado;
           console.log(traceId, '🔎 Modelo usado:', modeloUsado);
           if (esNoPick(pick)) { console.log(traceId, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d'); return; }
@@ -530,11 +530,11 @@ async function pedirPickConModelo(modelo, prompt, resumenRef) {
   return pick;
 }
 
-async function obtenerPickConFallback(prompt) {
+async function obtenerPickConFallback(prompt, resumenRef) {
   let modeloUsado = MODEL;
 
   // 1) Intento con modelo principal
-  let pick = await pedirPickConModelo(MODEL, prompt, resumen);
+  let pick = await pedirPickConModelo(MODEL, prompt);
 
   // 1.a) Si la IA decidió explícitamente NO recomendar, no usar fallback
   if (esNoPick(pick)) {
@@ -546,7 +546,7 @@ async function obtenerPickConFallback(prompt) {
   if (!pickCompleto(pick)) {
     console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
     modeloUsado = MODEL_FALLBACK;
-    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumen);
+    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
   }
 
   return { pick, modeloUsado };
