@@ -230,13 +230,18 @@ async function obtenerPartidosDesdeOddsAPI() {
   }
 
   // Hard stop: nunca < 35 min
-  enVentana = enVentana.filter(e => e.minutosFaltantes >= 35);
+enVentana = enVentana.filter(e => e.minutosFaltantes >= 35);
 
-  // 📊 Log filtrado detallado
-logFiltradoPartidos(data, "OddsAPI");
+// 📊 Log filtrado detallado (marcamos flags sobre mapeados)
+const marcados = mapeados.map(e => ({
+  ...e,
+  enVentanaPrincipal: (e.minutosFaltantes >= WINDOW_MIN && e.minutosFaltantes <= WINDOW_MAX),
+  enVentanaFallback:  (enVentana.length === 0 && e.minutosFaltantes >= WINDOW_FB_MIN && e.minutosFaltantes <= WINDOW_FB_MAX),
+}));
+logFiltradoPartidos(marcados, "OddsAPI");
 
-  resumen.enVentana = enVentana.length;
-  console.log(`OddsAPI: recibidos=${data.length}, en_ventana=${enVentana.length} (${WINDOW_MIN}–${WINDOW_MAX}m)`);
+resumen.enVentana = enVentana.length;
+console.log(`OddsAPI: recibidos=${data.length}, en_ventana=${enVentana.length} (${WINDOW_MIN}–${WINDOW_MAX}m)`);
 
   // Prefiltro: score preliminar (no descarta, solo ordena)
   for (const p of enVentana) {
@@ -386,11 +391,11 @@ async function enriquecerPartidoConAPIFootball(partido) {
     return null;
   }
   const data = await safeJson(res);
-  const list = Array.isArray(data?.response) ? data.response : [];
-  if (!list.length) return null;
+const list = Array.isArray(data?.response) ? data.response : [];
+if (!list.length) return null;
 
-// Log de filtrado API-Football
-logFiltradoPartidos(list, "API-FOOTBALL");
+// 📊 Log simple de API-Football
+console.log(`📊 API-FOOTBALL: respuesta total=${list.length} (q="${q}")`);
   
   const targetTs = partido.timestamp;
   let best = null, bestDiff = Infinity;
