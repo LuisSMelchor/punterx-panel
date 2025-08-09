@@ -160,7 +160,7 @@ async function listarPartidosConCuotas() {
 
   globalResumen.encontrados = data.length;
 
-  const enVentana = data.filter(e => {
+  let enVentana = data.filter(e => {
     const minutos = minutesUntil(e?.commence_time);
     e.minutosFaltantes = minutos;
     return (minutos >= WINDOW_MIN && minutos <= WINDOW_MAX);
