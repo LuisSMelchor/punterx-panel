@@ -514,7 +514,6 @@ async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
   }
 
   const rawContent = completion?.data?.choices?.[0]?.message?.content || '';
-  const rawContent = completion?.data?.choices?.[0]?.message?.content || '';
   if (!rawContent || !rawContent.trim()) {
     console.warn('[OAI] respuesta vacía (raw.len=0) → devolviendo no_pick');
     const fallbackNoPick = ensurePickShape({ no_pick: true, motivo_no_pick: 'OpenAI devolvió respuesta vacía' });
