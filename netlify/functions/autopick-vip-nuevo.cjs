@@ -494,67 +494,75 @@ function pickCompleto(p) {
 }
 
 async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
-  // Contadores OAI (intento)
+  // 1) Contar intento de llamada a OAI
   if (resumenRef) {
-    resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;
-    resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1;
+    resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;              // ya la tienes
+    resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1; // NUEVA
   }
 
-  try {
-    console.log('[OAI] modelo=', modelo);
-    console.log('[OAI] prompt.len=', (prompt || '').length);
+  console.log('[OAI] modelo=', modelo);
+  console.log('[OAI] prompt.len=', (prompt || '').length);
 
-    const completion = await openai.createChatCompletion(
-      buildOpenAIPayload(modelo, prompt, 450)
-    );
+  // 2) Hacer la llamada a OpenAI
+  const completion = await openai.createChatCompletion(
+    buildOpenAIPayload(modelo, prompt, 450)
+  );
 
-    // Contadores OAI (éxito HTTP)
-    if (resumenRef) {
-      resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
-    }
-
-    const raw = completion?.data?.choices?.[0]?.message?.content || '';
-    console.log('[OAI] raw.len=', raw.length);
-
-    // Parse robusto
-    let obj = extractFirstJsonBlock(raw);
-    if (!obj) {
-      try { obj = JSON.parse(raw); } catch {}
-    }
-    if (!obj || typeof obj !== 'object') {
-      console.warn('[OAI] sin JSON parseable');
-      return null;
-    }
-
-    const pick = ensurePickShape(obj);
-
-    if (esNoPick(pick)) {
-      console.log('[IA] NO PICK:', pick?.motivo_no_pick || 's/d');
-    } else {
-      if (!pick.apuesta) console.warn('[IA] falta "apuesta" (sin no_pick)');
-      if (typeof pick.probabilidad !== 'number') console.warn('[IA] falta "probabilidad" (sin no_pick)');
-    }
-
-    return pick;
-  } catch (e) {
-    // Contadores OAI (error)
-    if (resumenRef) {
-      resumenRef.oai_calls_error = (resumenRef.oai_calls_error || 0) + 1;
-    }
-    throw e; // que lo capture el caller y loguee el traceId
+  // 3) Contar éxito si la llamada no lanzó error
+  if (resumenRef) {
+    resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1; // NUEVA
   }
+
+  const raw = completion?.data?.choices?.[0]?.message?.content || '';
+  const raw = completion?.data?.choices?.[0]?.message?.content || '';
+  if (!raw || !raw.trim()) {
+    console.warn('[OAI] respuesta vacía (raw.len=0) → devolviendo no_pick');
+    const fallbackNoPick = ensurePickShape({ no_pick: true, motivo_no_pick: 'OpenAI devolvió respuesta vacía' });
+    return fallbackNoPick;
+  }
+
+  // 1) parse directo
+  let obj = extractFirstJsonBlock(raw);
+
+  // 2) reparación JSON si falla
+  if (!obj) {
+    try {
+      obj = await repairPickJSON(modelo, raw);
+      if (obj) obj._repaired = true;
+      if (obj?._repaired) console.log('[OAI] JSON reparado');
+    } catch (e) {
+      console.warn('[REPAIR] fallo reformateo:', e?.message || e);
+    }
+  }
+
+  if (!obj) {
+    console.warn('[OAI] sin JSON parseable');
+    return null;
+  }
+
+  const pick = ensurePickShape(obj);
+
+  if (esNoPick(pick)) {
+    console.log('[IA] NO PICK:', pick?.motivo_no_pick || 's/d');
+  } else {
+    if (!pick.apuesta) console.warn('[IA] falta "apuesta" (sin no_pick)');
+    if (typeof pick.probabilidad !== 'number') console.warn('[IA] falta "probabilidad" (sin no_pick)');
+  }
+
+  return pick;
 }
 
 async function obtenerPickConFallback(prompt, resumenRef = null) {
   // intento principal
-  let r1 = await pedirPickConModelo(MODEL, prompt, resumenRef);
-  if (esNoPick(r1)) return { pick: r1, modeloUsado: MODEL };
-  if (pickCompleto(r1)) return { pick: r1, modeloUsado: MODEL };
-
+  let pick = await pedirPickConModelo(MODEL, prompt, resumenRef);
+  if (esNoPick(pick)) return { pick, modeloUsado: MODEL };
   // fallback
-  console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
-  let r2 = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
-  return { pick: r2, modeloUsado: MODEL_FALLBACK };
+  if (!pickCompleto(pick)) {
+    console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
+    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
+    return { pick, modeloUsado: MODEL_FALLBACK };
+  }
+  return { pick, modeloUsado: MODEL };
 }
 
 
