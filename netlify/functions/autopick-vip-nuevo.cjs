@@ -589,16 +589,59 @@ IMPORTANTE: Responde SOLO con un JSON válido, sin texto extra, sin comentarios,
   }
 }
 
-// ========== Si sigue vacío → no_pick explícito ==========
+// ========== Si sigue vacío tras 2 intentos → 3er intento con modelo alterno no-razonador ==========
 if (!raw || !raw.trim()) {
   console.warn('[OAI][DEBUG] completion.data preview =', safePreview(completion?.data));
-  console.warn('[OAI] respuesta vacía tras 2 intentos → devolviendo no_pick');
-  const pickNoData = ensurePickShape({
-    no_pick: true,
-    motivo_no_pick: 'OpenAI devolvió respuesta vacía',
-  });
-  pickNoData._transport_error = true;
-  return pickNoData;
+  console.warn('[OAI] contenido vacío tras 2 intentos (posible razonamiento oculto + finish_reason=length). Probando modelo alterno no-razonador…');
+
+  const ALT_MODEL = process.env.ALT_MODEL_JSON || 'gpt-4o-mini'; // puedes ajustar por env
+  const promptUltraCorto = `${prompt}
+
+RESPONDE ESTRICTAMENTE con un JSON válido y mínimo (máximo 1200 caracteres). Sin texto adicional, sin comentarios, sin markdown, sin \`\`\`.`;
+
+  // helper local para forzar max_tokens y temperatura baja
+  const buildTinyJSONPayload = (model, p, maxOut = 200) => {
+    const base = buildOpenAIPayload(model, p, maxOut);
+    // Forzamos los campos típicos del endpoint v3 para minimizar sorpresas:
+    base.max_tokens = maxOut;
+    base.temperature = 0;
+    // Quitamos response_format si tu helper lo pone y el modelo no lo necesita:
+    if (base.response_format && base.response_format.type === 'json_object') {
+      // mantenerlo si te funciona; si no, comenta la línea siguiente:
+      // delete base.response_format;
+    }
+    return base;
+  };
+
+  try {
+    bumpIntento();
+    console.log('[OAI] ALT modelo=', ALT_MODEL, '| intento= 3 / 3 (no-razonador, JSON corto)');
+    console.log('[OAI] prompt.len=', (promptUltraCorto || '').length);
+
+    const completionAlt = await openai.createChatCompletion(
+      buildTinyJSONPayload(ALT_MODEL, promptUltraCorto, 200)
+    );
+    if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
+
+    raw = extractChoiceContentFromCompletion(completionAlt) || '';
+
+    if (!raw.trim()) {
+      console.warn('[OAI][ALT][DEBUG] completionAlt.data preview =', safePreview(completionAlt?.data));
+    }
+  } catch (e3) {
+    console.warn('[OAI] error en intento ALT (3/3):', e3?.response?.status, e3?.message);
+  }
+
+  // Si aun así no hay nada → devolvemos no_pick explícito
+  if (!raw || !raw.trim()) {
+    console.warn('[OAI] respuesta vacía tras 3 intentos → devolviendo no_pick');
+    const pickNoData = ensurePickShape({
+      no_pick: true,
+      motivo_no_pick: 'OpenAI devolvió respuesta vacía (3 intentos)'
+    });
+    pickNoData._transport_error = true;
+    return pickNoData;
+  }
 }
 
 // ========== Parseo JSON ==========
