@@ -12,3 +12,11 @@
     "openai": "^3.2.1"
   }
 }
+
+{
+  "scripts": {
+    "dev": "netlify dev",
+    "smoke:functions": "node ./scripts/smoke-functions.js",
+    "dev:smoke": "SMOKE_BASE_URL=http://localhost:8888 node ./scripts/smoke-functions.js"
+  }
+}
