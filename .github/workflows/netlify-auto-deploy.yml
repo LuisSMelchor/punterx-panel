@@ -7,6 +7,8 @@ on:
       - "netlify/functions/**"
       - "netlify.toml"
       - ".github/workflows/netlify-auto-deploy.yml"
+      - "package.json"
+      - "package-lock.json"
   workflow_dispatch:
 
 jobs:
@@ -20,6 +22,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
 
       - name: Syntax check (serverless functions)
         shell: bash
@@ -33,14 +36,22 @@ jobs:
             node --check "$f"
           done
 
-      - name: Trigger Netlify Build Hook
+      # (opcional) si tienes build local, descomenta:
+      # - name: Install & Build
+      #   run: |
+      #     npm ci
+      #     npm run build
+
+      - name: Deploy to Netlify (prod)
+        if: github.ref == 'refs/heads/main'
+        uses: nwtgck/actions-netlify@v2.0
+        with:
+          publish-dir: .                          # igual que publish="." en netlify.toml
+          production-deploy: true
+          deploy-message: "Deploy ${{ github.sha }} 🚀"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          enable-commit-comment: true
+          enable-pull-request-comment: true
         env:
-          NETLIFY_BUILD_HOOK: ${{ secrets.NETLIFY_BUILD_HOOK }}
-        run: |
-          if [ -z "$NETLIFY_BUILD_HOOK" ]; then
-            echo "ERROR: Falta el secret NETLIFY_BUILD_HOOK en GitHub → Settings > Secrets and variables > Actions."
-            exit 1
-          fi
-          echo "Llamando hook de Netlify…"
-          curl -sS -X POST -H "Content-Type: application/json" -d '{}' "$NETLIFY_BUILD_HOOK"
-          echo "Hook enviado."
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
