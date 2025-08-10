@@ -633,7 +633,6 @@ if (!raw || !raw.trim()) {
   }
 
   return pick;
-}
 
 // === Fallback entre modelos ===
 async function obtenerPickConFallback(prompt, resumenRef = null) {
