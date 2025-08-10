@@ -633,6 +633,7 @@ if (esNoPick(pick)) {
 }
 
 return pick;
+}
 
 // === Fallback entre modelos ===
 async function obtenerPickConFallback(prompt, resumenRef = null) {
