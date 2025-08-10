@@ -423,17 +423,34 @@ async function obtenerMemoriaSimilar(partido) {
 // =============== OPENAI ===============
 
 // === Helper: payload OpenAI compatible (gpt-5 / 4o / 4.1 / o3 vs legacy) ===
-function buildOpenAIPayload(model, prompt, maxOut = 450) {
+function buildOpenAIPayload(model, prompt, maxOut = 450, opts = {}) {
   const m = String(model || '').toLowerCase();
   const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
+
   const base = {
     model,
-    response_format: { type: 'json_object' },
     messages: [{ role: 'user', content: prompt }],
+    // n:1 explícito para evitar respuestas raras en algunos gateways
+    n: 1
   };
-  if (modern) base.max_completion_tokens = maxOut; else base.max_tokens = maxOut;
-  // gpt-5 / 4o / o3: no tocar temperature (usa default=1)
-  if (!/gpt-5|4o|o3/.test(m)) { base.temperature = 0.2; }
+
+  // jsonMode ON por defecto, pero se puede forzar off en reintentos
+  const useJsonMode = opts.jsonMode !== false;
+  if (useJsonMode) {
+    base.response_format = { type: 'json_object' };
+  }
+
+  if (modern) {
+    base.max_completion_tokens = maxOut;
+  } else {
+    base.max_tokens = maxOut;
+  }
+
+  // gpt-5 / 4o / o3: deja temperature por default; en legacy, bajamos ruido
+  if (!/gpt-5|4o|o3/.test(m)) {
+    base.temperature = 0.2;
+  }
+
   return base;
 }
 
@@ -494,72 +511,79 @@ function pickCompleto(p) {
 }
 
 async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
-  const maxIntentos = 2; // 1 intento + 1 retry
-  let ultimoRaw = '';
-  let ultimoError = null;
+  if (resumenRef) {
+    resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;
+    resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1;
+  }
 
-  for (let intento = 1; intento <= maxIntentos; intento++) {
-    // 1) Contar intento de llamada a OAI
-    if (resumenRef) {
-      resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;
-      resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1;
-    }
+  // Intento 1: con response_format (JSON mode)
+  console.log('[OAI] modelo=', modelo, '| intento= 1 / 2');
+  console.log('[OAI] prompt.len=', (prompt || '').length);
+  let completion;
+  try {
+    completion = await openai.createChatCompletion(
+      buildOpenAIPayload(modelo, prompt, 450, { jsonMode: true })
+    );
+    if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
+  } catch (e) {
+    console.warn('[OAI] error en intento 1/2:', e?.response?.status, e?.message);
+  }
 
-    console.log('[OAI] modelo=', modelo, '| intento=', intento, '/', maxIntentos);
-    console.log('[OAI] prompt.len=', (prompt || '').length);
+  let raw = completion?.data?.choices?.[0]?.message?.content || '';
+  if (!raw || !raw.trim()) {
+    console.warn('[OAI] respuesta vacía (raw.len=0) en intento 1/2');
+    // Intento 2: SIN response_format, reforzando instrucción de JSON
+    const promptSinRF = `${prompt}
 
+IMPORTANTE: Responde SOLO con un JSON válido. No incluyas texto adicional, ni comentarios, ni markdown, ni \`\`\`.`;
     try {
-      // 2) Llamada a OpenAI
-      const completion = await openai.createChatCompletion(
-        buildOpenAIPayload(modelo, prompt, 450)
+      console.log('[OAI] modelo=', modelo, '| intento= 2 / 2');
+      console.log('[OAI] prompt.len=', (promptSinRF || '').length);
+      completion = await openai.createChatCompletion(
+        buildOpenAIPayload(modelo, promptSinRF, 450, { jsonMode: false })
       );
+      if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
+      raw = completion?.data?.choices?.[0]?.message?.content || '';
+    } catch (e2) {
+      console.warn('[OAI] error en intento 2/2:', e2?.response?.status, e2?.message);
+    }
+  }
 
-      // 3) Contar éxito si la llamada no lanzó error
-      if (resumenRef) {
-        resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
-      }
+  if (!raw || !raw.trim()) {
+    console.warn('[OAI] respuesta realmente vacía tras 2 intentos → devolviendo no_pick');
+    return ensurePickShape({ no_pick: true, motivo_no_pick: 'OpenAI devolvió respuesta vacía' });
+  }
 
-      const rawContent = completion?.data?.choices?.[0]?.message?.content || '';
-      ultimoRaw = rawContent;
+  // 1) parse directo
+  let obj = extractFirstJsonBlock(raw);
 
-      if (!rawContent || !rawContent.trim()) {
-        console.warn(`[OAI] respuesta vacía (raw.len=0) en intento ${intento}/${maxIntentos}`);
-        if (intento < maxIntentos) continue; // retry
-        // Importante: devolvemos null para habilitar el fallback de modelo
-        return null;
-      }
+  // 2) reparación JSON si falla
+  if (!obj) {
+    try {
+      obj = await repairPickJSON(modelo, raw);
+      if (obj) obj._repaired = true;
+      if (obj?._repaired) console.log('[OAI] JSON reparado');
+    } catch (e) {
+      console.warn('[REPAIR] fallo reformateo:', e?.message || e);
+    }
+  }
 
-      // 1) parse directo
-      let obj = extractFirstJsonBlock(rawContent);
+  if (!obj) {
+    console.warn('[OAI] sin JSON parseable');
+    return null;
+  }
 
-      // 2) reparación JSON si falla
-      if (!obj) {
-        try {
-          obj = await repairPickJSON(modelo, rawContent);
-          if (obj) obj._repaired = true;
-          if (obj?._repaired) console.log('[OAI] JSON reparado');
-        } catch (e) {
-          console.warn('[REPAIR] fallo reformateo:', e?.message || e);
-        }
-      }
+  const pick = ensurePickShape(obj);
 
-      if (!obj) {
-        console.warn(`[OAI] sin JSON parseable en intento ${intento}/${maxIntentos}`);
-        if (intento < maxIntentos) continue; // retry
-        // Devolver null para permitir fallback de modelo
-        return null;
-      }
+  if (esNoPick(pick)) {
+    console.log('[IA] NO PICK:', pick?.motivo_no_pick || 's/d');
+  } else {
+    if (!pick.apuesta) console.warn('[IA] falta "apuesta" (sin no_pick)');
+    if (typeof pick.probabilidad !== 'number') console.warn('[IA] falta "probabilidad" (sin no_pick)');
+  }
 
-      const pick = ensurePickShape(obj);
-
-      if (esNoPick(pick)) {
-        console.log('[IA] NO PICK:', pick?.motivo_no_pick || 's/d');
-      } else {
-        if (!pick.apuesta) console.warn('[IA] falta "apuesta" (sin no_pick)');
-        if (typeof pick.probabilidad !== 'number') console.warn('[IA] falta "probabilidad" (sin no_pick)');
-      }
-
-      return pick;
+  return pick;
+}
     } catch (e) {
       ultimoError = e;
       console.warn(`[OAI] excepción en intento ${intento}/${maxIntentos}:`, e?.message || e);
