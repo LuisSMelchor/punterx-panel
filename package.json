@@ -2,7 +2,10 @@
   "name": "punterx-panel",
   "version": "1.0.0",
   "scripts": {
-    "build": "echo 'Build step (dummy)'"
+    "build": "echo 'Build step (dummy)'",
+    "dev": "netlify dev",
+    "smoke:functions": "node ./scripts/smoke-functions.js",
+    "dev:smoke": "SMOKE_BASE_URL=http://localhost:8888 node ./scripts/smoke-functions.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.53.0",
@@ -10,13 +13,5 @@
     "dotenv": "^16.3.1",
     "node-fetch": "^2.6.7",
     "openai": "^3.2.1"
-  }
-}
-
-{
-  "scripts": {
-    "dev": "netlify dev",
-    "smoke:functions": "node ./scripts/smoke-functions.js",
-    "dev:smoke": "SMOKE_BASE_URL=http://localhost:8888 node ./scripts/smoke-functions.js"
   }
 }
