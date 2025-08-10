@@ -550,48 +550,49 @@ async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
   let completion;
 
   // ========== Intento 1 ==========
-  console.log('[OAI] modelo=', modelo, '| intento= 1 / 2');
-  console.log('[OAI] prompt.len=', (prompt || '').length);
+console.log('[OAI] modelo=', modelo, '| intento= 1 / 2');
+console.log('[OAI] prompt.len=', (prompt || '').length);
+bumpIntento();
+
+try {
+  completion = await openai.createChatCompletion(
+    buildOpenAIPayload(modelo, prompt, 450)
+  );
+  if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
+  // después del intento 1:
+  raw = extractChoiceContentFromCompletion(completion) || '';
+} catch (e) {
+  console.warn('[OAI] error en intento 1/2:', e?.response?.status, e?.message);
+}
+
+// ========== Intento 2 si vacío ==========
+if (!raw?.trim()) {
+  console.warn('[OAI] respuesta vacía en intento 1 → reintentando con refuerzo JSON');
+
+  const promptSoloJson = `${prompt}
+
+IMPORTANTE: Responde SOLO con un JSON válido, sin texto extra, sin comentarios, sin markdown, sin \`\`\`.`;
+
+  console.log('[OAI] modelo=', modelo, '| intento= 2 / 2');
+  console.log('[OAI] prompt.len=', (promptSoloJson || '').length);
   bumpIntento();
 
   try {
     completion = await openai.createChatCompletion(
-      buildOpenAIPayload(modelo, prompt, 450)
+      buildOpenAIPayload(modelo, promptSoloJson, 450)
     );
     if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
-    // después del intento 1:
+    // …y después del intento 2:
     raw = extractChoiceContentFromCompletion(completion) || '';
-  } catch (e) {
-    console.warn('[OAI] error en intento 1/2:', e?.response?.status, e?.message);
+  } catch (e2) {
+    console.warn('[OAI] error en intento 2/2:', e2?.response?.status, e2?.message);
   }
+}
 
-  // ========== Intento 2 si vacío ==========
-  if (!raw.trim()) {
-    console.warn('[OAI] respuesta vacía en intento 1 → reintentando con refuerzo JSON');
-    const promptSoloJson = `${prompt}
-
-IMPORTANTE: Responde SOLO con un JSON válido, sin texto extra, sin comentarios, sin markdown, sin \`\`\`.`;
-    console.log('[OAI] modelo=', modelo, '| intento= 2 / 2');
-    console.log('[OAI] prompt.len=', (promptSoloJson || '').length);
-    bumpIntento();
-
-    try {
-      completion = await openai.createChatCompletion(
-        buildOpenAIPayload(modelo, promptSoloJson, 450)
-      );
-      if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
-      // …y después del intento 2:
-      raw = extractChoiceContentFromCompletion(completion) || '';
-    } catch (e2) {
-      console.warn('[OAI] error en intento 2/2:', e2?.response?.status, e2?.message);
-    }
-  }
-
-  // ========== Si sigue vacío → no_pick explícito ==========
-  // Si ambos intentos vinieron vacíos → devolvemos no_pick explícito
+// ========== Si sigue vacío → no_pick explícito ==========
 if (!raw || !raw.trim()) {
   console.warn('[OAI][DEBUG] completion.data preview =', safePreview(completion?.data));
-  console.warn('[OAI] respuesta realmente vacía tras 2 intentos → devolviendo no_pick');
+  console.warn('[OAI] respuesta vacía tras 2 intentos → devolviendo no_pick');
   const pickNoData = ensurePickShape({
     no_pick: true,
     motivo_no_pick: 'OpenAI devolvió respuesta vacía',
@@ -599,40 +600,39 @@ if (!raw || !raw.trim()) {
   pickNoData._transport_error = true;
   return pickNoData;
 }
+
+// ========== Parseo JSON ==========
+let obj = extractFirstJsonBlock(raw);
+
+if (!obj) {
+  try {
+    obj = await repairPickJSON(modelo, raw);
+    if (obj) obj._repaired = true;
+    if (obj?._repaired) console.log('[OAI] JSON reparado');
+  } catch (e) {
+    console.warn('[REPAIR] fallo reformateo:', e?.message || e);
   }
+}
 
-  // ========== Parseo JSON ==========
-  let obj = extractFirstJsonBlock(raw);
+if (!obj) {
+  console.warn('[OAI] sin JSON parseable → devolviendo no_pick');
+  return ensurePickShape({
+    no_pick: true,
+    motivo_no_pick: 'Respuesta no parseable como JSON'
+  });
+}
 
-  if (!obj) {
-    try {
-      obj = await repairPickJSON(modelo, raw);
-      if (obj) obj._repaired = true;
-      if (obj?._repaired) console.log('[OAI] JSON reparado');
-    } catch (e) {
-      console.warn('[REPAIR] fallo reformateo:', e?.message || e);
-    }
-  }
+const pick = ensurePickShape(obj);
 
-  if (!obj) {
-    console.warn('[OAI] sin JSON parseable → devolviendo no_pick');
-    return ensurePickShape({
-      no_pick: true,
-      motivo_no_pick: 'Respuesta no parseable como JSON'
-    });
-  }
+// Logs de control
+if (esNoPick(pick)) {
+  console.log('[IA] NO PICK:', pick?.motivo_no_pick || 's/d');
+} else {
+  if (!pick.apuesta) console.warn('[IA] falta "apuesta" (sin no_pick)');
+  if (typeof pick.probabilidad !== 'number') console.warn('[IA] falta "probabilidad" (sin no_pick)');
+}
 
-  const pick = ensurePickShape(obj);
-
-  // Logs de control
-  if (esNoPick(pick)) {
-    console.log('[IA] NO PICK:', pick?.motivo_no_pick || 's/d');
-  } else {
-    if (!pick.apuesta) console.warn('[IA] falta "apuesta" (sin no_pick)');
-    if (typeof pick.probabilidad !== 'number') console.warn('[IA] falta "probabilidad" (sin no_pick)');
-  }
-
-  return pick;
+return pick;
 
 // === Fallback entre modelos ===
 async function obtenerPickConFallback(prompt, resumenRef = null) {
