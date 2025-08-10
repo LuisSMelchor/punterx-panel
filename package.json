@@ -8,10 +8,10 @@
     "dev:smoke": "SMOKE_BASE_URL=http://localhost:8888 node ./scripts/smoke-functions.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.53.0",
-    "dayjs": "^1.11.10",
-    "dotenv": "^16.3.1",
-    "node-fetch": "^2.6.7",
-    "openai": "^3.2.1"
-  }
+  "@supabase/supabase-js": "^2.54.0",
+  "dayjs": "^1.11.13",
+  "dotenv": "^16.6.1",
+  "node-fetch": "^2.7.0",
+  "openai": "^3.3.0"
+}
 }
