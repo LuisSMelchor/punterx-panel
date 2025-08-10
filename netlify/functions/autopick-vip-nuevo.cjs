@@ -584,7 +584,8 @@ IMPORTANTE: Responde SOLO con un JSON válido. No incluyas texto adicional, ni c
 
   return pick;
 }
-    } catch (e) {
+
+catch (e) {
       ultimoError = e;
       console.warn(`[OAI] excepción en intento ${intento}/${maxIntentos}:`, e?.message || e);
       // Si falla por excepción, intentamos de nuevo si queda intento
