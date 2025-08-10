@@ -1,0 +1,70 @@
+/* scripts/smoke-functions.js */
+'use strict';
+
+// Usa fetch global (Node 18+) o cae a node-fetch v2 si hace falta
+let fetchFn = global.fetch;
+if (!fetchFn) {
+  try {
+    fetchFn = require('node-fetch');
+  } catch {
+    console.error('No hay fetch disponible. Instala node-fetch o usa Node 18+.');
+    process.exit(1);
+  }
+}
+
+const BASE = process.env.SMOKE_BASE_URL || 'http://localhost:8888';
+const TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15000);
+
+// Endpoints a probar
+const targets = [
+  { path: '/.netlify/functions/autopick-vip-nuevo', label: 'autopick-vip-nuevo', expectStatuses: [200, 204] },
+  { path: '/.netlify/functions/autopick-vip-nuevo-background', label: 'autopick-vip-nuevo-background', expectStatuses: [202, 200, 204] },
+];
+
+function timeout(ms) {
+  return new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout ${ms}ms`)), ms));
+}
+
+async function hit(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('abort'), TIMEOUT_MS);
+
+  try {
+    const res = await fetchFn(url, { signal: controller.signal });
+    let text = '';
+    try { text = await res.text(); } catch { /* ignore */ }
+    return { status: res.status, body: text.slice(0, 400) }; // muestra solo un snippet
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+(async () => {
+  console.log(`SMOKE | Base: ${BASE}`);
+  let failures = 0;
+
+  for (const t of targets) {
+    const url = BASE.replace(/\/$/, '') + t.path;
+    process.stdout.write(`→ ${t.label} ${url} ... `);
+
+    try {
+      const { status, body } = await Promise.race([hit(url), timeout(TIMEOUT_MS)]);
+      const ok = t.expectStatuses.includes(status);
+      console.log(ok ? `OK [${status}]` : `FAIL [${status}]`);
+      if (!ok) {
+        failures++;
+        console.log(`   body: ${body || '(vacío)'}`);
+      }
+    } catch (e) {
+      failures++;
+      console.log(`ERR ${e?.message || e}`);
+    }
+  }
+
+  if (failures > 0) {
+    console.error(`SMOKE | Fallas: ${failures}`);
+    process.exit(1);
+  } else {
+    console.log('SMOKE | Todo OK');
+  }
+})();
