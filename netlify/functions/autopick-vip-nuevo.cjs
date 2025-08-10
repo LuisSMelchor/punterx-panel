@@ -421,6 +421,35 @@ async function obtenerMemoriaSimilar(partido) {
 }
 
 // =============== OPENAI ===============
+// === Helper: extraer contenido de forma robusta (SDK v3 y respuestas raras) ===
+function extractChoiceContentFromCompletion(completion) {
+  try {
+    const choice = completion?.data?.choices?.[0] || null;
+    if (!choice) return '';
+    // ChatCompletion “normal”
+    if (choice.message && typeof choice.message.content === 'string') {
+      return choice.message.content;
+    }
+    // Algunas pasarelas/SDK viejos devuelven “text” (estilo Completion)
+    if (typeof choice.text === 'string') {
+      return choice.text;
+    }
+    // A veces hay function/tool_calls y NO hay content → tratar como vacío
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+// === Helper: stringify seguro para logs (recorta objetos grandes) ===
+function safePreview(obj, max = 1200) {
+  try {
+    const s = JSON.stringify(obj);
+    return s.length > max ? (s.slice(0, max) + '…(trunc)') : s;
+  } catch {
+    return '[unserializable]';
+  }
+}
 
 // === Helper: payload OpenAI compatible (gpt-5 / 4o / 4.1 / o3 vs legacy) ===
 function buildOpenAIPayload(model, prompt, maxOut = 450, opts = {}) {
@@ -530,7 +559,8 @@ async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
       buildOpenAIPayload(modelo, prompt, 450)
     );
     if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
-    raw = completion?.data?.choices?.[0]?.message?.content || '';
+    // después del intento 1:
+    raw = extractChoiceContentFromCompletion(completion) || '';
   } catch (e) {
     console.warn('[OAI] error en intento 1/2:', e?.response?.status, e?.message);
   }
@@ -550,19 +580,25 @@ IMPORTANTE: Responde SOLO con un JSON válido, sin texto extra, sin comentarios,
         buildOpenAIPayload(modelo, promptSoloJson, 450)
       );
       if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
-      raw = completion?.data?.choices?.[0]?.message?.content || '';
+      // …y después del intento 2:
+      raw = extractChoiceContentFromCompletion(completion) || '';
     } catch (e2) {
       console.warn('[OAI] error en intento 2/2:', e2?.response?.status, e2?.message);
     }
   }
 
   // ========== Si sigue vacío → no_pick explícito ==========
-  if (!raw.trim()) {
-    console.warn('[OAI] respuesta vacía tras 2 intentos → devolviendo no_pick');
-    return ensurePickShape({
-      no_pick: true,
-      motivo_no_pick: 'OpenAI devolvió respuesta vacía'
-    });
+  // Si ambos intentos vinieron vacíos → devolvemos no_pick explícito
+if (!raw || !raw.trim()) {
+  console.warn('[OAI][DEBUG] completion.data preview =', safePreview(completion?.data));
+  console.warn('[OAI] respuesta realmente vacía tras 2 intentos → devolviendo no_pick');
+  const pickNoData = ensurePickShape({
+    no_pick: true,
+    motivo_no_pick: 'OpenAI devolvió respuesta vacía',
+  });
+  pickNoData._transport_error = true;
+  return pickNoData;
+}
   }
 
   // ========== Parseo JSON ==========
