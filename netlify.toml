@@ -3,22 +3,40 @@
   publish = "."
   functions = "netlify/functions"
 
+[build.environment]
+  NODE_VERSION = "20.19.4"   # igual que en tus logs/CI
+  TZ = "UTC"                 # mantiene coherencia con los timestamps Z de tus logs
+
 [functions]
   node_bundler = "esbuild"
-  external_node_modules = ["openai", "node-fetch"]
+  # agrega todos los módulos externos que usas en funciones
+  external_node_modules = ["openai", "node-fetch", "dayjs", "dotenv", "@supabase/supabase-js"]
 
+############################################
+# FUNCIONES PROGRAMADAS (cron)
+############################################
+
+# Principal: sigue cada 15 min
 [functions."autopick-vip-nuevo"]
   schedule = "*/15 * * * *"
 
+# Background: misma cadencia pero escalonada 2 min para evitar solaparse
+# Corre al minuto 2, 17, 32, 47 de cada hora.
+[functions."autopick-vip-nuevo-background"]
+  schedule = "2-59/15 * * * *"
+
+# Verificador: cada hora en el minuto 0
 [functions."verificador-aciertos"]
   schedule = "0 * * * *"
 
+# Análisis semanal: lunes 10:00 (hora de servidor/UTC)
 [functions."analisis-semanal"]
-  schedule = "0 10 * * 1" # Cada lunes a las 10:00am (hora del servidor)
+  schedule = "0 10 * * 1"
 
+# Diagnóstico/refresh dashboard: cada 10 min
 [functions."diagnostico-total"]
-  schedule = "*/10 * * * *"   # refresco del dashboard
+  schedule = "*/10 * * * *"
 
- [functions."autopick-outrights"]
-  schedule = "*/30 * * * *"  # cada 30 min (ajustable)
-
+# Outrights: cada 30 min
+[functions."autopick-outrights"]
+  schedule = "*/30 * * * *"
