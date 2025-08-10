@@ -511,47 +511,43 @@ function pickCompleto(p) {
 }
 
 async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
-  // helper para contar intentos/calls
   const bumpIntento = () => {
     if (!resumenRef) return;
-    resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;            // total de llamadas realizadas
-    resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1; // intentos (incluye reintentos)
+    resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;
+    resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1;
   };
 
-  // ========== Intento 1: payload estándar (con response_format del helper) ==========
+  let raw = '';
+  let completion;
+
+  // ========== Intento 1 ==========
   console.log('[OAI] modelo=', modelo, '| intento= 1 / 2');
   console.log('[OAI] prompt.len=', (prompt || '').length);
-
   bumpIntento();
 
-  let completion;
   try {
     completion = await openai.createChatCompletion(
-      buildOpenAIPayload(modelo, prompt, 450) // usa tu helper tal como está definido
+      buildOpenAIPayload(modelo, prompt, 450)
     );
     if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
+    raw = completion?.data?.choices?.[0]?.message?.content || '';
   } catch (e) {
     console.warn('[OAI] error en intento 1/2:', e?.response?.status, e?.message);
   }
 
-  let raw = completion?.data?.choices?.[0]?.message?.content || '';
+  // ========== Intento 2 si vacío ==========
+  if (!raw.trim()) {
+    console.warn('[OAI] respuesta vacía en intento 1 → reintentando con refuerzo JSON');
+    const promptSoloJson = `${prompt}
 
-  // ========== Intento 2: si viene vacío, reintentar reforzando "SOLO JSON" ==========
-  if (!raw || !raw.trim()) {
-    console.warn('[OAI] respuesta vacía (raw.len=0) en intento 1/2');
-
-    const promptSinRF = `${prompt}
-
-IMPORTANTE: Responde SOLO con un JSON válido. No incluyas texto adicional, ni comentarios, ni markdown, ni \`\`\`.`;
-
+IMPORTANTE: Responde SOLO con un JSON válido, sin texto extra, sin comentarios, sin markdown, sin \`\`\`.`;
     console.log('[OAI] modelo=', modelo, '| intento= 2 / 2');
-    console.log('[OAI] prompt.len=', (promptSinRF || '').length);
-
+    console.log('[OAI] prompt.len=', (promptSoloJson || '').length);
     bumpIntento();
 
     try {
       completion = await openai.createChatCompletion(
-        buildOpenAIPayload(modelo, promptSinRF, 450) // mismo helper; reforzamos por prompt
+        buildOpenAIPayload(modelo, promptSoloJson, 450)
       );
       if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
       raw = completion?.data?.choices?.[0]?.message?.content || '';
@@ -560,16 +556,18 @@ IMPORTANTE: Responde SOLO con un JSON válido. No incluyas texto adicional, ni c
     }
   }
 
-  // Si ambos intentos vinieron vacíos → devolvemos no_pick explícito
-  if (!raw || !raw.trim()) {
-    console.warn('[OAI] respuesta realmente vacía tras 2 intentos → devolviendo no_pick');
-    return ensurePickShape({ no_pick: true, motivo_no_pick: 'OpenAI devolvió respuesta vacía' });
+  // ========== Si sigue vacío → no_pick explícito ==========
+  if (!raw.trim()) {
+    console.warn('[OAI] respuesta vacía tras 2 intentos → devolviendo no_pick');
+    return ensurePickShape({
+      no_pick: true,
+      motivo_no_pick: 'OpenAI devolvió respuesta vacía'
+    });
   }
 
-  // ========== Parseo del JSON ==========
+  // ========== Parseo JSON ==========
   let obj = extractFirstJsonBlock(raw);
 
-  // Reparación si falló el parseo directo
   if (!obj) {
     try {
       obj = await repairPickJSON(modelo, raw);
@@ -581,14 +579,16 @@ IMPORTANTE: Responde SOLO con un JSON válido. No incluyas texto adicional, ni c
   }
 
   if (!obj) {
-    console.warn('[OAI] sin JSON parseable');
-    return null; // permitirá fallback arriba
+    console.warn('[OAI] sin JSON parseable → devolviendo no_pick');
+    return ensurePickShape({
+      no_pick: true,
+      motivo_no_pick: 'Respuesta no parseable como JSON'
+    });
   }
 
-  // Estandariza la forma del pick
   const pick = ensurePickShape(obj);
 
-  // Logs útiles
+  // Logs de control
   if (esNoPick(pick)) {
     console.log('[IA] NO PICK:', pick?.motivo_no_pick || 's/d');
   } else {
@@ -601,22 +601,21 @@ IMPORTANTE: Responde SOLO con un JSON válido. No incluyas texto adicional, ni c
 
 // === Fallback entre modelos ===
 async function obtenerPickConFallback(prompt, resumenRef = null) {
-  // intento principal con MODEL
   let pick = await pedirPickConModelo(MODEL, prompt, resumenRef);
 
-  // si el modelo principal devolvió "no_pick", respetamos
+  // Si el modelo principal devolvió un no_pick, respetamos y no seguimos
   if (esNoPick(pick)) {
     return { pick, modeloUsado: MODEL };
   }
 
-  // si vino incompleto, probamos con el modelo de fallback
+  // Si el pick viene incompleto o inválido, probamos con el fallback
   if (!pickCompleto(pick)) {
     console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
     const pick2 = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
     return { pick: pick2, modeloUsado: MODEL_FALLBACK };
   }
 
-  // todo ok con el principal
+  // Pick válido con el modelo principal
   return { pick, modeloUsado: MODEL };
 }
 
