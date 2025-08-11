@@ -17,7 +17,6 @@ const {
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const FUNCIONES = [
-  // Añade aquí las funciones que quieras monitorear
   'autopick-vip-nuevo',
   'autopick-vip-nuevo-background',
   'autopick-outrights',
@@ -36,17 +35,12 @@ function respond(statusCode, body, asJson = false) {
   };
 }
 
-function statusBadge(status = 'ok') {
+function badge(status = 'ok') {
   const c =
     status === 'ok'   ? '#16a34a' :
     status === 'warn' ? '#f59e0b' :
                         '#dc2626';
   return <span style="padding:2px 8px;border-radius:999px;background:${c};color:#fff;font-weight:600">${status}</span>;
-}
-
-function pad2(n) { return String(n).padStart(2, '0'); }
-function ymd(d = new Date()) {
-  return ${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())};
 }
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -73,7 +67,7 @@ async function estadoOpenAI({ deep } = {}) {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini', // barato/estable; ajusta si usas otro
+        model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: 'pong' }],
         max_tokens: 1,
       }),
@@ -151,7 +145,6 @@ async function resumenWinRate(windowDias) {
 
 // Heartbeats (última ejecución por función) – tabla opcional heartbeats:
 // columns: function_name(text), last_seen(timestamptz), ok(boolean)
-// Cada función debería upsert al empezar.
 async function getHeartbeats() {
   try {
     const { data, error } = await supabase
@@ -215,12 +208,12 @@ function htmlPage(model) {
     </tr>`;
   };
 
-  const costBox = costs.total === null
+  const costBox = (costs.total === null)
     ? <p class="muted">Costos (últimos 30 días): N/A (sin tabla cost_telemetry)</p>
     : `<p>Costos 30d: <b>$${costs.total}</b></p>
        <div class="muted">${
          Object.entries(costs.porProveedor)
-           .map(([k, v]) => ${k}: $${v.toFixed(4)})
+           .map(([k, v]) => ${k}: $${Number(v).toFixed(4)})
            .join(' · ')
        }</div>`;
 
@@ -301,7 +294,7 @@ function htmlPage(model) {
 }
 
 exports.handler = async (evt) => {
-  const rawUrl = evt?.rawUrl || http://x/?${evt?.rawQuery || ''};
+  const rawUrl = (evt && evt.rawUrl) ? evt.rawUrl : ('http://x/?' + (evt?.rawQuery || ''));
   const url = new URL(rawUrl);
   const deep = url.searchParams.get('deep') === '1';
   const asJson = url.searchParams.get('json') === '1';
