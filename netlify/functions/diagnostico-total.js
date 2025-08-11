@@ -45,7 +45,7 @@ function badge(status = 'ok') {
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function ymd(d = new Date()) {
-  return ${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())};
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
 }
 
 async function estadoSupabase() {
