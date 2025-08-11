@@ -22,22 +22,17 @@ const {
   // Descubrimiento dinámico con control
   OUTRIGHTS_MIN_BOOKIES = '3',             // liquidez mínima por torneo
   OUTRIGHTS_MIN_OUTCOMES = '8',            // nº mínimo de selecciones
-  OUTRIGHTS_EXCLUDE = '*u19*,*u20*,*friendly*,*reserves*,*women*,*amateur*', // patrones a excluir (minúsculas, coma-separado)
+  OUTRIGHTS_EXCLUDE = '*u19*,*u20*,*friendly*,*reserves*,*...n*,*amateur*', // patrones a excluir (minúsculas, coma-separado)
 
   // Guardrails / Umbrales
   OUTRIGHTS_EV_MIN_VIP = '15',             // EV mínimo VIP (%)
   OUTRIGHTS_COHERENCE_MAX_PP = '15',       // |p_modelo - p_implícita| (pp)
   OUTRIGHTS_PROB_MIN = '5',                // % (IA)
   OUTRIGHTS_PROB_MAX = '85',               // % (IA)
-  OUTRIGHTS_ANTIDUPE_MIN_IMPROVE = '5',    // % mejora mínima de cuota o EV vs pick activo previo
 
-  // Presupuesto
-  MAX_OUTRIGHT_CANDIDATES = '3',           // máx. torneos a analizar por corrida
-  MAX_OUTRIGHT_OAI_CALLS = '3',            // máx. llamadas IA por corrida (1 por candidato)
-
-  // IA / OpenAI
+  // OpenAI
   OPENAI_API_KEY,
-  OPENAI_MODEL = 'gpt-5',
+  OPENAI_MODEL = 'gpt-5-mini',
   OPENAI_MODEL_FALLBACK = 'gpt-5',
 
   // Datos
@@ -59,20 +54,9 @@ const EV_MIN_VIP = Number(OUTRIGHTS_EV_MIN_VIP) || 15;
 const COHERENCE_MAX_PP = Number(OUTRIGHTS_COHERENCE_MAX_PP) || 15;
 const PROB_MIN = (Number(OUTRIGHTS_PROB_MIN) || 5) / 100;
 const PROB_MAX = (Number(OUTRIGHTS_PROB_MAX) || 85) / 100;
-const ANTIDUPE_MIN_IMPROVE = Number(OUTRIGHTS_ANTIDUPE_MIN_IMPROVE) || 5;
 
-const MAX_CANDS = Math.max(1, Number(MAX_OUTRIGHT_CANDIDATES) || 3);
-const MAX_OAI = Math.max(1, Number(MAX_OUTRIGHT_OAI_CALLS) || 3);
-
-// Exclusiones
-const EXCLUDES = OUTRIGHTS_EXCLUDE
-  .split(',')
-  .map(s => s.trim().toLowerCase())
-  .filter(Boolean);
-
-// Clientes
+// Conexiones
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-// ⬇️ Migración a openai@4
 const oai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 /* ===========================
@@ -88,73 +72,9 @@ const error = (...a) => console.error(...a);
 function json(statusCode, body) {
   return {
     statusCode,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(body)
   };
-}
-
-async function fetchWithRetry(url, options = {}, { retries = 1, timeoutMs = 15000 } = {}) {
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    if (!res.ok && retries > 0 && (res.status === 429 || (res.status >= 500 && res.status <= 599))) {
-      const ra = Number(res.headers.get('retry-after') || 0);
-      const backoff = ra > 0 ? ra * 1000 : 800;
-      await sleep(backoff);
-      return fetchWithRetry(url, options, { retries: retries - 1, timeoutMs });
-    }
-    return res;
-  } finally { clearTimeout(t); }
-}
-
-async function safeText(res) {
-  try { return await res.text(); } catch { return ''; }
-}
-
-function matchExcluded(name = '') {
-  const s = String(name || '').toLowerCase();
-  return EXCLUDES.some(pat => {
-    const re = new RegExp(pat.replace(/\*/g, '.*'));
-    return re.test(s);
-  });
-}
-
-/* ===========================
- *  DIAGNÓSTICO (functions_status / function_runs)
- * =========================== */
-function makeRunId() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-async function upsertFunctionStatus({ enabled, schedule, env_ok }) {
-  try {
-    await supabase.from('functions_status').upsert({
-      name: FN_NAME,
-      enabled: !!enabled,
-      schedule: schedule || null,
-      env_ok: !!env_ok,
-      updated_at: nowIso(),
-    });
-  } catch (e) {
-    warn(`[diag][${FN_NAME}] upsertFunctionStatus error:`, e?.message || e);
-  }
-}
-
-async function beginRun(meta = {}) {
-  const run_id = makeRunId();
-  try {
-    await supabase.from('function_runs').insert({
-      run_id,
-      fn_name: FN_NAME,
-      started_at: nowIso(),
-      meta: meta || null,
-      status: 'running',
-    });
-  } catch (e) {
-    warn(`[diag][${FN_NAME}] beginRun error:`, e?.message || e);
-  }
-  return run_id;
 }
 
 async function endRun(run_id, patch = {}) {
@@ -174,23 +94,8 @@ async function endRun(run_id, patch = {}) {
 }
 
 /* ===========================
- *  KV Runtime & Locks (Supabase)
+ *  Locks / KV
  * =========================== */
-async function getKV(key) {
-  try {
-    const { data } = await supabase.from('kv_runtime')
-      .select('v, updated_at').eq('k', key).maybeSingle();
-    return data ? { v: data.v, updated_at: data.updated_at } : null;
-  } catch { return null; }
-}
-async function setKV(key, val) {
-  try {
-    await supabase.from('kv_runtime').upsert({
-      k: key, v: val, updated_at: nowIso()
-    });
-  } catch {}
-}
-
 async function acquireLock(key = 'autopick-outrights', ttlSec = 180) {
   try {
     const until = new Date(Date.now() + ttlSec * 1000).toISOString();
@@ -210,85 +115,23 @@ async function releaseLock(key = 'autopick-outrights') {
   try { await supabase.from('locks').delete().eq('k', key); } catch {}
 }
 
-// Circuit breaker específico para odds outrights
-async function withOutrightsBreaker(fn) {
-  const now = Date.now();
-  const st = await getKV('odds_out_breaker');
-  if (st?.v?.until && now < Number(st.v.until)) {
-    warn('Odds Outrights breaker ON — saltando consulta');
-    return { skipped: true, data: [] };
-  }
-  try {
-    const data = await fn();
-    await setKV('odds_out_failures', { n: 0 });
-    return { data };
-  } catch (e) {
-    const cur = (await getKV('odds_out_failures'))?.v?.n || 0;
-    const n = cur + 1;
-    await setKV('odds_out_failures', { n });
-    if (n >= 3) {
-      const until = now + 120000; // 2 min
-      await setKV('odds_out_breaker', { until });
-      warn('Odds Outrights breaker ON (120s)');
-    }
-    throw e;
-  }
+/* ===========================
+ *  OddsAPI — Outrights
+ * =========================== */
+function impliedProb(price) {
+  const q = Number(price);
+  if (!Number.isFinite(q) || q <= 1.0) return null;
+  return +(1 / q).toFixed(4); // decimal
+}
+function impliedProbPct(price) {
+  const p = impliedProb(price);
+  return p == null ? null : +(p * 100).toFixed(2);
+}
+function withinPP(modelPct, impliedPct, maxPP = 15) {
+  if (!Number.isFinite(modelPct) || !Number.isFinite(impliedPct)) return false;
+  return Math.abs(modelPct - impliedPct) <= maxPP;
 }
 
-/* ===========================
- *  Telegram
- * =========================== */
-async function enviarTelegram(texto, tipo = 'vip') {
-  if (!TELEGRAM_BOT_TOKEN) {
-    warn('[outrights] Falta TELEGRAM_BOT_TOKEN');
-    return false;
-  }
-  const chatId = tipo === 'vip' ? TELEGRAM_GROUP_ID : TELEGRAM_CHANNEL_ID;
-  if (!chatId) {
-    warn('[outrights] Falta chat ID para tipo', tipo);
-    return false;
-  }
-
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-  const MAX = 4096;
-
-  const partes = [];
-  let tx = String(texto || '');
-  while (tx.length > MAX) { partes.push(tx.slice(0, MAX)); tx = tx.slice(MAX); }
-  partes.push(tx);
-
-  for (const chunk of partes) {
-    let res = await fetchWithRetry(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: chunk, parse_mode: 'HTML' })
-    }, { retries: 1, timeoutMs: 15000 });
-
-    if (res && res.status === 429) {
-      const j = await res.json().catch(()=> ({}));
-      const retryAfter = Number(j?.parameters?.retry_after || 0);
-      if (retryAfter > 0 && retryAfter <= 10) {
-        warn('[outrights] Telegram 429, esperando', retryAfter, 's');
-        await sleep(retryAfter * 1000);
-        res = await fetch(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ chat_id: chatId, text: chunk, parse_mode: 'HTML' })
-        });
-      }
-    }
-    if (!res?.ok) {
-      const t = await safeText(res);
-      error('[outrights] Telegram no ok:', res?.status, t?.slice?.(0,300));
-      return false;
-    }
-  }
-  return true;
-}
-
-/* ===========================
- *  IA helpers (gpt-5 compatible)
- * =========================== */
 function buildOpenAIPayload(model, prompt, maxOut = 450) {
   const m = String(model || '').toLowerCase();
   const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
@@ -309,12 +152,15 @@ function buildOpenAIPayload(model, prompt, maxOut = 450) {
 
 function extractFirstJsonBlock(text) {
   if (!text) return null;
-  const t = String(text).replace(/```json|```/gi, '').trim();
-  const start = t.indexOf('{');
-  const end = t.lastIndexOf('}');
+  const s = String(text);
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
   if (start === -1 || end === -1 || end <= start) return null;
-  const candidate = t.slice(start, end + 1);
-  try { return JSON.parse(candidate); } catch { return null; }
+  try {
+    return JSON.parse(s.slice(start, end + 1));
+  } catch {
+    return null;
+  }
 }
 
 function ensureOutrightShape(p) {
@@ -325,80 +171,31 @@ function ensureOutrightShape(p) {
     apuesta: p.apuesta ?? '',               // "Ganador: Inglaterra"
     apuestas_extra: p.apuestas_extra ?? '', // texto simple o bullets
     frase_motivacional: p.frase_motivacional ?? 's/d',
-    probabilidad: typeof p.probabilidad === 'number' ? p.probabilidad : null
+    probabilidad: typeof p.probabilidad === 'number' ? p.probabilidad : null,
+    no_pick: p.no_pick === true,
+    motivo_no_pick: p.motivo_no_pick ?? ''
   };
 }
+function esNoPick(p) { return !!p && p.no_pick === true; }
 
-/* ===========================
- *  Odds / EV helpers
- * =========================== */
-function impliedProb(price) {
-  const q = Number(price);
-  if (!Number.isFinite(q) || q <= 1.0) return null;
-  return +(1 / q).toFixed(4); // decimal
-}
-function impliedProbPct(price) {
-  const p = impliedProb(price);
-  return p == null ? null : +(p * 100).toFixed(2);
-}
-function evPct(probDecimal, bestPrice) {
-  if (!Number.isFinite(probDecimal) || !Number.isFinite(bestPrice)) return null;
-  return +(((probDecimal * bestPrice) - 1) * 100).toFixed(2);
-}
-function withinPP(a, b, max) {
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
-  return Math.abs(a - b) <= max;
+function pickCompleto(p) {
+  if (!p || esNoPick(p)) return !esNoPick(p) ? false : true;
+  return !!(p.analisis_vip && p.apuesta && typeof p.probabilidad === 'number');
 }
 
 /* ===========================
- *  Fechas: inicio de torneo (opcional via API-Football)
+ *  Descubrimiento de candidatos
  * =========================== */
-async function resolverFechaInicioTorneo(nombreTorneo) {
-  try {
-    if (!API_FOOTBALL_KEY || !nombreTorneo) return null;
-    const q = encodeURIComponent(nombreTorneo);
-    // Buscamos liga por nombre y tomamos la temporada activa más cercana
-    const url = `https://v3.football.api-sports.io/leagues?search=${q}`;
-    const res = await fetchWithRetry(url, {
-      headers: { 'x-apisports-key': API_FOOTBALL_KEY }
-    }, { retries: 1, timeoutMs: 12000 });
-    if (!res?.ok) return null;
-    const data = await res.json().catch(()=>null);
-    const leagues = data?.response || [];
-    if (!Array.isArray(leagues) || !leagues.length) return null;
-
-    // Tomamos la primera con seasons y buscamos start más cercano al futuro.
-    let best = null;
-    const now = Date.now();
-    for (const lg of leagues) {
-      const seasons = lg?.seasons || [];
-      for (const s of seasons) {
-        const start = s?.start ? new Date(s.start).getTime() : null;
-        if (start && start >= now) {
-          if (!best || start < best) best = start;
-        }
-      }
-    }
-    if (!best) return null;
-    return new Date(best).toISOString();
-  } catch { return null; }
+function matchExcluded(name = '') {
+  const s = String(name || '').toLowerCase();
+  const parts = String(OUTRIGHTS_EXCLUDE || '').toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
+  return parts.some(p => {
+    const rx = new RegExp(p.replace(/\*/g, '.*'));
+    return rx.test(s);
+  });
 }
 
-/* ===========================
- *  OddsAPI Outrights
- * =========================== */
-// NOTA: el endpoint puede variar según plan; aquí usamos v4 con markets=outrights, y aceptamos market keys similares.
-async function fetchOutrightsRaw() {
-  const url = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu,uk&markets=outrights,winner&oddsFormat=decimal&dateFormat=iso&apiKey=${ODDS_API_KEY}`;
-  const res = await fetchWithRetry(url, {}, { retries: 1, timeoutMs: 15000 });
-  if (!res || !res.ok) {
-    const t = await safeText(res);
-    throw new Error(`OddsAPI Outrights HTTP ${res?.status}: ${t?.slice?.(0,200)}`);
-  }
-  return res.json();
-}
-
-function mapearOutrights(data) {
+function mapOutrightsData(data) {
   const out = [];
   if (!Array.isArray(data)) return out;
 
@@ -417,16 +214,14 @@ function mapearOutrights(data) {
         if (!/(outright|outrights|winner|futures)/.test(key)) continue;
         const outcomes = Array.isArray(mk?.outcomes) ? mk.outcomes : [];
         for (const o of outcomes) {
-          if (!o?.name || !o?.price) continue;
-          const name = String(o.name).trim();
-          const price = Number(o.price);
-          if (!Number.isFinite(price) || price <= 1) continue;
+          const name = String(o?.name || '').trim();
+          const price = Number(o?.price);
+          if (!name || !Number.isFinite(price)) continue;
           if (!allOutcomes[name]) {
             allOutcomes[name] = { name, bestPrice: price, books: [bk?.title || ''] };
           } else {
+            allOutcomes[name].books.push(bk?.title || '');
             if (price > allOutcomes[name].bestPrice) allOutcomes[name].bestPrice = price;
-            const bt = bk?.title || '';
-            if (bt && !allOutcomes[name].books.includes(bt)) allOutcomes[name].books.push(bt);
           }
         }
       }
@@ -438,14 +233,15 @@ function mapearOutrights(data) {
     out.push({
       torneo,
       mercado: 'Ganador del torneo',
-      outcomes: arr.slice(0, 50) // suficiente para matching
+      outcomes: arr
     });
   }
+
   return out;
 }
 
 /* ===========================
- *  IA Prompt (apuesta sugerida + extras)
+ *  Prompt / IA
  * =========================== */
 function construirPromptOutright({ torneo, mercado, topOutcomes, memoriaLiga30d, fechaInicioISO }) {
   const lines = [];
@@ -456,12 +252,15 @@ function construirPromptOutright({ torneo, mercado, topOutcomes, memoriaLiga30d,
   lines.push(`  "apuestas_extra": "",         // bullets o texto breve opcional`);
   lines.push(`  "frase_motivacional": "",`);
   lines.push(`  "probabilidad": 0.0           // decimal (0.05 a 0.85)`);
+  lines.push(`  "no_pick": false,              // true si NO recomiendas apostar`);
+  lines.push(`  "motivo_no_pick": ""           // breve justificación si no_pick=true`);
   lines.push(`}`);
   lines.push(`Reglas:`);
   lines.push(`- "probabilidad" es decimal (no %), rango 0.05–0.85.`);
   lines.push(`- "apuesta" debe referirse a una selección EXACTA de las listadas.`);
   lines.push(`- Sé claro y táctico en "analisis_vip" (3–5 líneas).`);
-  lines.push(`- En "apuestas_extra" sugiere 0–3 ideas breves SOLO si también tienen valor potencial.`);
+  lines.push(`- Si "no_pick"=true: no des apuesta; justifica en "motivo_no_pick".`);
+  lines.push(`- "apuestas_extra" sugiere 0–3 ideas breves SOLO si también tienen valor potencial.`);
   lines.push(`Contexto:`);
   lines.push(`- Torneo: ${torneo}`);
   lines.push(`- Mercado: ${mercado}`);
@@ -475,9 +274,6 @@ function construirPromptOutright({ torneo, mercado, topOutcomes, memoriaLiga30d,
   return lines.join('\n');
 }
 
-/* ===========================
- *  IA Call
- * =========================== */
 async function pedirOutrightConModelo(modelo, prompt) {
   // ⬇️ Migración a openai@4
   const completion = await oai.chat.completions.create(
@@ -489,30 +285,7 @@ async function pedirOutrightConModelo(modelo, prompt) {
 }
 
 /* ===========================
- *  Antiduplicado
- * =========================== */
-async function hayDupeNoMejora({ torneo, seleccion, bestPrice, ev }) {
-  try {
-    const { data } = await supabase
-      .from('picks_outright')
-      .select('seleccion, cuota, ev, activo, timestamp')
-      .eq('torneo', torneo)
-      .eq('seleccion', seleccion)
-      .order('timestamp', { ascending: false })
-      .limit(1);
-    if (!data || !data.length) return false;
-    const prev = data[0];
-    if (prev && prev.activo) {
-      const improvePrice = prev.cuota ? ((bestPrice - prev.cuota) / prev.cuota) * 100 : 0;
-      const improveEV = (Number.isFinite(ev) && Number.isFinite(prev.ev)) ? (ev - prev.ev) : 0;
-      return (improvePrice < ANTIDUPE_MIN_IMPROVE) && (improveEV < ANTIDUPE_MIN_IMPROVE);
-    }
-    return false;
-  } catch { return false; }
-}
-
-/* ===========================
- *  FREE informativo (si no hay valor)
+ *  Mensajes
  * =========================== */
 function mensajeFreeInformativo({ torneo, fechaInicioISO, analisis }) {
   const f = fechaInicioISO ? new Date(fechaInicioISO).toLocaleString() : 's/d';
@@ -529,7 +302,7 @@ function mensajeFreeInformativo({ torneo, fechaInicioISO, analisis }) {
 /* ===========================
  *  VIP Outright (mensaje)
  * =========================== */
-function mensajeVipOutright({ torneo, mercado, seleccion, bestPrice, probPct, ev, topBooks, analisis_vip, frase, fechaInicioISO, apuestas_extra }) {
+function mensajeVipOutright({ torneo, mercado, seleccion, ...pBooks, analisis_vip, frase, fechaInicioISO, apuestas_extra }) {
   const f = fechaInicioISO ? new Date(fechaInicioISO).toLocaleString() : 's/d';
   const extras = (apuestas_extra && String(apuestas_extra).trim())
     ? `\n➕ Apuestas extra:\n${String(apuestas_extra)}`
@@ -540,18 +313,36 @@ function mensajeVipOutright({ torneo, mercado, seleccion, bestPrice, probPct, ev
     `🗓️ Inicio estimado: ${f}`,
     `🎯 Mercado: ${mercado}`,
     `✅ Selección: ${seleccion}`,
-    `📈 Prob. estimada (IA): ${probPct}%`,
-    `💹 EV: ${ev}%`,
-    topBooks?.length ? `🏦 Top 3 bookies: ${topBooks.slice(0,3).join(' · ')}` : '',
+    `📈 Prob. estimada (IA): ${pBooks.probPct}%`,
+    `💹 EV: ${pBooks.ev}%`,
+    pBooks.topBooks?.length ? `🏦 Top 3 bookies: ${pBooks.topBooks.slice(0,3).join(' · ')}` : '',
     `🧠 ${analisis_vip}`,
     extras,
     `💬 ${frase}`,
-    '⚠️ Apuestas a largo plazo (alta varianza). Juego responsable.'
+    '',
+    '⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder. Recuerda que ninguna apuesta es segura, incluso cuando el análisis sea sólido.'
   ].filter(Boolean).join('\n');
 }
 
 /* ===========================
- *  Flujo por candidato
+ *  Persistencia / antiduplicado
+ * =========================== */
+async function hayDupeNoMejora({ torneo, seleccion, bestPrice, ev }) {
+  try {
+    const { data } = await supabase.from('picks_outright').select('*').eq('torneo', torneo).eq('seleccion', seleccion).order('timestamp', { ascending: false }).limit(1);
+    const prev = Array.isArray(data) && data[0] ? data[0] : null;
+    if (!prev) return false;
+    const improvePrice = prev.cuota ? ((bestPrice - prev.cuota) / prev.cuota) * 100 : 0;
+    const improveEV = (Number.isFinite(ev) && Number.isFinite(prev.ev)) ? (ev - prev.ev) : 0;
+    // solo enviar si mejora
+    return !(improvePrice > 0.5 || improveEV > 1.0);
+  } catch {
+    return false;
+  }
+}
+
+/* ===========================
+ *  Procesamiento de candidato
  * =========================== */
 async function procesarCandidato(item) {
   // Fecha de inicio (best-effort, opcional)
@@ -573,8 +364,11 @@ async function procesarCandidato(item) {
     return null;
   });
 
-  // Fallback si falla
-  if (!pick) {
+  // Si IA decide no_pick, salimos sin reintentar
+  if (pick && esNoPick(pick)) return { ok: false, reason: 'ai_no_pick' };
+
+  // Fallback si falla o está incompleto
+  if (!pick || !pickCompleto(pick)) {
     warn('♻️ Fallback de modelo →', OPENAI_MODEL_FALLBACK);
     modeloUsado = OPENAI_MODEL_FALLBACK;
     pick = await pedirOutrightConModelo(OPENAI_MODEL_FALLBACK, prompt).catch(e => {
@@ -583,6 +377,8 @@ async function procesarCandidato(item) {
     });
   }
   if (!pick) return { ok: false, reason: 'json_vacio' };
+  if (esNoPick(pick)) return { ok: false, reason: 'ai_no_pick' };
+  if (!pickCompleto(pick)) return { ok: false, reason: 'pick_incompleto_fallback' };
 
   // Normalización
   let prob = Number(pick.probabilidad);
@@ -600,7 +396,7 @@ async function procesarCandidato(item) {
   const bestPrice = match.bestPrice;
   const impPct = impliedProbPct(bestPrice);             // implícita por cuota
   const probPct = +(prob * 100).toFixed(2);             // modelo en %
-  const ev = evPct(prob, bestPrice);                    // EV en %
+  const ev = +(((prob * bestPrice) - 1) * 100).toFixed(2); // EV en %
 
   // Guardrails
   if (!withinPP(probPct, impPct, COHERENCE_MAX_PP)) return { ok: false, reason: 'coherencia_prob_cuota' };
@@ -648,61 +444,71 @@ async function procesarCandidato(item) {
 }
 
 /* ===========================
- *  Memoria 30d (resumen liga/torneo)
+ *  Telegram
  * =========================== */
-async function obtenerMemoriaLigaResumen(ligaONombre, windowDias = 30) {
+async function enviarTelegram(text, tipo = 'vip') {
+  const token = TELEGRAM_BOT_TOKEN;
+  const chat_id = tipo === 'vip' ? TELEGRAM_GROUP_ID : TELEGRAM_CHANNEL_ID;
+  if (!token || !chat_id) return false;
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
   try {
-    if (!ligaONombre) return null;
-    const { data } = await supabase
-      .from('memoria_resumen')
-      .select('samples, hit_rate, ev_prom, mercados_top')
-      .eq('liga', ligaONombre)
-      .eq('window_dias', windowDias)
-      .limit(1)
-      .maybeSingle();
-    if (!data) return null;
-    const mkts = Array.isArray(data.mercados_top) ? data.mercados_top.slice(0,3).join(' / ') : '';
-    return `Últ. ${windowDias}d: hit ${data.hit_rate}% • EV prom ${data.ev_prom}% • mercados top: ${mkts || 's/d'}`;
-  } catch { return null; }
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id,
+        text,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+      })
+    });
+    const ok = res.ok;
+    if (!ok) {
+      const body = await res.text().catch(()=> '');
+      warn('[telegram] bad status', res.status, body);
+    }
+    return ok;
+  } catch (e) {
+    warn('[telegram] error', e?.message || e);
+    return false;
+  }
 }
 
 /* ===========================
- *  Handler
+ *  Fecha de inicio (opcional)
  * =========================== */
-exports.handler = async () => {
-  // --- Estado/diagnóstico de función ---
-  const env_ok = !!(SUPABASE_URL && SUPABASE_KEY && OPENAI_API_KEY);
-  await upsertFunctionStatus({
-    enabled: ENABLE_OUTRIGHTS === 'true',
-    schedule: process.env.NETLIFY_SCHEDULE || null,
-    env_ok
-  });
-  const run_meta = {
-    schedule: process.env.NETLIFY_SCHEDULE || null,
-    flags: { ENABLE_OUTRIGHTS, ENABLE_OUTRIGHTS_INFO }
-  };
-  const run_id = await beginRun(run_meta);
+// Placeholder best-effort (puedes enriquecer con API-FOOTBALL si deseas)
+async function resolverFechaInicioTorneo(torneo) {
+  void torneo; // noop
+  return null;
+}
 
-  // --- Métricas de corrida ---
+/* ===========================
+ *  Memoria 30d por torneo (opcional)
+ * =========================== */
+async function obtenerMemoriaLigaResumen(torneo) {
+  try {
+    const { data } = await supabase.from('functions_status').select('summary').eq('name', 'memoria_outright_'+torneo).maybeSingle();
+    return (data && data.summary) ? String(data.summary).slice(0, 600) : null;
+  } catch {
+    return null;
+  }
+}
+
+/* ===========================
+ *  Handler principal
+ * =========================== */
+exports.handler = async (event) => {
+  const run_id = Math.random().toString(36).slice(2);
   let oai_calls = 0;
   let oai_ok = 0;
-  let candidatos_len = 0;
-  let enviados_vip = 0;
-  let enviados_free = 0;
 
   try {
     if (ENABLE_OUTRIGHTS !== 'true') {
-      await endRun(run_id, {
-        status: 'skipped',
-        summary: { reason: 'disabled' }
-      });
-      return json(200, { ok: true, skipped: 'disabled' });
+      warn('[outrights] módulo desactivado');
+      return json(200, { ok: true, disabled: true });
     }
-    if (!SUPABASE_URL || !SUPABASE_KEY || !ODDS_API_KEY || !OPENAI_API_KEY) {
-      await endRun(run_id, {
-        status: 'error',
-        error: 'Config incompleta'
-      });
+    if (!OPENAI_API_KEY || !ODDS_API_KEY || !TELEGRAM_BOT_TOKEN || !TELEGRAM_GROUP_ID) {
       return json(500, { error: 'Config incompleta' });
     }
 
@@ -718,43 +524,37 @@ exports.handler = async () => {
     }
 
     // Fetch Outrights con breaker
-    let raw;
-    try {
-      const r = await withOutrightsBreaker(fetchOutrightsRaw);
-      if (r.skipped) {
-        await endRun(run_id, {
-          status: 'skipped',
-          summary: { reason: 'breaker' }
-        });
-        return json(200, { ok: true, skipped: 'breaker' });
-      }
-      raw = r.data;
-    } catch (e) {
-      const msg = e?.message || e;
-      error('[outrights] Error OddsAPI:', msg);
+    const url = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu,us,uk&markets=outrights&oddsFormat=decimal&apiKey=${ODDS_API_KEY}`;
+    const t0 = Date.now();
+    const res = await fetch(url, { timeout: 15000 }).catch(e => ({ ok: false, status: 0, _err: e?.message || e }));
+    if (!res || !res.ok) {
+      const body = res && typeof res.text === 'function' ? await res.text().catch(()=> '') : '';
+      warn('[oddsapi] error', res?.status, body);
       await endRun(run_id, {
-        status: 'error',
-        error: `OddsAPI: ${msg}`
+        status: 'api_error',
+        summary: { provider: 'oddsapi', status: res?.status, body: String(body).slice(0, 200) }
       });
-      return json(200, { ok: true, skipped: 'oddsapi_error' });
+      return json(200, { ok: true, api_error: 'oddsapi' });
     }
+    const raw = await res.json();
+    const mapped = mapOutrightsData(raw);
 
-    const mapped = mapearOutrights(raw);
-    candidatos_len = mapped.length;
-    if (!candidatos_len) {
-      log('[outrights] Sin torneos/outcomes mapeables');
+    if (!Array.isArray(mapped) || mapped.length === 0) {
       await endRun(run_id, {
         status: 'ok',
-        summary: { candidatos: 0, enviados_vip: 0, enviados_free: 0 },
+        summary: { empty: true },
         oai_calls, oai_ok
       });
       return json(200, { ok: true, candidatos: 0, enviados_vip: 0, enviados_free: 0 });
     }
 
     // Priorizar por liquidez (nº outcomes)
+    const MAX_CANDS = 6, MAX_OAI = 6;
     const candidatos = mapped
       .sort((a,b)=> (b.outcomes?.length||0) - (a.outcomes?.length||0))
       .slice(0, Math.min(MAX_CANDS, MAX_OAI));
+
+    let enviados_vip = 0, enviados_free = 0;
 
     for (const item of candidatos) {
       try {
@@ -762,15 +562,16 @@ exports.handler = async () => {
         oai_calls++;
         const r = await procesarCandidato(item);
         // si procesarCandidato llegó a hacer llamada con JSON válido, lo consideramos ok
-        if (r && r.ok) { enviados_vip++; oai_ok++; }
-        else { log('[outrights] descartado:', item.torneo, r?.reason || 'unknown'); }
-        await sleep(200);
+        if (r && r.ok != null) oai_ok++;
+
+        if (r && r.ok) enviados_vip++;
       } catch (e) {
-        warn('[outrights] error candidato:', item.torneo, e?.message || e);
+        warn('[loop] candidato error:', e?.message || e);
       }
+      await sleep(400);
     }
 
-    // Si no enviamos VIP y está permitido, mandamos FREE informativo del torneo top con breve análisis
+    // Si no hubo VIPs, enviar FREE informativo con el top candidato
     if (enviados_vip === 0 && ENABLE_OUTRIGHTS_INFO === 'true' && TELEGRAM_CHANNEL_ID) {
       const top = candidatos[0];
       if (top) {
@@ -778,7 +579,7 @@ exports.handler = async () => {
         const info = mensajeFreeInformativo({
           torneo: top.torneo,
           fechaInicioISO,
-          analisis: 'Sin valor claro en cuotas actuales. Vigilamos line movement y noticias (lesiones, sorteos) para optimizar entrada.'
+          analisis: 'Sin valor claro en cuotas actuales. Vigila movement y noticias (lesiones, sorteos) para optimizar entrada.'
         });
         const okFree = await enviarTelegram(info, 'free');
         if (okFree) enviados_free++;
@@ -787,13 +588,18 @@ exports.handler = async () => {
 
     await endRun(run_id, {
       status: 'ok',
-      summary: { candidatos: candidatos_len, enviados_vip, enviados_free },
+      summary: {
+        run_ms: Date.now() - t0,
+        candidatos: candidatos.length,
+        enviados_vip,
+        enviados_free
+      },
       oai_calls, oai_ok
     });
 
     return json(200, {
       ok: true,
-      candidatos: candidatos_len,
+      candidatos: candidatos.length,
       enviados_vip,
       enviados_free
     });
