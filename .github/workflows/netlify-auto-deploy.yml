@@ -1,4 +1,4 @@
-name: Netlify Auto Deploy (con chequeo de sintaxis)
+name: Check Syntax
 
 on:
   push:
