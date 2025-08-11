@@ -40,7 +40,7 @@ function badge(status = 'ok') {
     status === 'ok'   ? '#16a34a' :
     status === 'warn' ? '#f59e0b' :
                         '#dc2626';
-  return <span style="padding:2px 8px;border-radius:999px;background:${c};color:#fff;font-weight:600">${status}</span>;
+  return `<span style="padding:2px 8px;border-radius:999px;background:${c};color:#fff;font-weight:600">${status}</span>`;
 }
 
 function pad2(n) { return String(n).padStart(2, '0'); }
