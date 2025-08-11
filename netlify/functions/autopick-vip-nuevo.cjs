@@ -55,6 +55,53 @@ function assertEnv() {
 
 // =============== CLIENTES ===============
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// === Diagnóstico: helpers mínimos (in-file) ===
+async function upsertDiagnosticoEstado(status, details) {
+  try {
+    const payload = {
+      fn_name: 'autopick-vip-nuevo',
+      status,
+      details: details || null,
+      updated_at: new Date().toISOString()
+    };
+    const { error } = await supabase
+      .from('diagnostico_estado')
+      .upsert(payload, { onConflict: 'fn_name' });
+    if (error) console.warn('[DIAG] upsertDiagnosticoEstado:', error.message);
+    // === Diagnóstico: success path ===
+    try {
+      await upsertDiagnosticoEstado('ok', JSON.stringify({ resumen }));
+      await registrarEjecucion({
+        started_at: new Date(started).toISOString(),
+        ended_at: new Date().toISOString(),
+        duration_ms: Date.now() - started,
+        ok: true,
+        oai_calls: resumen?.oai_calls || 0,
+        detalles: resumen
+      });
+    } catch(_) {}
+
+  } catch (e) {
+    console.warn('[DIAG] upsertDiagnosticoEstado(ex):', e?.message || e);
+  }
+}
+
+async function registrarEjecucion(data) {
+  try {
+    const row = Object.assign({
+      function_name: 'autopick-vip-nuevo',
+      created_at: new Date().toISOString()
+    }, data);
+    const { error } = await supabase
+      .from('diagnostico_ejecuciones')
+      .insert([row]);
+    if (error) console.warn('[DIAG] registrarEjecucion:', error.message);
+  } catch (e) {
+    console.warn('[DIAG] registrarEjecucion(ex):', e?.message || e);
+  }
+}
+// === Fin helpers diagnóstico ===
 const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
 const openai = new OpenAIApi(configuration);
 const MODEL = (process.env.OPENAI_MODEL || OPENAI_MODEL || 'gpt-5-mini');
@@ -119,7 +166,9 @@ exports.handler = async (event, context) => {
   assertEnv();
 
   const started = Date.now();
-  console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
+  
+    try { await upsertDiagnosticoEstado('running', null); } catch(_) {} // diag
+console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
 
   // Lock simple en memoria por invocación isolada (Netlify)
   if (global.__punterx_lock) {
@@ -253,7 +302,17 @@ exports.handler = async (event, context) => {
 
   } catch (e) {
     console.error('Error ciclo principal:', e?.message || e);
-    return { statusCode: 200, body: JSON.stringify({ ok:false, error: e?.message || String(e) }) };
+        try {
+      await upsertDiagnosticoEstado('error', e?.message || String(e));
+      await registrarEjecucion({
+        started_at: new Date(started).toISOString(),
+        ended_at: new Date().toISOString(),
+        duration_ms: Date.now() - started,
+        ok: false,
+        error_message: e?.message || String(e)
+      });
+    } catch(_) {}
+return { statusCode: 200, body: JSON.stringify({ ok:false, error: e?.message || String(e) }) };
   } finally {
     global.__punterx_lock = false;
     console.log('Resumen ciclo:', JSON.stringify(resumen));
@@ -421,65 +480,19 @@ async function obtenerMemoriaSimilar(partido) {
 }
 
 // =============== OPENAI ===============
-// === Helper: extraer contenido de forma robusta (SDK v3 y respuestas raras) ===
-function extractChoiceContentFromCompletion(completion) {
-  try {
-    const choice = completion?.data?.choices?.[0] || null;
-    if (!choice) return '';
-    // ChatCompletion “normal”
-    if (choice.message && typeof choice.message.content === 'string') {
-      return choice.message.content;
-    }
-    // Algunas pasarelas/SDK viejos devuelven “text” (estilo Completion)
-    if (typeof choice.text === 'string') {
-      return choice.text;
-    }
-    // A veces hay function/tool_calls y NO hay content → tratar como vacío
-    return '';
-  } catch {
-    return '';
-  }
-}
-
-// === Helper: stringify seguro para logs (recorta objetos grandes) ===
-function safePreview(obj, max = 1200) {
-  try {
-    const s = JSON.stringify(obj);
-    return s.length > max ? (s.slice(0, max) + '…(trunc)') : s;
-  } catch {
-    return '[unserializable]';
-  }
-}
 
 // === Helper: payload OpenAI compatible (gpt-5 / 4o / 4.1 / o3 vs legacy) ===
-function buildOpenAIPayload(model, prompt, maxOut = 450, opts = {}) {
+function buildOpenAIPayload(model, prompt, maxOut = 450) {
   const m = String(model || '').toLowerCase();
   const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
-
   const base = {
     model,
+    response_format: { type: 'json_object' },
     messages: [{ role: 'user', content: prompt }],
-    // n:1 explícito para evitar respuestas raras en algunos gateways
-    n: 1
   };
-
-  // jsonMode ON por defecto, pero se puede forzar off en reintentos
-  const useJsonMode = opts.jsonMode !== false;
-  if (useJsonMode) {
-    base.response_format = { type: 'json_object' };
-  }
-
-  if (modern) {
-    base.max_completion_tokens = maxOut;
-  } else {
-    base.max_tokens = maxOut;
-  }
-
-  // gpt-5 / 4o / o3: deja temperature por default; en legacy, bajamos ruido
-  if (!/gpt-5|4o|o3/.test(m)) {
-    base.temperature = 0.2;
-  }
-
+  if (modern) base.max_completion_tokens = maxOut; else base.max_tokens = maxOut;
+  // gpt-5 / 4o / o3: no tocar temperature (usa default=1)
+  if (!/gpt-5|4o|o3/.test(m)) { base.temperature = 0.2; }
   return base;
 }
 
@@ -540,161 +553,69 @@ function pickCompleto(p) {
 }
 
 async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
-  const bumpIntento = () => {
-    if (!resumenRef) return;
-    resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;
-    resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1;
-  };
+  // 1) Contar intento de llamada a OAI
+  if (resumenRef) {
+    resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;              // ya la tienes
+    resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1; // NUEVA
+  }
 
-  let raw = '';
-  let completion;
+  console.log('[OAI] modelo=', modelo);
+  console.log('[OAI] prompt.len=', (prompt || '').length);
 
-  // ========== Intento 1 ==========
-console.log('[OAI] modelo=', modelo, '| intento= 1 / 2');
-console.log('[OAI] prompt.len=', (prompt || '').length);
-bumpIntento();
-
-try {
-  completion = await openai.createChatCompletion(
+  // 2) Hacer la llamada a OpenAI
+  const completion = await openai.createChatCompletion(
     buildOpenAIPayload(modelo, prompt, 450)
   );
-  if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
-  // después del intento 1:
-  raw = extractChoiceContentFromCompletion(completion) || '';
-} catch (e) {
-  console.warn('[OAI] error en intento 1/2:', e?.response?.status, e?.message);
-}
 
-// ========== Intento 2 si vacío ==========
-if (!raw?.trim()) {
-  console.warn('[OAI] respuesta vacía en intento 1 → reintentando con refuerzo JSON');
-
-  const promptSoloJson = `${prompt}
-
-IMPORTANTE: Responde SOLO con un JSON válido, sin texto extra, sin comentarios, sin markdown, sin \`\`\`.`;
-
-  console.log('[OAI] modelo=', modelo, '| intento= 2 / 2');
-  console.log('[OAI] prompt.len=', (promptSoloJson || '').length);
-  bumpIntento();
-
-  try {
-    completion = await openai.createChatCompletion(
-      buildOpenAIPayload(modelo, promptSoloJson, 450)
-    );
-    if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
-    // …y después del intento 2:
-    raw = extractChoiceContentFromCompletion(completion) || '';
-  } catch (e2) {
-    console.warn('[OAI] error en intento 2/2:', e2?.response?.status, e2?.message);
+  // 3) Contar éxito si la llamada no lanzó error
+  if (resumenRef) {
+    resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1; // NUEVA
   }
-}
 
-// ========== Si sigue vacío tras 2 intentos → 3er intento con modelo alterno no-razonador ==========
-if (!raw || !raw.trim()) {
-  console.warn('[OAI][DEBUG] completion.data preview =', safePreview(completion?.data));
-  console.warn('[OAI] contenido vacío tras 2 intentos (posible razonamiento oculto + finish_reason=length). Probando modelo alterno no-razonador…');
+  const raw = completion?.data?.choices?.[0]?.message?.content || '';
+  console.log('[OAI] raw.len=', raw.length);
 
-  const ALT_MODEL = process.env.ALT_MODEL_JSON || 'gpt-4o-mini'; // puedes ajustar por env
-  const promptUltraCorto = `${prompt}
+  // 1) parse directo
+  let obj = extractFirstJsonBlock(raw);
 
-RESPONDE ESTRICTAMENTE con un JSON válido y mínimo (máximo 1200 caracteres). Sin texto adicional, sin comentarios, sin markdown, sin \`\`\`.`;
-
-  // helper local para forzar max_tokens y temperatura baja
-  const buildTinyJSONPayload = (model, p, maxOut = 200) => {
-    const base = buildOpenAIPayload(model, p, maxOut);
-    // Forzamos los campos típicos del endpoint v3 para minimizar sorpresas:
-    base.max_tokens = maxOut;
-    base.temperature = 0;
-    // Quitamos response_format si tu helper lo pone y el modelo no lo necesita:
-    if (base.response_format && base.response_format.type === 'json_object') {
-      // mantenerlo si te funciona; si no, comenta la línea siguiente:
-      // delete base.response_format;
+  // 2) reparación JSON si falla
+  if (!obj) {
+    try {
+      obj = await repairPickJSON(modelo, raw);
+      if (obj) obj._repaired = true;
+      if (obj?._repaired) console.log('[OAI] JSON reparado');
+    } catch (e) {
+      console.warn('[REPAIR] fallo reformateo:', e?.message || e);
     }
-    return base;
-  };
-
-  try {
-    bumpIntento();
-    console.log('[OAI] ALT modelo=', ALT_MODEL, '| intento= 3 / 3 (no-razonador, JSON corto)');
-    console.log('[OAI] prompt.len=', (promptUltraCorto || '').length);
-
-    const completionAlt = await openai.createChatCompletion(
-      buildTinyJSONPayload(ALT_MODEL, promptUltraCorto, 200)
-    );
-    if (resumenRef) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
-
-    raw = extractChoiceContentFromCompletion(completionAlt) || '';
-
-    if (!raw.trim()) {
-      console.warn('[OAI][ALT][DEBUG] completionAlt.data preview =', safePreview(completionAlt?.data));
-    }
-  } catch (e3) {
-    console.warn('[OAI] error en intento ALT (3/3):', e3?.response?.status, e3?.message);
   }
 
-  // Si aun así no hay nada → devolvemos no_pick explícito
-  if (!raw || !raw.trim()) {
-    console.warn('[OAI] respuesta vacía tras 3 intentos → devolviendo no_pick');
-    const pickNoData = ensurePickShape({
-      no_pick: true,
-      motivo_no_pick: 'OpenAI devolvió respuesta vacía (3 intentos)'
-    });
-    pickNoData._transport_error = true;
-    return pickNoData;
+  if (!obj) {
+    console.warn('[OAI] sin JSON parseable');
+    return null;
   }
-}
 
-// ========== Parseo JSON ==========
-let obj = extractFirstJsonBlock(raw);
+  const pick = ensurePickShape(obj);
 
-if (!obj) {
-  try {
-    obj = await repairPickJSON(modelo, raw);
-    if (obj) obj._repaired = true;
-    if (obj?._repaired) console.log('[OAI] JSON reparado');
-  } catch (e) {
-    console.warn('[REPAIR] fallo reformateo:', e?.message || e);
-  }
-}
-
-if (!obj) {
-  console.warn('[OAI] sin JSON parseable → devolviendo no_pick');
-  return ensurePickShape({
-    no_pick: true,
-    motivo_no_pick: 'Respuesta no parseable como JSON'
-  });
-}
-
-const pick = ensurePickShape(obj);
-
-// Logs de control
-if (esNoPick(pick)) {
-  console.log('[IA] NO PICK:', pick?.motivo_no_pick || 's/d');
-} else {
-  if (!pick.apuesta) console.warn('[IA] falta "apuesta" (sin no_pick)');
-  if (typeof pick.probabilidad !== 'number') console.warn('[IA] falta "probabilidad" (sin no_pick)');
-}
-
-return pick;
-}
-
-// === Fallback entre modelos ===
-async function obtenerPickConFallback(prompt, resumenRef = null) {
-  let pick = await pedirPickConModelo(MODEL, prompt, resumenRef);
-
-  // Si el modelo principal devolvió un no_pick, respetamos y no seguimos
   if (esNoPick(pick)) {
-    return { pick, modeloUsado: MODEL };
+    console.log('[IA] NO PICK:', pick?.motivo_no_pick || 's/d');
+  } else {
+    if (!pick.apuesta) console.warn('[IA] falta "apuesta" (sin no_pick)');
+    if (typeof pick.probabilidad !== 'number') console.warn('[IA] falta "probabilidad" (sin no_pick)');
   }
 
-  // Si el pick viene incompleto o inválido, probamos con el fallback
+  return pick;
+}
+
+async function obtenerPickConFallback(prompt, resumenRef = null) {
+  // intento principal
+  let pick = await pedirPickConModelo(MODEL, prompt, resumenRef);
+  if (esNoPick(pick)) return { pick, modeloUsado: MODEL };
+  // fallback
   if (!pickCompleto(pick)) {
     console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
-    const pick2 = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
-    return { pick: pick2, modeloUsado: MODEL_FALLBACK };
+    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
+    return { pick, modeloUsado: MODEL_FALLBACK };
   }
-
-  // Pick válido con el modelo principal
   return { pick, modeloUsado: MODEL };
 }
 
