@@ -1,33 +1,14 @@
 // FILE: netlify/functions/autopick-vip-nuevo.cjs
-// SHA256: 6f79835ae23d297d3aa05e444cd910bb79aa29273d86bedc1b47ab4068572660 (base original)
-// ===== PunterX · Autopick v4 (actualizado a GPT-5 + Structured Outputs) =====
+// PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–60 (fallback 35–70), backpressure,
+// modelo OpenAI 5 con fallback y reintento, guardrails anti-inconsistencias, prefiltro que prioriza sin descartar,
+// Telegram con rate-limit handling, Supabase idempotente.
 
 console.log("[TEST][AUTODEPLOY] " + new Date().toISOString());
 
 // =============== IMPORTS ===============
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
-
-// === OpenAI: compat v4 (preferido) / v3 (fallback) ===
-let _oaiClient = null;
-let _OAI_IS_V4 = false;
-try {
-  const OpenAI = require('openai'); // v4 exporta clase Client
-  // si es v4, instanciamos así:
-  _oaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  _OAI_IS_V4 = !!(_oaiClient && typeof _oaiClient.chat?.completions?.create === 'function');
-} catch (_) { /* seguimos intentando v3 más abajo */ }
-if (!_oaiClient || !_OAI_IS_V4) {
-  // fallback a v3 (Configuration/OpenAIApi)
-  try {
-    const { Configuration, OpenAIApi } = require('openai');
-    const configuration = new Configuration({ apiKey: process.env.OPENAI_API_KEY });
-    _oaiClient = new OpenAIApi(configuration);
-    _OAI_IS_V4 = false;
-  } catch (e) {
-    console.error('❌ No se pudo inicializar OpenAI (ni v4 ni v3):', e?.message || e);
-  }
-}
+const OpenAI = require('openai'); // ✅ OpenAI v4 (CommonJS)
 
 // =============== ENV & ASSERT ===============
 const {
@@ -43,21 +24,18 @@ const {
   AUTH_CODE
 } = process.env;
 
-// ⚠️ Modelo primario: GPT-5; fallback: GPT-5-mini
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5';
-const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5-mini';
-
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
+const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5';
 const WINDOW_MAIN_MIN = Number(process.env.WINDOW_MAIN_MIN || 40);
 const WINDOW_MAIN_MAX = Number(process.env.WINDOW_MAIN_MAX || 55);
-const WINDOW_FB_MIN   = Number(process.env.WINDOW_FB_MIN   || 35);
-const WINDOW_FB_MAX   = Number(process.env.WINDOW_FB_MAX   || 70);
-
+const WINDOW_FB_MIN = Number(process.env.WINDOW_FB_MIN || 35);
+const WINDOW_FB_MAX = Number(process.env.WINDOW_FB_MAX || 70);
 const PREFILTER_MIN_BOOKIES = Number(process.env.PREFILTER_MIN_BOOKIES || 2);
-const MAX_CONCURRENCY       = Number(process.env.MAX_CONCURRENCY || 6);
-const MAX_PER_CYCLE         = Number(process.env.MAX_PER_CYCLE || 50);
-const SOFT_BUDGET_MS        = Number(process.env.SOFT_BUDGET_MS || 70000);
+const MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY || 6);
+const MAX_PER_CYCLE = Number(process.env.MAX_PER_CYCLE || 50);
+const SOFT_BUDGET_MS = Number(process.env.SOFT_BUDGET_MS || 70000);
 const MAX_OAI_CALLS_PER_CYCLE = Number(process.env.MAX_OAI_CALLS_PER_CYCLE || 40);
-const COUNTRY_FLAG          = process.env.COUNTRY_FLAG || '🌍';
+const COUNTRY_FLAG = process.env.COUNTRY_FLAG || '🌍';
 
 function assertEnv() {
   const required = [
@@ -73,6 +51,7 @@ function assertEnv() {
 
 // =============== CLIENTES ===============
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY }); // ✅ v4
 
 // === Diagnóstico: helpers mínimos (in-file) ===
 async function upsertDiagnosticoEstado(status, details) {
@@ -87,19 +66,6 @@ async function upsertDiagnosticoEstado(status, details) {
       .from('diagnostico_estado')
       .upsert(payload, { onConflict: 'fn_name' });
     if (error) console.warn('[DIAG] upsertDiagnosticoEstado:', error.message);
-
-    // === OJO: Dejo tu bloque original tal cual para no alterar tu telemetría ===
-    try {
-      await upsertDiagnosticoEstado('ok', JSON.stringify({ resumen }));
-      await registrarEjecucion({
-        started_at: new Date(started).toISOString(),
-        ended_at: new Date().toISOString(),
-        duration_ms: Date.now() - started,
-        ok: true,
-        oai_calls: resumen?.oai_calls || 0,
-        detalles: resumen
-      });
-    } catch(_) {}
   } catch (e) {
     console.warn('[DIAG] upsertDiagnosticoEstado(ex):', e?.message || e);
   }
@@ -119,6 +85,10 @@ async function registrarEjecucion(data) {
     console.warn('[DIAG] registrarEjecucion(ex):', e?.message || e);
   }
 }
+// === Fin helpers diagnóstico ===
+
+const MODEL = (process.env.OPENAI_MODEL || OPENAI_MODEL || 'gpt-5-mini');
+const MODEL_FALLBACK = (process.env.OPENAI_MODEL_FALLBACK || 'gpt-5');
 
 // =============== CONFIG (ENV-overridable) ===============
 const lockKey = 'punterx_lock';
@@ -179,7 +149,6 @@ exports.handler = async (event, context) => {
   assertEnv();
 
   const started = Date.now();
-
   try { await upsertDiagnosticoEstado('running', null); } catch(_) {} // diag
   console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
 
@@ -189,11 +158,10 @@ exports.handler = async (event, context) => {
     return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true }) };
   }
   global.__punterx_lock = true;
-
   const resumen = {
     recibidos: 0, enVentana: 0, candidatos: 0, procesados: 0, descartados_ev: 0,
     enviados_vip: 0, enviados_free: 0, intentos_vip: 0, intentos_free: 0,
-    guardados_ok: 0, guardados_fail: 0, oai_calls: 0
+    guardados_ok: 0, guardados_fail: 0, oai_calls: 0, oai_calls_intento: 0, oai_calls_ok: 0
   };
 
   try {
@@ -203,6 +171,15 @@ exports.handler = async (event, context) => {
     const res = await fetchWithRetry(url, { method:'GET' }, { retries: 1, base: 400 });
     if (!res || !res.ok) {
       console.error('OddsAPI error:', res?.status, await safeText(res));
+      // marcar error de proveedor pero finalizar ciclo limpio
+      await upsertDiagnosticoEstado('error', `OddsAPI ${res?.status || 'net'}`);
+      await registrarEjecucion({
+        started_at: new Date(started).toISOString(),
+        ended_at: new Date().toISOString(),
+        duration_ms: Date.now() - started,
+        ok: false,
+        error_message: `OddsAPI ${res?.status || 'net'}`
+      });
       return { statusCode: 200, body: JSON.stringify({ ok: false, reason:'oddsapi' }) };
     }
     const eventos = await safeJson(res) || [];
@@ -224,6 +201,15 @@ exports.handler = async (event, context) => {
       const m = Math.round(p.minutosFaltantes); return !(m>=WINDOW_MAIN_MIN && m<=WINDOW_MAIN_MAX) && m>=WINDOW_FB_MIN && m<=WINDOW_FB_MAX;}).length} | Total recibidos=${inWindow.length}`);
     if (!inWindow.length) {
       console.log('OddsAPI: sin partidos en ventana');
+      await upsertDiagnosticoEstado('ok', JSON.stringify({ resumen }));
+      await registrarEjecucion({
+        started_at: new Date(started).toISOString(),
+        ended_at: new Date().toISOString(),
+        duration_ms: Date.now() - started,
+        ok: true,
+        oai_calls: resumen.oai_calls || 0,
+        detalles: resumen
+      });
       return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
     }
 
@@ -242,52 +228,52 @@ exports.handler = async (event, context) => {
       try {
         abortIfOverBudget();
 
-        // A) Enriquecimiento API-FOOTBALL (con backoff mínimo)
+        // A) Enriquecimiento API-FOOTBALL
         const info = await enriquecerPartidoConAPIFootball(P) || {};
 
-        // B) Memoria relevante (máx 5 en client-side)
+        // B) Memoria relevante (máx 5)
         const memoria = await obtenerMemoriaSimilar(P);
 
-        // C) Construir prompt maestro con opciones_apostables reales
+        // C) Prompt maestro con opciones_apostables reales
         const prompt = construirPrompt(P, info, memoria);
 
-        // D) OpenAI (fallback + reintento en cada modelo)
-        let pick, modeloUsado = OPENAI_MODEL;
+        // D) OpenAI (fallback)
+        let pick, modeloUsado = MODEL;
         try {
           const r = await obtenerPickConFallback(prompt, resumen);
           pick = r.pick; modeloUsado = r.modeloUsado;
           console.log(traceId, '🔎 Modelo usado:', modeloUsado);
-          if (esNoPick(pick)) { console.log(traceId, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d'); return; }
-          if (!pickCompleto(pick)) { console.warn(traceId, 'Pick incompleto tras fallback'); return; }
+          if (esNoPick(pick)) { console.log(traceId, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d'); continue; }
+          if (!pickCompleto(pick)) { console.warn(traceId, 'Pick incompleto tras fallback'); continue; }
         } catch (e) {
-          console.error(traceId, 'Error GPT:', e?.message || e); return;
+          console.error(traceId, 'Error GPT:', e?.message || e); continue;
         }
 
         // Selección de cuota EXACTA del mercado pedido
         const cuotaSel = seleccionarCuotaSegunApuesta(P, pick.apuesta);
-        if (!cuotaSel || !cuotaSel.valor) { console.warn(traceId, '❌ No se encontró cuota del mercado solicitado → descartando'); return; }
+        if (!cuotaSel || !cuotaSel.valor) { console.warn(traceId, '❌ No se encontró cuota del mercado solicitado → descartando'); continue; }
         const cuota = Number(cuotaSel.valor);
 
         // Coherencia apuesta/outcome
         const outcomeTxt = String(cuotaSel.label || P?.marketsBest?.h2h?.label || '');
         if (!apuestaCoincideConOutcome(pick.apuesta, outcomeTxt, P.home, P.away)) {
-          console.warn(traceId, '❌ Inconsistencia apuesta/outcome → descartando'); return;
+          console.warn(traceId, '❌ Inconsistencia apuesta/outcome → descartando'); continue;
         }
 
         // Probabilidad (no inventar) + coherencia con implícita
         const probPct = estimarlaProbabilidadPct(pick);
-        if (probPct == null) { console.warn(traceId, '❌ Probabilidad ausente → descartando pick'); return; }
+        if (probPct == null) { console.warn(traceId, '❌ Probabilidad ausente → descartando pick'); continue; }
         const imp = impliedProbPct(cuota);
         if (imp != null && Math.abs(probPct - imp) > 15) {
           console.warn(traceId, `❌ Probabilidad inconsistente (model=${probPct}%, implícita=${imp}%) → descartando`);
-          return;
+          continue;
         }
 
         const ev = calcularEV(probPct, cuota);
-        if (ev == null) { console.warn(traceId, 'EV nulo'); return; }
+        if (ev == null) { console.warn(traceId, 'EV nulo'); continue; }
         resumen.procesados++;
 
-        if (ev < 10) { resumen.descartados_ev++; console.log(traceId, `EV ${ev}% < 10% → descartado`); return; }
+        if (ev < 10) { resumen.descartados_ev++; console.log(traceId, `EV ${ev}% < 10% → descartado`); continue; }
 
         // Nivel y destino
         const nivel = clasificarPickPorEV(ev);
@@ -311,6 +297,17 @@ exports.handler = async (event, context) => {
         console.error('Procesamiento partido error:', e?.message || e);
       }
     }
+
+    // ✅ Telemetría OK al final del ciclo
+    await upsertDiagnosticoEstado('ok', JSON.stringify({ resumen }));
+    await registrarEjecucion({
+      started_at: new Date(started).toISOString(),
+      ended_at: new Date().toISOString(),
+      duration_ms: Date.now() - started,
+      ok: true,
+      oai_calls: resumen?.oai_calls || 0,
+      detalles: resumen
+    });
 
     return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
 
@@ -464,7 +461,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
 // =============== MEMORIA (Supabase) ===============
 async function obtenerMemoriaSimilar(partido) {
   try {
-    // Lectura acotada — optimizaría con filtros server-side si hay schema de liga/equipos
+    // Lectura acotada — optimizar con filtros server-side si hay schema de liga/equipos
     const { data, error } = await supabase
       .from(PICK_TABLE)
       .select('evento, analisis, apuesta, tipo_pick, liga, equipos, ev, probabilidad, nivel, timestamp')
@@ -495,54 +492,22 @@ async function obtenerMemoriaSimilar(partido) {
 
 // =============== OPENAI ===============
 
-// ---- JSON Schema (contrato PunterX) ----
-const PUNTERX_JSON_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    analisis_gratuito: { type: "string" },
-    analisis_vip:      { type: "string" },
-    apuesta:           { type: "string" },   // Debe coincidir EXACTO con opciones_apostables
-    apuestas_extra:    { type: "string" },
-    frase_motivacional:{ type: "string" },
-    probabilidad:      { type: "number", minimum: 0, maximum: 1 },
-    no_pick:           { type: "boolean" },
-    motivo_no_pick:    { type: "string" }
-  },
-  required: ["no_pick","probabilidad","apuesta","analisis_gratuito","analisis_vip","frase_motivacional","motivo_no_pick"]
-};
-
-// ---- Payload builder (unificado para v4/v3) ----
-function buildOpenAIPayload(model, prompt, maxTokens = 360) {
-  const payload = {
+// === Helper: payload OpenAI compatible (gpt-5 / 4o / 4.1 / o3 vs legacy) ===
+function buildOpenAIPayload(model, prompt, maxOut = 450) {
+  const m = String(model || '').toLowerCase();
+  const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
+  const base = {
     model,
-    messages: [{ role: 'system', content: 'Responde SOLO con un JSON válido que cumpla el schema. Nada más.' },
-               { role: 'user', content: prompt }],
-    temperature: 0.2,
-    max_tokens: maxTokens
+    response_format: { type: 'json_object' },
+    messages: [{ role: 'user', content: prompt }],
   };
-
-  // Structured Outputs (si el modelo/SDK lo soporta)
-  payload.response_format = {
-    type: 'json_schema',
-    json_schema: { name: 'PunterXPick', schema: PUNTERX_JSON_SCHEMA, strict: true }
-  };
-
-  return payload;
+  if (modern) base.max_completion_tokens = maxOut; else base.max_tokens = maxOut;
+  // gpt-5 / 4o / o3: no tocar temperature (default)
+  if (!/gpt-5|4o|o3/.test(m)) { base.temperature = 0.2; }
+  return base;
 }
 
-// ---- Llamada unificada (v4/v3) ----
-async function chatCreate(payload) {
-  if (_OAI_IS_V4) {
-    // v4
-    return await _oaiClient.chat.completions.create(payload);
-  } else {
-    // v3
-    return await _oaiClient.createChatCompletion(payload);
-  }
-}
-
-// ---- Extraer/Reparar JSON ----
+// === Helpers: extraer y reparar JSON del modelo ===
 function extractFirstJsonBlock(text) {
   if (!text) return null;
   const t = String(text).replace(/```json|```/gi, '').trim();
@@ -583,18 +548,22 @@ Si algún dato no aparece, coloca "s/d" y para "probabilidad" usa 0.0. Responde 
 Contenido:
 ${rawText || ''}`;
 
-  const completion = await chatCreate(buildOpenAIPayload(modelo, prompt, 220));
-  const content = (completion?.choices?.[0]?.message?.content) || (completion?.data?.choices?.[0]?.message?.content) || '';
+  const completion = await openai.chat.completions.create( // ✅ v4
+    buildOpenAIPayload(modelo, prompt, 250)
+  );
+  const content = completion?.choices?.[0]?.message?.content || '';
   return extractFirstJsonBlock(content);
 }
 
 // Valida si el pick está completo para VIP (y también sirve para decidir fallback)
 function esNoPick(p) { return !!p && p.no_pick === true; }
+
 function pickCompleto(p) {
   return !!(p && p.analisis_vip && p.analisis_gratuito && p.apuesta && typeof p.probabilidad === 'number');
 }
 
 async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
+  // 1) Contar intento de llamada a OAI
   if (resumenRef) {
     resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;
     resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1;
@@ -603,17 +572,23 @@ async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
   console.log('[OAI] modelo=', modelo);
   console.log('[OAI] prompt.len=', (prompt || '').length);
 
-  const completion = await chatCreate(buildOpenAIPayload(modelo, prompt, 360));
+  // 2) Llamada a OpenAI v4
+  const completion = await openai.chat.completions.create( // ✅ v4
+    buildOpenAIPayload(modelo, prompt, 450)
+  );
 
+  // 3) Contar éxito si no lanzó error
   if (resumenRef) {
-    const ok = !!completion;
-    if (ok) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
+    resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
   }
 
-  const raw = (completion?.choices?.[0]?.message?.content) || (completion?.data?.choices?.[0]?.message?.content) || '';
+  const raw = completion?.choices?.[0]?.message?.content || '';
   console.log('[OAI] raw.len=', raw.length);
 
+  // 1) parse directo
   let obj = extractFirstJsonBlock(raw);
+
+  // 2) reparación JSON si falla
   if (!obj) {
     try {
       obj = await repairPickJSON(modelo, raw);
@@ -643,16 +618,17 @@ async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
 
 async function obtenerPickConFallback(prompt, resumenRef = null) {
   // intento principal
-  let pick = await pedirPickConModelo(OPENAI_MODEL, prompt, resumenRef);
-  if (esNoPick(pick)) return { pick, modeloUsado: OPENAI_MODEL };
+  let pick = await pedirPickConModelo(MODEL, prompt, resumenRef);
+  if (esNoPick(pick)) return { pick, modeloUsado: MODEL };
   // fallback
   if (!pickCompleto(pick)) {
-    console.log('♻️ Fallback de modelo →', OPENAI_MODEL_FALLBACK);
-    pick = await pedirPickConModelo(OPENAI_MODEL_FALLBACK, prompt, resumenRef);
-    return { pick, modeloUsado: OPENAI_MODEL_FALLBACK };
+    console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
+    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
+    return { pick, modeloUsado: MODEL_FALLBACK };
   }
-  return { pick, modeloUsado: OPENAI_MODEL };
+  return { pick, modeloUsado: MODEL };
 }
+
 
 // =============== PROMPT ===============
 function construirOpcionesApostables(mejoresMercados) {
