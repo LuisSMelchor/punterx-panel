@@ -14,7 +14,6 @@ exports.handler = async (event, context) => {
 
   try {
     // Reutilizamos la misma función principal.
-    // Ignoramos el body resultante porque en background se devuelve 202 de inmediato.
     await main.handler(event, context);
   } catch (e) {
     console.error('[BG] error:', e?.message || e);
