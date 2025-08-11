@@ -41,9 +41,9 @@ function badge(status) {
   return <span style="padding:2px 8px;border-radius:999px;background:${c};color:#fff;font-weight:600">${status}</span>;
 }
 
-function pad2(n) { return String(n).padStart(2,'0'); }
+function pad2(n) { return String(n).padStart(2, '0'); }
 function ymd(d = new Date()) {
-  return ${d.getUTCFullYear()}-${pad2(d.getUTCMonth()+1)}-${pad2(d.getUTCDate())};
+  return ${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())};
 }
 
 async function estadoSupabase() {
@@ -52,17 +52,20 @@ async function estadoSupabase() {
     return error ? 'DOWN' : 'UP';
   } catch { return 'DOWN'; }
 }
+
 async function estadoOpenAI({ deep } = {}) {
   if (!OPENAI_API_KEY) return 'DOWN';
   if (!deep) return 'UP';
   try {
-    // chequeo barato: hit a completions con max_tokens=1 y prompt trivial
     const t0 = Date.now();
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'authorization': Bearer ${OPENAI_API_KEY}, 'content-type': 'application/json' },
+      headers: {
+        'authorization': Bearer ${OPENAI_API_KEY},
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
-        model: 'gpt-4o-mini', // modelo barato y estable; ajusta si usas otros
+        model: 'gpt-4o-mini', // barato/estable; ajusta si usas otro
         messages: [{ role: 'user', content: 'pong' }],
         max_tokens: 1,
       }),
@@ -70,8 +73,11 @@ async function estadoOpenAI({ deep } = {}) {
     const ms = Date.now() - t0;
     if (!res.ok) return { status: 'DEGRADED', ms };
     return { status: 'UP', ms };
-  } catch { return { status: 'DEGRADED', ms: null }; }
+  } catch {
+    return { status: 'DEGRADED', ms: null };
+  }
 }
+
 async function estadoTelegram({ deep } = {}) {
   if (!TELEGRAM_BOT_TOKEN) return 'DOWN';
   if (!deep) return 'UP';
@@ -82,8 +88,11 @@ async function estadoTelegram({ deep } = {}) {
     if (!r.ok) return { status: 'DEGRADED', ms };
     const j = await r.json().catch(() => ({}));
     return (j && j.ok) ? { status: 'UP', ms } : { status: 'DEGRADED', ms };
-  } catch { return { status: 'DEGRADED', ms: null }; }
+  } catch {
+    return { status: 'DEGRADED', ms: null };
+  }
 }
+
 async function estadoOddsAPI() { return ODDS_API_KEY ? 'UP' : 'DOWN'; }
 async function estadoAPIFootball() { return API_FOOTBALL_KEY ? 'UP' : 'DOWN'; }
 
@@ -92,18 +101,19 @@ async function resumenHoy() {
     const today = ymd(new Date());
     const { data } = await supabase
       .from('picks_historicos')
-      .select('ev')
+      .select('ev, timestamp')
       .gte('timestamp', ${today}T00:00:00.000Z)
       .lte('timestamp', ${today}T23:59:59.999Z);
     const arr = data || [];
     const enviados = arr.length;
-    const ev_prom = enviados ? Math.round(arr.reduce((a,b)=>a+(b.ev||0),0)/enviados) : 0;
+    const ev_prom = enviados ? Math.round(arr.reduce((a, b) => a + (b.ev || 0), 0) / enviados) : 0;
     return { enviados, ev_prom };
   } catch { return { enviados: 0, ev_prom: 0 }; }
 }
+
 async function resumenWinRate(windowDias) {
   try {
-    const desdeISO = new Date(Date.now() - windowDias*86400000).toISOString();
+    const desdeISO = new Date(Date.now() - windowDias * 86400000).toISOString();
     // preferir memoria_resumen si existe
     const { data } = await supabase
       .from('memoria_resumen')
@@ -123,8 +133,8 @@ async function resumenWinRate(windowDias) {
     const arr = res || [];
     const tot = arr.length;
     const wins = arr.filter(x => x.resultado === 'win').length;
-    const hit = tot ? Math.round((wins*100)/tot) : 0;
-    const ev_prom = tot ? Math.round(arr.reduce((a,b)=>a+(b.ev||0),0)/tot) : 0;
+    const hit = tot ? Math.round((wins * 100) / tot) : 0;
+    const ev_prom = tot ? Math.round(arr.reduce((a, b) => a + (b.ev || 0), 0) / tot) : 0;
     return { hit, ev_prom, samples: tot };
   } catch {
     return { hit: 0, ev_prom: 0, samples: 0 };
@@ -133,7 +143,7 @@ async function resumenWinRate(windowDias) {
 
 // Heartbeats (última ejecución por función) – tabla opcional heartbeats:
 // columns: function_name(text), last_seen(timestamptz), ok(boolean)
-// Cada función debería upsert al empezar: ver snippet más abajo.
+// Cada función debería upsert al empezar.
 async function getHeartbeats() {
   try {
     const { data, error } = await supabase
@@ -141,7 +151,7 @@ async function getHeartbeats() {
       .select('function_name,last_seen,ok')
       .in('function_name', FUNCIONES);
     if (error) throw error;
-    const map = Object.fromEntries((data||[]).map(r => [r.function_name, r]));
+    const map = Object.fromEntries((data || []).map(r => [r.function_name, r]));
     return FUNCIONES.map(name => {
       const r = map[name];
       return {
@@ -159,16 +169,16 @@ async function getHeartbeats() {
 // Telemetría de costos opcional – tabla cost_telemetry(provider, usd, ts)
 async function getCosts(days = 30) {
   try {
-    const since = new Date(Date.now() - days*86400000).toISOString();
+    const since = new Date(Date.now() - days * 86400000).toISOString();
     const { data, error } = await supabase
       .from('cost_telemetry')
       .select('provider, usd, ts')
       .gte('ts', since);
     if (error) throw error;
-    const total = (data||[]).reduce((a,b)=>a+(Number(b.usd)||0), 0);
+    const total = (data || []).reduce((a, b) => a + (Number(b.usd) || 0), 0);
     const porProveedor = {};
-    (data||[]).forEach(r=>{
-      porProveedor[r.provider] = (porProveedor[r.provider]||0) + (Number(r.usd)||0);
+    (data || []).forEach(r => {
+      porProveedor[r.provider] = (porProveedor[r.provider] || 0) + (Number(r.usd) || 0);
     });
     return { total: Number(total.toFixed(4)), porProveedor };
   } catch {
@@ -200,7 +210,11 @@ function htmlPage(model) {
   const costBox = costs.total === null
     ? <p class="muted">Costos (últimos 30 días): N/A (sin tabla cost_telemetry)</p>
     : `<p>Costos 30d: <b>$${costs.total}</b></p>
-       <div class="muted">${Object.entries(costs.porProveedor).map(([k,v])=>${k}: $${v.toFixed(4)}).join(' · ')}</div>`;
+       <div class="muted">${
+         Object.entries(costs.porProveedor)
+           .map(([k, v]) => ${k}: $${v.toFixed(4)})
+           .join(' · ')
+       }</div>`;
 
   const deepNote = fast
     ? <div class="muted">Modo rápido (sin pings a proveedores). <a href="?deep=1">Cambiar a modo profundo</a></div>
@@ -235,10 +249,10 @@ function htmlPage(model) {
 
   <div class="row" style="margin-bottom:12px">
     <div class="kv">Supabase ${badge(states.supabase)}</div>
-    <div class="kv">OpenAI ${typeof states.openai==='string'?badge(states.openai):badge(states.openai.status)}</div>
+    <div class="kv">OpenAI ${typeof states.openai==='string' ? badge(states.openai) : badge(states.openai.status)}</div>
     <div class="kv">OddsAPI ${badge(states.odds)}</div>
     <div class="kv">API-Football ${badge(states.apifootball)}</div>
-    <div class="kv">Telegram ${typeof states.telegram==='string'?badge(states.telegram):badge(states.telegram.status)}</div>
+    <div class="kv">Telegram ${typeof states.telegram==='string' ? badge(states.telegram) : badge(states.telegram.status)}</div>
   </div>
 
   ${deepNote}
@@ -273,13 +287,14 @@ function htmlPage(model) {
     </div>
   </div>
 
-  <p class="muted" style="margin-top:16px">Actualizado: ${new Date(generatedAt).toLocaleString()} · <a href="?json=1${fast?'':'&deep=1'}">Ver JSON</a></p>
+  <p class="muted" style="margin-top:16px">Actualizado: ${new Date(generatedAt).toLocaleString()} · <a href="?json=1${fast ? '' : '&deep=1'}">Ver JSON</a></p>
 </body>
 </html>`;
 }
 
 exports.handler = async (evt) => {
-  const url = new URL(evt.rawUrl || http://x/?${evt.rawQuery || ''});
+  const rawUrl = evt?.rawUrl || http://x/?${evt?.rawQuery || ''};
+  const url = new URL(rawUrl);
   const deep = url.searchParams.get('deep') === '1';
   const asJson = url.searchParams.get('json') === '1';
 
@@ -326,6 +341,6 @@ exports.handler = async (evt) => {
   } catch (e) {
     const msg = e?.message || String(e);
     if (asJson) return respond(500, { error: msg }, true);
-    return respond(500, <pre style="color:#fca5a5">Error: ${msg}</pre>, false);
+    return respond(500, <!doctype html><pre style="color:#fca5a5">Error: ${msg}</pre>, false);
   }
 };
