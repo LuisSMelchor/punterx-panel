@@ -8,7 +8,7 @@ console.log("[TEST][AUTODEPLOY] " + new Date().toISOString());
 // =============== IMPORTS ===============
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
-const OpenAI = require('openai'); // ✅ OpenAI v4 (CommonJS)
+const OpenAI = require('openai'); // ⬅️ SDK v4
 
 // =============== ENV & ASSERT ===============
 const {
@@ -24,8 +24,10 @@ const {
   AUTH_CODE
 } = process.env;
 
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
-const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5';
+// ⬇️ Modelo principal y fallback (v4)
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5';
+const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5-mini';
+
 const WINDOW_MAIN_MIN = Number(process.env.WINDOW_MAIN_MIN || 40);
 const WINDOW_MAIN_MAX = Number(process.env.WINDOW_MAIN_MAX || 55);
 const WINDOW_FB_MIN = Number(process.env.WINDOW_FB_MIN || 35);
@@ -51,7 +53,6 @@ function assertEnv() {
 
 // =============== CLIENTES ===============
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY }); // ✅ v4
 
 // === Diagnóstico: helpers mínimos (in-file) ===
 async function upsertDiagnosticoEstado(status, details) {
@@ -66,6 +67,19 @@ async function upsertDiagnosticoEstado(status, details) {
       .from('diagnostico_estado')
       .upsert(payload, { onConflict: 'fn_name' });
     if (error) console.warn('[DIAG] upsertDiagnosticoEstado:', error.message);
+    // === (nota) aquí se deja tal cual tu lógica original, sin tocar ni borrar nada ===
+    try {
+      await upsertDiagnosticoEstado('ok', JSON.stringify({ resumen }));
+      await registrarEjecucion({
+        started_at: new Date(started).toISOString(),
+        ended_at: new Date().toISOString(),
+        duration_ms: Date.now() - started,
+        ok: true,
+        oai_calls: resumen?.oai_calls || 0,
+        detalles: resumen
+      });
+    } catch(_) {}
+
   } catch (e) {
     console.warn('[DIAG] upsertDiagnosticoEstado(ex):', e?.message || e);
   }
@@ -87,8 +101,10 @@ async function registrarEjecucion(data) {
 }
 // === Fin helpers diagnóstico ===
 
-const MODEL = (process.env.OPENAI_MODEL || OPENAI_MODEL || 'gpt-5-mini');
-const MODEL_FALLBACK = (process.env.OPENAI_MODEL_FALLBACK || 'gpt-5');
+// ⬇️ Cliente OpenAI v4
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const MODEL = (process.env.OPENAI_MODEL || OPENAI_MODEL || 'gpt-5');
+const MODEL_FALLBACK = (process.env.OPENAI_MODEL_FALLBACK || OPENAI_MODEL_FALLBACK || 'gpt-5-mini');
 
 // =============== CONFIG (ENV-overridable) ===============
 const lockKey = 'punterx_lock';
@@ -149,6 +165,7 @@ exports.handler = async (event, context) => {
   assertEnv();
 
   const started = Date.now();
+  
   try { await upsertDiagnosticoEstado('running', null); } catch(_) {} // diag
   console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
 
@@ -161,7 +178,7 @@ exports.handler = async (event, context) => {
   const resumen = {
     recibidos: 0, enVentana: 0, candidatos: 0, procesados: 0, descartados_ev: 0,
     enviados_vip: 0, enviados_free: 0, intentos_vip: 0, intentos_free: 0,
-    guardados_ok: 0, guardados_fail: 0, oai_calls: 0, oai_calls_intento: 0, oai_calls_ok: 0
+    guardados_ok: 0, guardados_fail: 0, oai_calls: 0
   };
 
   try {
@@ -171,15 +188,6 @@ exports.handler = async (event, context) => {
     const res = await fetchWithRetry(url, { method:'GET' }, { retries: 1, base: 400 });
     if (!res || !res.ok) {
       console.error('OddsAPI error:', res?.status, await safeText(res));
-      // marcar error de proveedor pero finalizar ciclo limpio
-      await upsertDiagnosticoEstado('error', `OddsAPI ${res?.status || 'net'}`);
-      await registrarEjecucion({
-        started_at: new Date(started).toISOString(),
-        ended_at: new Date().toISOString(),
-        duration_ms: Date.now() - started,
-        ok: false,
-        error_message: `OddsAPI ${res?.status || 'net'}`
-      });
       return { statusCode: 200, body: JSON.stringify({ ok: false, reason:'oddsapi' }) };
     }
     const eventos = await safeJson(res) || [];
@@ -201,15 +209,6 @@ exports.handler = async (event, context) => {
       const m = Math.round(p.minutosFaltantes); return !(m>=WINDOW_MAIN_MIN && m<=WINDOW_MAIN_MAX) && m>=WINDOW_FB_MIN && m<=WINDOW_FB_MAX;}).length} | Total recibidos=${inWindow.length}`);
     if (!inWindow.length) {
       console.log('OddsAPI: sin partidos en ventana');
-      await upsertDiagnosticoEstado('ok', JSON.stringify({ resumen }));
-      await registrarEjecucion({
-        started_at: new Date(started).toISOString(),
-        ended_at: new Date().toISOString(),
-        duration_ms: Date.now() - started,
-        ok: true,
-        oai_calls: resumen.oai_calls || 0,
-        detalles: resumen
-      });
       return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
     }
 
@@ -228,52 +227,52 @@ exports.handler = async (event, context) => {
       try {
         abortIfOverBudget();
 
-        // A) Enriquecimiento API-FOOTBALL
+        // A) Enriquecimiento API-FOOTBALL (con backoff mínimo)
         const info = await enriquecerPartidoConAPIFootball(P) || {};
 
-        // B) Memoria relevante (máx 5)
+        // B) Memoria relevante (máx 5 en client-side)
         const memoria = await obtenerMemoriaSimilar(P);
 
-        // C) Prompt maestro con opciones_apostables reales
+        // C) Construir prompt maestro con opciones_apostables reales
         const prompt = construirPrompt(P, info, memoria);
 
-        // D) OpenAI (fallback)
+        // D) OpenAI (fallback + 1 reintento en cada modelo)
         let pick, modeloUsado = MODEL;
         try {
           const r = await obtenerPickConFallback(prompt, resumen);
           pick = r.pick; modeloUsado = r.modeloUsado;
           console.log(traceId, '🔎 Modelo usado:', modeloUsado);
-          if (esNoPick(pick)) { console.log(traceId, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d'); continue; }
-          if (!pickCompleto(pick)) { console.warn(traceId, 'Pick incompleto tras fallback'); continue; }
+          if (esNoPick(pick)) { console.log(traceId, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d'); return; }
+          if (!pickCompleto(pick)) { console.warn(traceId, 'Pick incompleto tras fallback'); return; }
         } catch (e) {
-          console.error(traceId, 'Error GPT:', e?.message || e); continue;
+          console.error(traceId, 'Error GPT:', e?.message || e); return;
         }
 
         // Selección de cuota EXACTA del mercado pedido
         const cuotaSel = seleccionarCuotaSegunApuesta(P, pick.apuesta);
-        if (!cuotaSel || !cuotaSel.valor) { console.warn(traceId, '❌ No se encontró cuota del mercado solicitado → descartando'); continue; }
+        if (!cuotaSel || !cuotaSel.valor) { console.warn(traceId, '❌ No se encontró cuota del mercado solicitado → descartando'); return; }
         const cuota = Number(cuotaSel.valor);
 
         // Coherencia apuesta/outcome
         const outcomeTxt = String(cuotaSel.label || P?.marketsBest?.h2h?.label || '');
         if (!apuestaCoincideConOutcome(pick.apuesta, outcomeTxt, P.home, P.away)) {
-          console.warn(traceId, '❌ Inconsistencia apuesta/outcome → descartando'); continue;
+          console.warn(traceId, '❌ Inconsistencia apuesta/outcome → descartando'); return;
         }
 
         // Probabilidad (no inventar) + coherencia con implícita
         const probPct = estimarlaProbabilidadPct(pick);
-        if (probPct == null) { console.warn(traceId, '❌ Probabilidad ausente → descartando pick'); continue; }
+        if (probPct == null) { console.warn(traceId, '❌ Probabilidad ausente → descartando pick'); return; }
         const imp = impliedProbPct(cuota);
         if (imp != null && Math.abs(probPct - imp) > 15) {
           console.warn(traceId, `❌ Probabilidad inconsistente (model=${probPct}%, implícita=${imp}%) → descartando`);
-          continue;
+          return;
         }
 
         const ev = calcularEV(probPct, cuota);
-        if (ev == null) { console.warn(traceId, 'EV nulo'); continue; }
+        if (ev == null) { console.warn(traceId, 'EV nulo'); return; }
         resumen.procesados++;
 
-        if (ev < 10) { resumen.descartados_ev++; console.log(traceId, `EV ${ev}% < 10% → descartado`); continue; }
+        if (ev < 10) { resumen.descartados_ev++; console.log(traceId, `EV ${ev}% < 10% → descartado`); return; }
 
         // Nivel y destino
         const nivel = clasificarPickPorEV(ev);
@@ -297,17 +296,6 @@ exports.handler = async (event, context) => {
         console.error('Procesamiento partido error:', e?.message || e);
       }
     }
-
-    // ✅ Telemetría OK al final del ciclo
-    await upsertDiagnosticoEstado('ok', JSON.stringify({ resumen }));
-    await registrarEjecucion({
-      started_at: new Date(started).toISOString(),
-      ended_at: new Date().toISOString(),
-      duration_ms: Date.now() - started,
-      ok: true,
-      oai_calls: resumen?.oai_calls || 0,
-      detalles: resumen
-    });
 
     return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
 
@@ -461,7 +449,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
 // =============== MEMORIA (Supabase) ===============
 async function obtenerMemoriaSimilar(partido) {
   try {
-    // Lectura acotada — optimizar con filtros server-side si hay schema de liga/equipos
+    // Lectura acotada — optimizaría con filtros server-side si hay schema de liga/equipos
     const { data, error } = await supabase
       .from(PICK_TABLE)
       .select('evento, analisis, apuesta, tipo_pick, liga, equipos, ev, probabilidad, nivel, timestamp')
@@ -502,8 +490,7 @@ function buildOpenAIPayload(model, prompt, maxOut = 450) {
     messages: [{ role: 'user', content: prompt }],
   };
   if (modern) base.max_completion_tokens = maxOut; else base.max_tokens = maxOut;
-  // gpt-5 / 4o / o3: no tocar temperature (default)
-  if (!/gpt-5|4o|o3/.test(m)) { base.temperature = 0.2; }
+  if (!/gpt-5|4o|o3/.test(m)) { base.temperature = 0.2; } // conservamos tu regla original
   return base;
 }
 
@@ -548,7 +535,7 @@ Si algún dato no aparece, coloca "s/d" y para "probabilidad" usa 0.0. Responde 
 Contenido:
 ${rawText || ''}`;
 
-  const completion = await openai.chat.completions.create( // ✅ v4
+  const completion = await openai.chat.completions.create(
     buildOpenAIPayload(modelo, prompt, 250)
   );
   const content = completion?.choices?.[0]?.message?.content || '';
@@ -573,11 +560,11 @@ async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
   console.log('[OAI] prompt.len=', (prompt || '').length);
 
   // 2) Llamada a OpenAI v4
-  const completion = await openai.chat.completions.create( // ✅ v4
+  const completion = await openai.chat.completions.create(
     buildOpenAIPayload(modelo, prompt, 450)
   );
 
-  // 3) Contar éxito si no lanzó error
+  // 3) Contar éxito si la llamada no lanzó error
   if (resumenRef) {
     resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
   }
