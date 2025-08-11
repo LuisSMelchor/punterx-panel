@@ -14,7 +14,9 @@ const {
   API_FOOTBALL_KEY,
 } = process.env;
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// ⬇️ Inicialización segura de Supabase (no reventar si falta ENV)
+const HAS_SB = Boolean(SUPABASE_URL && SUPABASE_KEY);
+const supabase = HAS_SB ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
 const FUNCIONES = [
   // Añade aquí las funciones que quieras monitorear
@@ -50,56 +52,15 @@ function ymd(d = new Date()) {
 }
 
 async function estadoSupabase() {
+  if (!HAS_SB) return 'DOWN';
   try {
     const { error } = await supabase.from('picks_historicos').select('id').limit(1);
     return error ? 'DOWN' : 'UP';
   } catch { return 'DOWN'; }
 }
 
-async function estadoOpenAI({ deep } = {}) {
-  if (!OPENAI_API_KEY) return 'DOWN';
-  if (!deep) return 'UP';
-  try {
-    const t0 = Date.now();
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'authorization': `Bearer ${OPENAI_API_KEY}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini', // barato/estable; ajusta si usas otro
-        messages: [{ role: 'user', content: 'pong' }],
-        max_tokens: 1,
-      }),
-    });
-    const ms = Date.now() - t0;
-    if (!res.ok) return { status: 'DEGRADED', ms };
-    return { status: 'UP', ms };
-  } catch {
-    return { status: 'DEGRADED', ms: null };
-  }
-}
-
-async function estadoTelegram({ deep } = {}) {
-  if (!TELEGRAM_BOT_TOKEN) return 'DOWN';
-  if (!deep) return 'UP';
-  try {
-    const t0 = Date.now();
-    const r = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe`);
-    const ms = Date.now() - t0;
-    if (!r.ok) return { status: 'DEGRADED', ms };
-    const j = await r.json().catch(() => ({}));
-    return (j && j.ok) ? { status: 'UP', ms } : { status: 'DEGRADED', ms };
-  } catch {
-    return { status: 'DEGRADED', ms: null };
-  }
-}
-
-async function estadoOddsAPI() { return ODDS_API_KEY ? 'UP' : 'DOWN'; }
-async function estadoAPIFootball() { return API_FOOTBALL_KEY ? 'UP' : 'DOWN'; }
-
 async function resumenHoy() {
+  if (!HAS_SB) return { enviados: 0, ev_prom: 0 };
   try {
     const today = ymd(new Date());
     const { data } = await supabase
@@ -115,9 +76,9 @@ async function resumenHoy() {
 }
 
 async function resumenWinRate(windowDias) {
+  if (!HAS_SB) return { hit: 0, ev_prom: 0, samples: 0 };
   try {
     const desdeISO = new Date(Date.now() - windowDias * 86400000).toISOString();
-    // preferir memoria_resumen si existe
     const { data } = await supabase
       .from('memoria_resumen')
       .select('hit_rate, ev_prom, samples')
@@ -128,7 +89,6 @@ async function resumenWinRate(windowDias) {
       const r = data[0];
       return { hit: r.hit_rate || 0, ev_prom: r.ev_prom || 0, samples: r.samples || 0 };
     }
-    // fallback: contar en resultados_partidos
     const { data: res } = await supabase
       .from('resultados_partidos')
       .select('resultado, ev, fecha_liq')
@@ -144,10 +104,8 @@ async function resumenWinRate(windowDias) {
   }
 }
 
-// Heartbeats (última ejecución por función) – tabla opcional heartbeats:
-// columns: function_name(text), last_seen(timestamptz), ok(boolean)
-// Cada función debería upsert al empezar.
 async function getHeartbeats() {
+  if (!HAS_SB) return FUNCIONES.map(name => ({ name, last_seen: null, ok: null }));
   try {
     const { data, error } = await supabase
       .from('heartbeats')
@@ -157,20 +115,15 @@ async function getHeartbeats() {
     const map = Object.fromEntries((data || []).map(r => [r.function_name, r]));
     return FUNCIONES.map(name => {
       const r = map[name];
-      return {
-        name,
-        last_seen: r?.last_seen || null,
-        ok: r?.ok ?? null,
-      };
+      return { name, last_seen: r?.last_seen || null, ok: r?.ok ?? null };
     });
   } catch {
-    // si no existe la tabla, devolvemos “desconocido” pero no rompemos
     return FUNCIONES.map(name => ({ name, last_seen: null, ok: null }));
   }
 }
 
-// Telemetría de costos opcional – tabla cost_telemetry(provider, usd, ts)
 async function getCosts(days = 30) {
+  if (!HAS_SB) return { total: null, porProveedor: null };
   try {
     const since = new Date(Date.now() - days * 86400000).toISOString();
     const { data, error } = await supabase
@@ -180,12 +133,10 @@ async function getCosts(days = 30) {
     if (error) throw error;
     const total = (data || []).reduce((a, b) => a + (Number(b.usd) || 0), 0);
     const porProveedor = {};
-    (data || []).forEach(r => {
-      porProveedor[r.provider] = (porProveedor[r.provider] || 0) + (Number(r.usd) || 0);
-    });
+    (data || []).forEach(r => { porProveedor[r.provider] = (porProveedor[r.provider] || 0) + (Number(r.usd) || 0); });
     return { total: Number(total.toFixed(4)), porProveedor };
   } catch {
-    return { total: null, porProveedor: null }; // N/A si no existe
+    return { total: null, porProveedor: null };
   }
 }
 
