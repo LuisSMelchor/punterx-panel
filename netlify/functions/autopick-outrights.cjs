@@ -302,7 +302,7 @@ function mensajeFreeInformativo({ torneo, fechaInicioISO, analisis }) {
 /* ===========================
  *  VIP Outright (mensaje)
  * =========================== */
-function mensajeVipOutright({ torneo, mercado, seleccion, ...pBooks, analisis_vip, frase, fechaInicioISO, apuestas_extra }) {
+function mensajeVipOutright({ torneo, mercado, seleccion, analisis_vip, frase, fechaInicioISO, apuestas_extra, ...pBooks }) {
   const f = fechaInicioISO ? new Date(fechaInicioISO).toLocaleString() : 's/d';
   const extras = (apuestas_extra && String(apuestas_extra).trim())
     ? `\n➕ Apuestas extra:\n${String(apuestas_extra)}`
