@@ -17,6 +17,7 @@ const {
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const FUNCIONES = [
+  // Añade aquí las funciones que quieras monitorear
   'autopick-vip-nuevo',
   'autopick-vip-nuevo-background',
   'autopick-outrights',
@@ -35,11 +36,11 @@ function respond(statusCode, body, asJson = false) {
   };
 }
 
-function badge(status = 'ok') {
+function badge(status) {
   const c =
-    status === 'ok'   ? '#16a34a' :
-    status === 'warn' ? '#f59e0b' :
-                        '#dc2626';
+    status === 'UP' || status === 'ok' ? '#16a34a' :
+    status === 'DEGRADED' || status === 'warn' ? '#f59e0b' :
+    '#dc2626';
   return `<span style="padding:2px 8px;border-radius:999px;background:${c};color:#fff;font-weight:600">${status}</span>`;
 }
 
@@ -63,11 +64,11 @@ async function estadoOpenAI({ deep } = {}) {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'authorization': Bearer ${OPENAI_API_KEY},
+        'authorization': `Bearer ${OPENAI_API_KEY}`,
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4o-mini', // barato/estable; ajusta si usas otro
         messages: [{ role: 'user', content: 'pong' }],
         max_tokens: 1,
       }),
@@ -85,7 +86,7 @@ async function estadoTelegram({ deep } = {}) {
   if (!deep) return 'UP';
   try {
     const t0 = Date.now();
-    const r = await fetch(https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe);
+    const r = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe`);
     const ms = Date.now() - t0;
     if (!r.ok) return { status: 'DEGRADED', ms };
     const j = await r.json().catch(() => ({}));
@@ -104,8 +105,8 @@ async function resumenHoy() {
     const { data } = await supabase
       .from('picks_historicos')
       .select('ev, timestamp')
-      .gte('timestamp', ${today}T00:00:00.000Z)
-      .lte('timestamp', ${today}T23:59:59.999Z);
+      .gte('timestamp', `${today}T00:00:00.000Z`)
+      .lte('timestamp', `${today}T23:59:59.999Z`);
     const arr = data || [];
     const enviados = arr.length;
     const ev_prom = enviados ? Math.round(arr.reduce((a, b) => a + (b.ev || 0), 0) / enviados) : 0;
@@ -145,6 +146,7 @@ async function resumenWinRate(windowDias) {
 
 // Heartbeats (última ejecución por función) – tabla opcional heartbeats:
 // columns: function_name(text), last_seen(timestamptz), ok(boolean)
+// Cada función debería upsert al empezar.
 async function getHeartbeats() {
   try {
     const { data, error } = await supabase
@@ -208,18 +210,18 @@ function htmlPage(model) {
     </tr>`;
   };
 
-  const costBox = (costs.total === null)
-    ? <p class="muted">Costos (últimos 30 días): N/A (sin tabla cost_telemetry)</p>
+  const costBox = costs.total === null
+    ? `<p class="muted">Costos (últimos 30 días): N/A (sin tabla cost_telemetry)</p>`
     : `<p>Costos 30d: <b>$${costs.total}</b></p>
        <div class="muted">${
          Object.entries(costs.porProveedor)
-           .map(([k, v]) => ${k}: $${Number(v).toFixed(4)})
+           .map(([k, v]) => `${k}: $${v.toFixed(4)}`)
            .join(' · ')
        }</div>`;
 
   const deepNote = fast
-    ? <div class="muted">Modo rápido (sin pings a proveedores). <a href="?deep=1">Cambiar a modo profundo</a></div>
-    : <div class="muted">Modo profundo: latencias — OpenAI ${states.openai_ms ?? '—'} ms · Telegram ${states.telegram_ms ?? '—'} ms. <a href="?">Cambiar a modo rápido</a></div>;
+    ? `<div class="muted">Modo rápido (sin pings a proveedores). <a href="?deep=1">Cambiar a modo profundo</a></div>`
+    : `<div class="muted">Modo profundo: latencias — OpenAI ${states.openai_ms ?? '—'} ms · Telegram ${states.telegram_ms ?? '—'} ms. <a href="?">Cambiar a modo rápido</a></div>`;
 
   return `<!doctype html>
 <html lang="es">
@@ -294,7 +296,7 @@ function htmlPage(model) {
 }
 
 exports.handler = async (evt) => {
-  const rawUrl = (evt && evt.rawUrl) ? evt.rawUrl : ('http://x/?' + (evt?.rawQuery || ''));
+  const rawUrl = evt?.rawUrl || `http://x/?${evt?.rawQuery || ''}`;
   const url = new URL(rawUrl);
   const deep = url.searchParams.get('deep') === '1';
   const asJson = url.searchParams.get('json') === '1';
@@ -342,6 +344,6 @@ exports.handler = async (evt) => {
   } catch (e) {
     const msg = e?.message || String(e);
     if (asJson) return respond(500, { error: msg }, true);
-    return respond(500, <!doctype html><pre style="color:#fca5a5">Error: ${msg}</pre>, false);
+    return respond(500, `<!doctype html><pre style="color:#fca5a5">Error: ${msg}</pre>`, false);
   }
 };
