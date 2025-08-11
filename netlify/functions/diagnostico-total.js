@@ -37,7 +37,10 @@ function respond(statusCode, body, asJson = false) {
 }
 
 function badge(status) {
-  const c = status === 'UP' ? '#16a34a' : status === 'DEGRADED' ? '#f59e0b' : '#ef4444';
+  const c =
+    status === 'ok' ? '#16a34a' :
+    status === 'warn' ? '#f59e0b' :
+    '#dc2626';
   return <span style="padding:2px 8px;border-radius:999px;background:${c};color:#fff;font-weight:600">${status}</span>;
 }
 
