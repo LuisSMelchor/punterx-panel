@@ -1,18 +1,33 @@
 // FILE: netlify/functions/autopick-vip-nuevo.cjs
-// SHA256: 6f79835ae23d297d3aa05e444cd910bb79aa29273d86bedc1b47ab4068572660
-// LINES: 819
-// ---8<---START FILE---8<---
-﻿// netlify/functions/autopick-vip-nuevo.cjs
-// PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–60 (fallback 35–70), backpressure,
-// modelo OpenAI 5 con fallback y reintento, guardrails anti-inconsistencias, prefiltro que prioriza sin descartar,
-// Telegram con rate-limit handling, Supabase idempotente.
+// SHA256: 6f79835ae23d297d3aa05e444cd910bb79aa29273d86bedc1b47ab4068572660 (base original)
+// ===== PunterX · Autopick v4 (actualizado a GPT-5 + Structured Outputs) =====
 
 console.log("[TEST][AUTODEPLOY] " + new Date().toISOString());
 
 // =============== IMPORTS ===============
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
-const { Configuration, OpenAIApi } = require('openai');
+
+// === OpenAI: compat v4 (preferido) / v3 (fallback) ===
+let _oaiClient = null;
+let _OAI_IS_V4 = false;
+try {
+  const OpenAI = require('openai'); // v4 exporta clase Client
+  // si es v4, instanciamos así:
+  _oaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  _OAI_IS_V4 = !!(_oaiClient && typeof _oaiClient.chat?.completions?.create === 'function');
+} catch (_) { /* seguimos intentando v3 más abajo */ }
+if (!_oaiClient || !_OAI_IS_V4) {
+  // fallback a v3 (Configuration/OpenAIApi)
+  try {
+    const { Configuration, OpenAIApi } = require('openai');
+    const configuration = new Configuration({ apiKey: process.env.OPENAI_API_KEY });
+    _oaiClient = new OpenAIApi(configuration);
+    _OAI_IS_V4 = false;
+  } catch (e) {
+    console.error('❌ No se pudo inicializar OpenAI (ni v4 ni v3):', e?.message || e);
+  }
+}
 
 // =============== ENV & ASSERT ===============
 const {
@@ -28,18 +43,21 @@ const {
   AUTH_CODE
 } = process.env;
 
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
-const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5';
+// ⚠️ Modelo primario: GPT-5; fallback: GPT-5-mini
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5';
+const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5-mini';
+
 const WINDOW_MAIN_MIN = Number(process.env.WINDOW_MAIN_MIN || 40);
 const WINDOW_MAIN_MAX = Number(process.env.WINDOW_MAIN_MAX || 55);
-const WINDOW_FB_MIN = Number(process.env.WINDOW_FB_MIN || 35);
-const WINDOW_FB_MAX = Number(process.env.WINDOW_FB_MAX || 70);
+const WINDOW_FB_MIN   = Number(process.env.WINDOW_FB_MIN   || 35);
+const WINDOW_FB_MAX   = Number(process.env.WINDOW_FB_MAX   || 70);
+
 const PREFILTER_MIN_BOOKIES = Number(process.env.PREFILTER_MIN_BOOKIES || 2);
-const MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY || 6);
-const MAX_PER_CYCLE = Number(process.env.MAX_PER_CYCLE || 50);
-const SOFT_BUDGET_MS = Number(process.env.SOFT_BUDGET_MS || 70000);
+const MAX_CONCURRENCY       = Number(process.env.MAX_CONCURRENCY || 6);
+const MAX_PER_CYCLE         = Number(process.env.MAX_PER_CYCLE || 50);
+const SOFT_BUDGET_MS        = Number(process.env.SOFT_BUDGET_MS || 70000);
 const MAX_OAI_CALLS_PER_CYCLE = Number(process.env.MAX_OAI_CALLS_PER_CYCLE || 40);
-const COUNTRY_FLAG = process.env.COUNTRY_FLAG || '🌍';
+const COUNTRY_FLAG          = process.env.COUNTRY_FLAG || '🌍';
 
 function assertEnv() {
   const required = [
@@ -69,7 +87,8 @@ async function upsertDiagnosticoEstado(status, details) {
       .from('diagnostico_estado')
       .upsert(payload, { onConflict: 'fn_name' });
     if (error) console.warn('[DIAG] upsertDiagnosticoEstado:', error.message);
-    // === Diagnóstico: success path ===
+
+    // === OJO: Dejo tu bloque original tal cual para no alterar tu telemetría ===
     try {
       await upsertDiagnosticoEstado('ok', JSON.stringify({ resumen }));
       await registrarEjecucion({
@@ -81,7 +100,6 @@ async function upsertDiagnosticoEstado(status, details) {
         detalles: resumen
       });
     } catch(_) {}
-
   } catch (e) {
     console.warn('[DIAG] upsertDiagnosticoEstado(ex):', e?.message || e);
   }
@@ -101,11 +119,6 @@ async function registrarEjecucion(data) {
     console.warn('[DIAG] registrarEjecucion(ex):', e?.message || e);
   }
 }
-// === Fin helpers diagnóstico ===
-const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
-const openai = new OpenAIApi(configuration);
-const MODEL = (process.env.OPENAI_MODEL || OPENAI_MODEL || 'gpt-5-mini');
-const MODEL_FALLBACK = (process.env.OPENAI_MODEL_FALLBACK || 'gpt-5');
 
 // =============== CONFIG (ENV-overridable) ===============
 const lockKey = 'punterx_lock';
@@ -166,9 +179,9 @@ exports.handler = async (event, context) => {
   assertEnv();
 
   const started = Date.now();
-  
-    try { await upsertDiagnosticoEstado('running', null); } catch(_) {} // diag
-console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
+
+  try { await upsertDiagnosticoEstado('running', null); } catch(_) {} // diag
+  console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
 
   // Lock simple en memoria por invocación isolada (Netlify)
   if (global.__punterx_lock) {
@@ -176,6 +189,7 @@ console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN
     return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true }) };
   }
   global.__punterx_lock = true;
+
   const resumen = {
     recibidos: 0, enVentana: 0, candidatos: 0, procesados: 0, descartados_ev: 0,
     enviados_vip: 0, enviados_free: 0, intentos_vip: 0, intentos_free: 0,
@@ -237,8 +251,8 @@ console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN
         // C) Construir prompt maestro con opciones_apostables reales
         const prompt = construirPrompt(P, info, memoria);
 
-        // D) OpenAI (fallback + 1 reintento en cada modelo)
-        let pick, modeloUsado = MODEL;
+        // D) OpenAI (fallback + reintento en cada modelo)
+        let pick, modeloUsado = OPENAI_MODEL;
         try {
           const r = await obtenerPickConFallback(prompt, resumen);
           pick = r.pick; modeloUsado = r.modeloUsado;
@@ -302,7 +316,7 @@ console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN
 
   } catch (e) {
     console.error('Error ciclo principal:', e?.message || e);
-        try {
+    try {
       await upsertDiagnosticoEstado('error', e?.message || String(e));
       await registrarEjecucion({
         started_at: new Date(started).toISOString(),
@@ -312,7 +326,7 @@ console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN
         error_message: e?.message || String(e)
       });
     } catch(_) {}
-return { statusCode: 200, body: JSON.stringify({ ok:false, error: e?.message || String(e) }) };
+    return { statusCode: 200, body: JSON.stringify({ ok:false, error: e?.message || String(e) }) };
   } finally {
     global.__punterx_lock = false;
     console.log('Resumen ciclo:', JSON.stringify(resumen));
@@ -481,25 +495,56 @@ async function obtenerMemoriaSimilar(partido) {
 
 // =============== OPENAI ===============
 
-// === Helper: payload OpenAI compatible (gpt-5 / 4o / 4.1 / o3 vs legacy) ===
-function buildOpenAIPayload(model, prompt, maxOut = 450) {
-  const m = String(model || '').toLowerCase();
-  const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
-  const base = {
+// ---- JSON Schema (contrato PunterX) ----
+const PUNTERX_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    analisis_gratuito: { type: "string" },
+    analisis_vip:      { type: "string" },
+    apuesta:           { type: "string" },   // Debe coincidir EXACTO con opciones_apostables
+    apuestas_extra:    { type: "string" },
+    frase_motivacional:{ type: "string" },
+    probabilidad:      { type: "number", minimum: 0, maximum: 1 },
+    no_pick:           { type: "boolean" },
+    motivo_no_pick:    { type: "string" }
+  },
+  required: ["no_pick","probabilidad","apuesta","analisis_gratuito","analisis_vip","frase_motivacional","motivo_no_pick"]
+};
+
+// ---- Payload builder (unificado para v4/v3) ----
+function buildOpenAIPayload(model, prompt, maxTokens = 360) {
+  const payload = {
     model,
-    response_format: { type: 'json_object' },
-    messages: [{ role: 'user', content: prompt }],
+    messages: [{ role: 'system', content: 'Responde SOLO con un JSON válido que cumpla el schema. Nada más.' },
+               { role: 'user', content: prompt }],
+    temperature: 0.2,
+    max_tokens: maxTokens
   };
-  if (modern) base.max_completion_tokens = maxOut; else base.max_tokens = maxOut;
-  // gpt-5 / 4o / o3: no tocar temperature (usa default=1)
-  if (!/gpt-5|4o|o3/.test(m)) { base.temperature = 0.2; }
-  return base;
+
+  // Structured Outputs (si el modelo/SDK lo soporta)
+  payload.response_format = {
+    type: 'json_schema',
+    json_schema: { name: 'PunterXPick', schema: PUNTERX_JSON_SCHEMA, strict: true }
+  };
+
+  return payload;
 }
 
-// === Helpers: extraer y reparar JSON del modelo ===
+// ---- Llamada unificada (v4/v3) ----
+async function chatCreate(payload) {
+  if (_OAI_IS_V4) {
+    // v4
+    return await _oaiClient.chat.completions.create(payload);
+  } else {
+    // v3
+    return await _oaiClient.createChatCompletion(payload);
+  }
+}
+
+// ---- Extraer/Reparar JSON ----
 function extractFirstJsonBlock(text) {
   if (!text) return null;
-  // limpia fences tipo ```json ... ```
   const t = String(text).replace(/```json|```/gi, '').trim();
   const start = t.indexOf('{');
   const end = t.lastIndexOf('}');
@@ -538,47 +583,37 @@ Si algún dato no aparece, coloca "s/d" y para "probabilidad" usa 0.0. Responde 
 Contenido:
 ${rawText || ''}`;
 
-  const completion = await openai.createChatCompletion(
-    buildOpenAIPayload(modelo, prompt, 250)
-  );
-  const content = completion?.data?.choices?.[0]?.message?.content || '';
+  const completion = await chatCreate(buildOpenAIPayload(modelo, prompt, 220));
+  const content = (completion?.choices?.[0]?.message?.content) || (completion?.data?.choices?.[0]?.message?.content) || '';
   return extractFirstJsonBlock(content);
 }
 
 // Valida si el pick está completo para VIP (y también sirve para decidir fallback)
 function esNoPick(p) { return !!p && p.no_pick === true; }
-
 function pickCompleto(p) {
   return !!(p && p.analisis_vip && p.analisis_gratuito && p.apuesta && typeof p.probabilidad === 'number');
 }
 
 async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
-  // 1) Contar intento de llamada a OAI
   if (resumenRef) {
-    resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;              // ya la tienes
-    resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1; // NUEVA
+    resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;
+    resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1;
   }
 
   console.log('[OAI] modelo=', modelo);
   console.log('[OAI] prompt.len=', (prompt || '').length);
 
-  // 2) Hacer la llamada a OpenAI
-  const completion = await openai.createChatCompletion(
-    buildOpenAIPayload(modelo, prompt, 450)
-  );
+  const completion = await chatCreate(buildOpenAIPayload(modelo, prompt, 360));
 
-  // 3) Contar éxito si la llamada no lanzó error
   if (resumenRef) {
-    resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1; // NUEVA
+    const ok = !!completion;
+    if (ok) resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
   }
 
-  const raw = completion?.data?.choices?.[0]?.message?.content || '';
+  const raw = (completion?.choices?.[0]?.message?.content) || (completion?.data?.choices?.[0]?.message?.content) || '';
   console.log('[OAI] raw.len=', raw.length);
 
-  // 1) parse directo
   let obj = extractFirstJsonBlock(raw);
-
-  // 2) reparación JSON si falla
   if (!obj) {
     try {
       obj = await repairPickJSON(modelo, raw);
@@ -608,17 +643,16 @@ async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
 
 async function obtenerPickConFallback(prompt, resumenRef = null) {
   // intento principal
-  let pick = await pedirPickConModelo(MODEL, prompt, resumenRef);
-  if (esNoPick(pick)) return { pick, modeloUsado: MODEL };
+  let pick = await pedirPickConModelo(OPENAI_MODEL, prompt, resumenRef);
+  if (esNoPick(pick)) return { pick, modeloUsado: OPENAI_MODEL };
   // fallback
   if (!pickCompleto(pick)) {
-    console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
-    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
-    return { pick, modeloUsado: MODEL_FALLBACK };
+    console.log('♻️ Fallback de modelo →', OPENAI_MODEL_FALLBACK);
+    pick = await pedirPickConModelo(OPENAI_MODEL_FALLBACK, prompt, resumenRef);
+    return { pick, modeloUsado: OPENAI_MODEL_FALLBACK };
   }
-  return { pick, modeloUsado: MODEL };
+  return { pick, modeloUsado: OPENAI_MODEL };
 }
-
 
 // =============== PROMPT ===============
 function construirOpcionesApostables(mejoresMercados) {
@@ -882,4 +916,3 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuota, tip
     return false;
   }
 }
-// ---8<---END FILE---8<---
