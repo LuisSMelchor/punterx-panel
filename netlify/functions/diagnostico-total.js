@@ -36,11 +36,8 @@ function respond(statusCode, body, asJson = false) {
   };
 }
 
-function badge(status) {
-  const c =
-    status === 'ok' ? '#16a34a' :
-    status === 'warn' ? '#f59e0b' :
-    '#dc2626';
+function badge(status, color) {
+  const c = color || (status === 'OK' ? '#16a34a' : status === 'WARN' ? '#f59e0b' : '#ef4444');
   return <span style="padding:2px 8px;border-radius:999px;background:${c};color:#fff;font-weight:600">${status}</span>;
 }
 
