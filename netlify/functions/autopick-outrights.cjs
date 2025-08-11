@@ -76,6 +76,7 @@ const oai = new OpenAIApi(new Configuration({ apiKey: OPENAI_API_KEY }));
 /* ===========================
  *  Utilidades Generales
  * =========================== */
+const FN_NAME = 'autopick-outrights';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const nowIso = () => new Date().toISOString();
 const log = (...a) => console.log(...a);
@@ -112,9 +113,62 @@ async function safeText(res) {
 function matchExcluded(name = '') {
   const s = String(name || '').toLowerCase();
   return EXCLUDES.some(pat => {
-    const re = new RegExp(pat.replace(/\*/g, '.*'));
+    const re = new RegExp(pat.replace(/\\*/g, '.*'));
     return re.test(s);
   });
+}
+
+/* ===========================
+ *  DIAGNÓSTICO (functions_status / function_runs)
+ * =========================== */
+function makeRunId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function upsertFunctionStatus({ enabled, schedule, env_ok }) {
+  try {
+    await supabase.from('functions_status').upsert({
+      name: FN_NAME,
+      enabled: !!enabled,
+      schedule: schedule || null,
+      env_ok: !!env_ok,
+      updated_at: nowIso(),
+    });
+  } catch (e) {
+    warn(`[diag][${FN_NAME}] upsertFunctionStatus error:`, e?.message || e);
+  }
+}
+
+async function beginRun(meta = {}) {
+  const run_id = makeRunId();
+  try {
+    await supabase.from('function_runs').insert({
+      run_id,
+      fn_name: FN_NAME,
+      started_at: nowIso(),
+      meta: meta || null,
+      status: 'running',
+    });
+  } catch (e) {
+    warn(`[diag][${FN_NAME}] beginRun error:`, e?.message || e);
+  }
+  return run_id;
+}
+
+async function endRun(run_id, patch = {}) {
+  if (!run_id) return;
+  try {
+    await supabase.from('function_runs').update({
+      finished_at: nowIso(),
+      status: patch.status || 'ok',
+      error: patch.error || null,
+      summary: patch.summary || null,
+      oai_calls: patch.oai_calls || 0,
+      oai_ok: patch.oai_ok || 0,
+    }).eq('run_id', run_id);
+  } catch (e) {
+    warn(`[diag][${FN_NAME}] endRun error:`, e?.message || e);
+  }
 }
 
 /* ===========================
@@ -235,7 +289,7 @@ async function enviarTelegram(texto, tipo = 'vip') {
  * =========================== */
 function buildOpenAIPayload(model, prompt, maxOut = 450) {
   const m = String(model || '').toLowerCase();
-  const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
+  const modern = /gpt-5|gpt-4\\.1|4o|o3|mini/.test(m);
 
   const base = {
     model,
@@ -347,7 +401,7 @@ function mapearOutrights(data) {
   if (!Array.isArray(data)) return out;
 
   for (const ev of data) {
-    const torneo = String(ev?.league || ev?.sport_title || 'Torneo').replace(/\s+/g, ' ').trim();
+    const torneo = String(ev?.league || ev?.sport_title || 'Torneo').replace(/\\s+/g, ' ').trim();
     if (!torneo || matchExcluded(torneo)) continue;
 
     const bookmakers = Array.isArray(ev?.bookmakers) ? ev.bookmakers : [];
@@ -416,7 +470,7 @@ function construirPromptOutright({ torneo, mercado, topOutcomes, memoriaLiga30d,
   });
   if (memoriaLiga30d) lines.push(`- Memoria 30d: ${memoriaLiga30d}`);
   lines.push(`Devuelve SOLO el JSON, sin comentarios.`);
-  return lines.join('\n');
+  return lines.join('\\n');
 }
 
 /* ===========================
@@ -466,7 +520,7 @@ function mensajeFreeInformativo({ torneo, fechaInicioISO, analisis }) {
     '🧠 Análisis:',
     analisis || 's/d',
     '⚠️ Apuestas a largo plazo = mayor varianza. Juega responsable.'
-  ].join('\n');
+  ].join('\\n');
 }
 
 /* ===========================
@@ -475,7 +529,7 @@ function mensajeFreeInformativo({ torneo, fechaInicioISO, analisis }) {
 function mensajeVipOutright({ torneo, mercado, seleccion, bestPrice, probPct, ev, topBooks, analisis_vip, frase, fechaInicioISO, apuestas_extra }) {
   const f = fechaInicioISO ? new Date(fechaInicioISO).toLocaleString() : 's/d';
   const extras = (apuestas_extra && String(apuestas_extra).trim())
-    ? `\n➕ Apuestas extra:\n${String(apuestas_extra)}`
+    ? `\\n➕ Apuestas extra:\\n${String(apuestas_extra)}`
     : '';
   return [
     '🎯 PICK OUTRIGHT',
@@ -490,7 +544,7 @@ function mensajeVipOutright({ torneo, mercado, seleccion, bestPrice, probPct, ev
     extras,
     `💬 ${frase}`,
     '⚠️ Apuestas a largo plazo (alta varianza). Juego responsable.'
-  ].filter(Boolean).join('\n');
+  ].filter(Boolean).join('\\n');
 }
 
 /* ===========================
@@ -613,11 +667,39 @@ async function obtenerMemoriaLigaResumen(ligaONombre, windowDias = 30) {
  *  Handler
  * =========================== */
 exports.handler = async () => {
+  // --- Estado/diagnóstico de función ---
+  const env_ok = !!(SUPABASE_URL && SUPABASE_KEY && OPENAI_API_KEY);
+  await upsertFunctionStatus({
+    enabled: ENABLE_OUTRIGHTS === 'true',
+    schedule: process.env.NETLIFY_SCHEDULE || null,
+    env_ok
+  });
+  const run_meta = {
+    schedule: process.env.NETLIFY_SCHEDULE || null,
+    flags: { ENABLE_OUTRIGHTS, ENABLE_OUTRIGHTS_INFO }
+  };
+  const run_id = await beginRun(run_meta);
+
+  // --- Métricas de corrida ---
+  let oai_calls = 0;
+  let oai_ok = 0;
+  let candidatos_len = 0;
+  let enviados_vip = 0;
+  let enviados_free = 0;
+
   try {
     if (ENABLE_OUTRIGHTS !== 'true') {
+      await endRun(run_id, {
+        status: 'skipped',
+        summary: { reason: 'disabled' }
+      });
       return json(200, { ok: true, skipped: 'disabled' });
     }
     if (!SUPABASE_URL || !SUPABASE_KEY || !ODDS_API_KEY || !OPENAI_API_KEY) {
+      await endRun(run_id, {
+        status: 'error',
+        error: 'Config incompleta'
+      });
       return json(500, { error: 'Config incompleta' });
     }
 
@@ -625,6 +707,10 @@ exports.handler = async () => {
     const got = await acquireLock('autopick-outrights', 180);
     if (!got) {
       warn('LOCK activo → salto ciclo (outrights)');
+      await endRun(run_id, {
+        status: 'skipped',
+        summary: { reason: 'lock' }
+      });
       return json(200, { ok: true, skipped: 'lock' });
     }
 
@@ -632,16 +718,33 @@ exports.handler = async () => {
     let raw;
     try {
       const r = await withOutrightsBreaker(fetchOutrightsRaw);
-      if (r.skipped) return json(200, { ok: true, skipped: 'breaker' });
+      if (r.skipped) {
+        await endRun(run_id, {
+          status: 'skipped',
+          summary: { reason: 'breaker' }
+        });
+        return json(200, { ok: true, skipped: 'breaker' });
+      }
       raw = r.data;
     } catch (e) {
-      error('[outrights] Error OddsAPI:', e?.message || e);
+      const msg = e?.message || e;
+      error('[outrights] Error OddsAPI:', msg);
+      await endRun(run_id, {
+        status: 'error',
+        error: `OddsAPI: ${msg}`
+      });
       return json(200, { ok: true, skipped: 'oddsapi_error' });
     }
 
     const mapped = mapearOutrights(raw);
-    if (!mapped.length) {
+    candidatos_len = mapped.length;
+    if (!candidatos_len) {
       log('[outrights] Sin torneos/outcomes mapeables');
+      await endRun(run_id, {
+        status: 'ok',
+        summary: { candidatos: 0, enviados_vip: 0, enviados_free: 0 },
+        oai_calls, oai_ok
+      });
       return json(200, { ok: true, candidatos: 0, enviados_vip: 0, enviados_free: 0 });
     }
 
@@ -650,12 +753,14 @@ exports.handler = async () => {
       .sort((a,b)=> (b.outcomes?.length||0) - (a.outcomes?.length||0))
       .slice(0, Math.min(MAX_CANDS, MAX_OAI));
 
-    let enviados_vip = 0;
     for (const item of candidatos) {
       try {
+        // contamos intención de llamada a OAI
+        oai_calls++;
         const r = await procesarCandidato(item);
-        if (r.ok) enviados_vip++;
-        else log('[outrights] descartado:', item.torneo, r.reason);
+        // si procesarCandidato llegó a hacer llamada con JSON válido, lo consideramos ok
+        if (r && r.ok) { enviados_vip++; oai_ok++; }
+        else { log('[outrights] descartado:', item.torneo, r?.reason || 'unknown'); }
         await sleep(200);
       } catch (e) {
         warn('[outrights] error candidato:', item.torneo, e?.message || e);
@@ -663,7 +768,6 @@ exports.handler = async () => {
     }
 
     // Si no enviamos VIP y está permitido, mandamos FREE informativo del torneo top con breve análisis
-    let enviados_free = 0;
     if (enviados_vip === 0 && ENABLE_OUTRIGHTS_INFO === 'true' && TELEGRAM_CHANNEL_ID) {
       const top = candidatos[0];
       if (top) {
@@ -678,15 +782,23 @@ exports.handler = async () => {
       }
     }
 
+    await endRun(run_id, {
+      status: 'ok',
+      summary: { candidatos: candidatos_len, enviados_vip, enviados_free },
+      oai_calls, oai_ok
+    });
+
     return json(200, {
       ok: true,
-      candidatos: candidatos.length,
+      candidatos: candidatos_len,
       enviados_vip,
       enviados_free
     });
 
   } catch (e) {
-    error('[outrights] error general:', e?.message || e);
+    const msg = e?.message || e;
+    error('[outrights] error general:', msg);
+    await endRun(run_id, { status: 'error', error: String(msg), oai_calls, oai_ok });
     return json(500, { error: 'internal' });
   } finally {
     await releaseLock('autopick-outrights');
