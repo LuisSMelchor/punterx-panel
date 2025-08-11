@@ -8,7 +8,8 @@
 
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
-const { Configuration, OpenAIApi } = require('openai');
+// ⬇️ Migración a openai@4
+const OpenAI = require('openai');
 
 /* ===========================
  *  ENV / Config
@@ -71,7 +72,8 @@ const EXCLUDES = OUTRIGHTS_EXCLUDE
 
 // Clientes
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-const oai = new OpenAIApi(new Configuration({ apiKey: OPENAI_API_KEY }));
+// ⬇️ Migración a openai@4
+const oai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 /* ===========================
  *  Utilidades Generales
@@ -113,7 +115,7 @@ async function safeText(res) {
 function matchExcluded(name = '') {
   const s = String(name || '').toLowerCase();
   return EXCLUDES.some(pat => {
-    const re = new RegExp(pat.replace(/\\*/g, '.*'));
+    const re = new RegExp(pat.replace(/\*/g, '.*'));
     return re.test(s);
   });
 }
@@ -289,7 +291,7 @@ async function enviarTelegram(texto, tipo = 'vip') {
  * =========================== */
 function buildOpenAIPayload(model, prompt, maxOut = 450) {
   const m = String(model || '').toLowerCase();
-  const modern = /gpt-5|gpt-4\\.1|4o|o3|mini/.test(m);
+  const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
 
   const base = {
     model,
@@ -299,7 +301,7 @@ function buildOpenAIPayload(model, prompt, maxOut = 450) {
   if (modern) base.max_completion_tokens = maxOut;
   else base.max_tokens = maxOut;
 
-  // gpt-5 no admite temperature != 1 → omitimos
+  // gpt-5 / o3: usa temperatura por defecto; para otros, bajamos un poco
   if (!/gpt-5|o3/.test(m)) base.temperature = 0.2;
 
   return base;
@@ -401,7 +403,7 @@ function mapearOutrights(data) {
   if (!Array.isArray(data)) return out;
 
   for (const ev of data) {
-    const torneo = String(ev?.league || ev?.sport_title || 'Torneo').replace(/\\s+/g, ' ').trim();
+    const torneo = String(ev?.league || ev?.sport_title || 'Torneo').replace(/\s+/g, ' ').trim();
     if (!torneo || matchExcluded(torneo)) continue;
 
     const bookmakers = Array.isArray(ev?.bookmakers) ? ev.bookmakers : [];
@@ -470,17 +472,18 @@ function construirPromptOutright({ torneo, mercado, topOutcomes, memoriaLiga30d,
   });
   if (memoriaLiga30d) lines.push(`- Memoria 30d: ${memoriaLiga30d}`);
   lines.push(`Devuelve SOLO el JSON, sin comentarios.`);
-  return lines.join('\\n');
+  return lines.join('\n');
 }
 
 /* ===========================
  *  IA Call
  * =========================== */
 async function pedirOutrightConModelo(modelo, prompt) {
-  const completion = await oai.createChatCompletion(
+  // ⬇️ Migración a openai@4
+  const completion = await oai.chat.completions.create(
     buildOpenAIPayload(modelo, prompt, 350)
   );
-  const raw = completion?.data?.choices?.[0]?.message?.content || '';
+  const raw = completion?.choices?.[0]?.message?.content || '';
   const obj = extractFirstJsonBlock(raw);
   return obj ? ensureOutrightShape(obj) : null;
 }
@@ -520,7 +523,7 @@ function mensajeFreeInformativo({ torneo, fechaInicioISO, analisis }) {
     '🧠 Análisis:',
     analisis || 's/d',
     '⚠️ Apuestas a largo plazo = mayor varianza. Juega responsable.'
-  ].join('\\n');
+  ].join('\n');
 }
 
 /* ===========================
@@ -529,7 +532,7 @@ function mensajeFreeInformativo({ torneo, fechaInicioISO, analisis }) {
 function mensajeVipOutright({ torneo, mercado, seleccion, bestPrice, probPct, ev, topBooks, analisis_vip, frase, fechaInicioISO, apuestas_extra }) {
   const f = fechaInicioISO ? new Date(fechaInicioISO).toLocaleString() : 's/d';
   const extras = (apuestas_extra && String(apuestas_extra).trim())
-    ? `\\n➕ Apuestas extra:\\n${String(apuestas_extra)}`
+    ? `\n➕ Apuestas extra:\n${String(apuestas_extra)}`
     : '';
   return [
     '🎯 PICK OUTRIGHT',
@@ -544,7 +547,7 @@ function mensajeVipOutright({ torneo, mercado, seleccion, bestPrice, probPct, ev
     extras,
     `💬 ${frase}`,
     '⚠️ Apuestas a largo plazo (alta varianza). Juego responsable.'
-  ].filter(Boolean).join('\\n');
+  ].filter(Boolean).join('\n');
 }
 
 /* ===========================
