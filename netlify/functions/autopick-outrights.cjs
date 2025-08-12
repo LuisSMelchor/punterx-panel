@@ -11,6 +11,10 @@ const { createClient } = require('@supabase/supabase-js');
 // ⬇️ Migración a openai@4
 const OpenAI = require('openai');
 
+// [PX-CHANGE] imports para lectura del prompt desde MD
+const fs = require('fs');                 // [PX-CHANGE]
+const path = require('path');             // [PX-CHANGE]
+
 /* ===========================
  *  ENV / Config
  * =========================== */
@@ -243,7 +247,68 @@ function mapOutrightsData(data) {
 /* ===========================
  *  Prompt / IA
  * =========================== */
+
+// [PX-CHANGE] util: buscar y leer sección “2) Outrights / Futures” desde prompts_punterx.md
+function tryReadFile(filePath) {           // [PX-CHANGE]
+  try { return fs.readFileSync(filePath, 'utf8'); } catch { return null; }
+}                                          // [PX-CHANGE]
+
+function loadPromptsSectionOutrights() {   // [PX-CHANGE]
+  // Intentar múltiples rutas razonables (bundle Netlify puede mover archivos)
+  const candidates = [
+    path.join(__dirname, 'prompts_punterx.md'),
+    path.join(__dirname, '..', 'prompts_punterx.md'),
+    path.join(__dirname, '..', '..', 'prompts_punterx.md'),
+    path.join(process.cwd(), 'prompts_punterx.md')
+  ];
+  let content = null;
+  for (const p of candidates) {
+    content = tryReadFile(p);
+    if (content) break;
+  }
+  if (!content) return null;
+
+  // extraer sección que inicia con "2) Outrights / Futures"
+  const rx = /(^|\n)##?\s*2\)\s*Outrights\s*\/\s*Futures[\s\S]*?(?=\n##?\s*\d+\)|\n#|\Z)/i;
+  const m = content.match(rx);
+  if (!m) return null;
+  // devolver bloque de esa sección
+  return m[0];
+}                                          // [PX-CHANGE]
+
+// [PX-CHANGE] constructor que usa MD con fallback al embebido
 function construirPromptOutright({ torneo, mercado, topOutcomes, memoriaLiga30d, fechaInicioISO }) {
+  // 1) Intentar leer sección MD
+  const section = loadPromptsSectionOutrights();  // [PX-CHANGE]
+
+  // 2) Construir lista TOP outcomes “Nombre — cuota X (implícita Y%)”
+  const list = Array.isArray(topOutcomes) ? topOutcomes.slice(0, 8).map((o, i) => {
+    const name = String(o?.name || '').trim();
+    const price = Number(o?.price);
+    const imp = Number.isFinite(price) ? impliedProbPct(price) : null;
+    return `${i + 1}) ${name} — cuota ${price} (implícita ${imp ?? 's/d'}%)`;
+  }) : [];                                   // [PX-CHANGE]
+
+  const FECHA = fechaInicioISO ? String(fechaInicioISO) : 's/d'; // [PX-CHANGE]
+  const MEM = memoriaLiga30d ? String(memoriaLiga30d) : 's/d';   // [PX-CHANGE]
+
+  if (section) {
+    // 3) Sustituir marcadores en el texto MD
+    let promptFromMD = section
+      .replace(/\{\{TORNEO\}\}/g, String(torneo || 's/d'))
+      .replace(/\{\{MERCADO\}\}/g, String(mercado || 's/d'))
+      .replace(/\{\{FECHA_INICIO_ISO\}\}/g, FECHA)
+      .replace(/\{\{TOP_OUTCOMES_LIST\}\}/g, list.join('\n'))
+      .replace(/\{\{MEMORIA_LIGA_30D\}\}/g, MEM);
+
+    // En caso de que la sección incluya títulos/markdown, intentamos quedarnos con el bloque de instrucciones
+    // Conservamos íntegro; el guardrail de “Devuelve SOLO JSON …” debe estar en el MD.
+    // Log discreto
+    console.log(`[prompt][outrights] source=md len=${promptFromMD.length}`); // [PX-CHANGE]
+    return promptFromMD.trim();
+  }
+
+  // 4) Fallback al prompt embebido actual (sin modificar guardrails)
   const lines = [];
   lines.push(`Eres un analista de apuestas experto. Devuelve SOLO un JSON con esta forma EXACTA:`);
   lines.push(`{`);
@@ -271,8 +336,11 @@ function construirPromptOutright({ torneo, mercado, topOutcomes, memoriaLiga30d,
   });
   if (memoriaLiga30d) lines.push(`- Memoria 30d: ${memoriaLiga30d}`);
   lines.push(`Devuelve SOLO el JSON, sin comentarios.`);
-  return lines.join('\n');
-}
+
+  const fallbackPrompt = lines.join('\n');
+  console.log(`[prompt][outrights] source=fallback len=${fallbackPrompt.length}`); // [PX-CHANGE]
+  return fallbackPrompt;
+} // [PX-CHANGE] fin constructor prompt
 
 async function pedirOutrightConModelo(modelo, prompt) {
   // ⬇️ Migración a openai@4
