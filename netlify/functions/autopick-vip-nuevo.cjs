@@ -410,27 +410,47 @@ function scorePreliminar(p) {
 
 // =============== API-FOOTBALL ENRIQUECIMIENTO ===============
 async function enriquecerPartidoConAPIFootball(partido) {
-  const q = `${partido.home} ${partido.away}`;
-  const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}`;
-
-  let res;
   try {
-    res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
-  } catch (e) {
-    console.error(`[evt:${partido.id}] Error red Football:`, e?.message || e);
-    return null;
-  }
-  if (!res || !res.ok) {
-    console.error(`[evt:${partido.id}] Football no ok:`, res?.status, await safeText(res));
-    return null;
-  }
-  const data = await safeJson(res);
-  const list = Array.isArray(data?.response) ? data.response : [];
+    if (!partido?.home || !partido?.away) {
+      console.warn(`[evt:${partido?.id}] Sin equipos → skip enriquecimiento`);
+      return {};
+    }
 
-  // Podrías mapear datos útiles: árbitro, clima, estadio, probables, etc.
-  return {
-    fixtures_count: list.length
-  };
+    const q = `${partido.home} ${partido.away}`;
+    const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}`;
+
+    const res = await fetchWithRetry(
+      url,
+      { headers: { 'x-apisports-key': API_FOOTBALL_KEY } },
+      { retries: 1 }
+    );
+
+    if (!res || !res.ok) {
+      console.error(`[evt:${partido.id}] Football no ok:`, res?.status, await safeText(res));
+      return {};
+    }
+
+    const data = await safeJson(res);
+    if (!data?.response || !Array.isArray(data.response) || data.response.length === 0) {
+      console.warn(`[evt:${partido.id}] Sin coincidencias en API-Football`);
+      return {};
+    }
+
+    // Extraer primer fixture encontrado
+    const fixture = data.response[0];
+    return {
+      fixtures_count: data.response.length,
+      fixture_id: fixture?.fixture?.id || null,
+      fecha: fixture?.fixture?.date || null,
+      estadio: fixture?.fixture?.venue?.name || null,
+      ciudad: fixture?.fixture?.venue?.city || null,
+      arbitro: fixture?.fixture?.referee || null,
+      clima: fixture?.fixture?.weather || null
+    };
+  } catch (e) {
+    console.error(`[evt:${partido?.id}] Error enriquecerPartidoConAPIFootball:`, e?.message || e);
+    return {};
+  }
 }
 
 // =============== MEMORIA (Supabase) ===============
