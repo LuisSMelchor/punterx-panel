@@ -9,6 +9,9 @@ console.log("[TEST][AUTODEPLOY] " + new Date().toISOString());
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
+// [PX-CHANGE] Soporte lectura de template MD
+const fs = require('fs');            // [PX-CHANGE]
+const path = require('path');        // [PX-CHANGE]
 
 // =============== ENV & ASSERT ===============
 const {
@@ -602,6 +605,50 @@ async function obtenerPickConFallback(prompt, resumenRef = null) {
 }
 
 // =============== PROMPT ===============
+
+// [PX-CHANGE] Lee `prompts_punterx.md` y extrae la sección “1) Pre‑match”
+function readFileIfExists(p) {          // [PX-CHANGE]
+  try { return fs.readFileSync(p, 'utf8'); } catch(_) { return null; }
+}                                       // [PX-CHANGE]
+
+function getPromptTemplateFromMD() {    // [PX-CHANGE]
+  const candidates = [
+    path.join(process.cwd(), 'prompts_punterx.md'),
+    path.join(__dirname, 'prompts_punterx.md'),
+    path.join(__dirname, '..', 'prompts_punterx.md')
+  ];
+  let md = null;
+  for (const p of candidates) {
+    md = readFileIfExists(p);
+    if (md) { console.log('[PROMPT] MD detectado en', p); break; }
+  }
+  if (!md) return null;
+
+  // Acepta “Pre-match”, “Pre‑match” (con guion Unicode) y variantes de espacios
+  const rx = /^\s*1\)\s*Pre[ -‑]match\b[\s\S]*?(?=^\s*\d+\)\s|\Z)/mi;
+  const m = md.match(rx);
+  if (!m) return null;
+  return m[0].trim();
+}                                       // [PX-CHANGE]
+
+function renderTemplateWithMarkers(tpl, { contexto, opcionesList }) {  // [PX-CHANGE]
+  if (!tpl) return null;
+  let out = tpl;
+
+  // Sustitución de marcadores requeridos
+  const ctxJson = JSON.stringify(contexto);
+  const opciones = (opcionesList || []).map((s, i) => `${i+1}) ${s}`).join('\n');
+
+  out = out.replace(/\{\{\s*CONTEXT_JSON\s*\}\}/g, ctxJson);
+  out = out.replace(/\{\{\s*OPCIONES_APOSTABLES_LIST\s*\}\}/g, opciones);
+
+  // Si quedó algún marcador crítico sin resolver, invalida
+  if (/\{\{\s*(CONTEXT_JSON|OPCIONES_APOSTABLES_LIST)\s*\}\}/.test(out)) {
+    return null;
+  }
+  return out.trim();
+}                                       // [PX-CHANGE]
+
 function construirOpcionesApostables(mejoresMercados) {
   if (!Array.isArray(mejoresMercados)) return [];
   return mejoresMercados.map(m => {
@@ -635,6 +682,18 @@ function construirPrompt(partido, info, memoria) {
   };
 
   const opciones_apostables = construirOpcionesApostables(mejoresMercados);
+
+  // [PX-CHANGE] Intentar cargar desde MD (sección 1) Pre‑match) con reemplazo de marcadores
+  const tpl = getPromptTemplateFromMD(); // [PX-CHANGE]
+  if (tpl) {
+    const rendered = renderTemplateWithMarkers(tpl, { contexto, opcionesList: opciones_apostables }); // [PX-CHANGE]
+    if (rendered && rendered.length > 0) {
+      console.log('[PROMPT] source=md len=', rendered.length); // [PX-CHANGE]
+      return rendered; // [PX-CHANGE]
+    }
+  }
+
+  // [PX-CHANGE] Fallback seguro: prompt embebido actual (sin caída)
   const prompt = [
     `Eres un analista de apuestas experto. Devuelve SOLO un JSON EXACTO con esta forma:`,
     `{`,
@@ -660,6 +719,7 @@ function construirPrompt(partido, info, memoria) {
     ...opciones_apostables.map((s, i) => `${i+1}) ${s}`)
   ].join('\n');
 
+  console.log('[PROMPT] source=fallback len=', prompt.length); // [PX-CHANGE]
   return prompt;
 }
 
