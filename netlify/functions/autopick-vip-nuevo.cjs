@@ -467,17 +467,25 @@ async function obtenerMemoriaSimilar(partido) {
 
 // =============== OPENAI ===============
 
-// Helper para chat.completions (v4): siempre usamos max_tokens
+// Helper para chat.completions (v4/v5): usa max_completion_tokens en modelos modernos
 function buildOpenAIPayload(model, prompt, maxOut = 450) {
   const m = String(model || '').toLowerCase();
+  // Modelos “modernos” que requieren max_completion_tokens
+  const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
+
   const base = {
     model,
     response_format: { type: 'json_object' },
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: maxOut
   };
-  // para modelos no “5/4o/o3”, bajamos temperatura
-  if (!/gpt-5|4o|o3/.test(m)) base.temperature = 0.2;
+
+  // Clave crítica del fix:
+  if (modern) base.max_completion_tokens = maxOut;   // ✅ GPT‑5 / 4o / o3
+  else base.max_tokens = maxOut;                     // ✅ Modelos anteriores
+
+  // Coherente con el resto del código: temperatura baja en no‑“5/o3”
+  if (!/gpt-5|o3/.test(m)) base.temperature = 0.2;
+
   return base;
 }
 
