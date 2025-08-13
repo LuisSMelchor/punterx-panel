@@ -1,16 +1,15 @@
 // netlify/functions/diagnostico-total.js
 // Diagnóstico integral PunterX — HTML + JSON + persistencia de estado
 // CommonJS (Netlify Functions). Sin claves expuestas. Con auth opcional por querystring.
-
-// Polyfill seguro de fetch para CJS/Node 20 bajo esbuild
-const fetch = global.fetch || require('node-fetch');
-
 //
 //   - HTML:  /.netlify/functions/diagnostico-total
 //   - JSON:  /.netlify/functions/diagnostico-total?json=1
 //   - Deep:  /.netlify/functions/diagnostico-total?deep=1
 //   - Auth:  /.netlify/functions/diagnostico-total?code=XXXXX   (AUTH_CODE o PUNTERX_SECRET)
 
+// ========================== POLYFILLS / BASE ==========================
+// Polyfill robusto de fetch para CJS/Node 18/20 bajo esbuild/Netlify
+const fetch = global.fetch || require('node-fetch');
 
 // ========================== ENV / CONFIG ==========================
 const {
@@ -116,6 +115,12 @@ if (typeof __PX_DIAG__.__supaCreate === 'undefined') {
   __PX_DIAG__.__supaCreate = null;
 }
 
+// 🔒 FIX: clave de caché idempotente para evitar "Identifier 'SUPA_CACHE_KEY' has already been declared"
+if (typeof __PX_DIAG__.SUPA_CACHE_KEY === 'undefined') {
+  __PX_DIAG__.SUPA_CACHE_KEY = 'px_supa_client';
+}
+const SUPA_CACHE_KEY = __PX_DIAG__.SUPA_CACHE_KEY;
+
 /**
  * Carga dinámica de @supabase/supabase-js (ESM-only) desde CJS.
  * Nunca lanza: si falla, devuelve null y el diagnóstico mostrará "Supabase: DOWN".
@@ -142,6 +147,8 @@ async function supa() {
   const createClient = await getCreateClient();
   if (!createClient) return null;
   try {
+    // Nota: no usamos SUPA_CACHE_KEY aún para mapear múltiples clientes, pero
+    // mantener la constante única evita redeclaraciones en el bundle.
     return createClient(SUPABASE_URL, SUPABASE_KEY);
   } catch (e) {
     console.error('[DIAG] Error creando cliente Supabase:', e && (e.message || e));
@@ -578,70 +585,78 @@ function renderHTML(payload) {
 
 // ========================== HANDLER ==========================
 exports.handler = async (event) => {
-  const startedAt = new Date();
-  const authenticated = isAuthed(event);
-  const wantJSON = asJSON(event);
-  const wantDeep = deepRequested(event);
-
-  // 1) Chequeos base Supabase (conectividad y conteos)
-  const [sbBasic, counts, execs] = await Promise.all([
-    sbTestBasic(authenticated),
-    sbCounts(),
-    sbFetchExecs(20),
-  ]);
-
-  // 2) Chequeos externos (OpenAI, OddsAPI, API‑Football, Telegram)
-  const checks = {
-    openai: await checkOpenAI({ deep: wantDeep, authenticated }),
-    oddsapi: await checkOddsAPI({ deep: wantDeep, authenticated }),
-    apifootball: await checkAPIFootball({ deep: wantDeep, authenticated }),
-    telegram: await checkTelegram({ deep: wantDeep, authenticated }),
-  };
-
-  // 3) Payload consolidado
-  const envInfo = pickEnvInfo(authenticated);
-  const payload = buildPayload({
-    envInfo,
-    sbBasic,
-    counts,
-    execs,
-    checks,
-    authenticated,
-  });
-
-  // 4) Persistencia de estado + ejecución
-  const endedAt = new Date();
   try {
-    await sbUpsertEstado(payload);
-  } catch (e) {
-    // no romper la respuesta por fallas de upsert
-  }
-  try {
-    await sbInsertEjecucion({
-      function_name: 'diagnostico-total',
-      started_at: startedAt.toISOString(),
-      ended_at: endedAt.toISOString(),
-      duration_ms: endedAt - startedAt,
-      ok: payload.global.status !== 'DOWN',
-      error_message: null
+    const startedAt = new Date();
+    const authenticated = isAuthed(event);
+    const wantJSON = asJSON(event);
+    const wantDeep = deepRequested(event);
+
+    // 1) Chequeos base Supabase (conectividad y conteos)
+    const [sbBasic, counts, execs] = await Promise.all([
+      sbTestBasic(authenticated),
+      sbCounts(),
+      sbFetchExecs(20),
+    ]);
+
+    // 2) Chequeos externos (OpenAI, OddsAPI, API‑Football, Telegram)
+    const checks = {
+      openai: await checkOpenAI({ deep: wantDeep, authenticated }),
+      oddsapi: await checkOddsAPI({ deep: wantDeep, authenticated }),
+      apifootball: await checkAPIFootball({ deep: wantDeep, authenticated }),
+      telegram: await checkTelegram({ deep: wantDeep, authenticated }),
+    };
+
+    // 3) Payload consolidado
+    const envInfo = pickEnvInfo(authenticated);
+    const payload = buildPayload({
+      envInfo,
+      sbBasic,
+      counts,
+      execs,
+      checks,
+      authenticated,
     });
-  } catch (e) {
-    // silencioso
-  }
 
-  // 5) Respuesta (HTML o JSON)
-  if (wantJSON) {
+    // 4) Persistencia de estado + ejecución
+    const endedAt = new Date();
+    try {
+      await sbUpsertEstado(payload);
+    } catch (_) {}
+    try {
+      await sbInsertEjecucion({
+        function_name: 'diagnostico-total',
+        started_at: startedAt.toISOString(),
+        ended_at: endedAt.toISOString(),
+        duration_ms: endedAt - startedAt,
+        ok: payload.global.status !== 'DOWN',
+        error_message: null
+      });
+    } catch (_) {}
+
+    // 5) Respuesta (HTML o JSON)
+    if (wantJSON) {
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify(payload, null, 2)
+      };
+    }
+
+    const html = renderHTML(payload);
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      body: JSON.stringify(payload, null, 2)
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: html
     };
+  } catch (e) {
+    // Contención: jamás respondas 500 a Netlify; entrega HTML con el error
+    const msg = (e && (e.message || String(e))) || 'Error desconocido';
+    const html = `<!doctype html><meta charset="utf-8">
+<title>PunterX — Diagnóstico Total (Error atrapado)</title>
+<pre style="font:14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+Diagnóstico atrapó una excepción y evitó el 500.
+Mensaje: ${htmlEscape(msg)}
+</pre>`;
+    return { statusCode: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }, body: html };
   }
-
-  const html = renderHTML(payload);
-  return {
-    statusCode: 200,
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    body: html
-  };
 };
