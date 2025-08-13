@@ -3,6 +3,11 @@
 // POST /.netlify/functions/send
 // Body JSON: { scope: "canal"|"vip", text: "mensaje" }
 
+// Polyfill fetch si el runtime no lo trae
+if (typeof fetch === 'undefined') {
+  global.fetch = require('node-fetch');
+}
+
 const getSupabase = require('./_supabase-client.cjs');
 
 const {
@@ -15,10 +20,11 @@ const T_NET = 8000;
 
 async function fetchWithTimeout(resource, options = {}) {
   const { timeout = T_NET, ...opts } = options;
-  const ctrl = new AbortController();
-  const id = setTimeout(() => ctrl.abort(), timeout);
+  const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const id = setTimeout(() => { try { ctrl && ctrl.abort(); } catch {} }, timeout);
   try {
-    return await fetch(resource, { ...opts, signal: ctrl.signal });
+    const signal = ctrl ? ctrl.signal : undefined;
+    return await fetch(resource, { ...opts, signal });
   } finally {
     clearTimeout(id);
   }
