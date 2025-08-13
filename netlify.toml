@@ -1,35 +1,40 @@
+# netlify.toml — PunterX
+
 [build]
-  command = "npm run build || echo 'no build step'"
-  publish = "dist"
+  # Si tienes build real, reemplaza por tu script (y asegúrate que cree "public")
+  # Este comando garantiza que exista la carpeta publish aunque no haya build.
+  command = "npm run build || echo 'no build step'; mkdir -p public"
+  publish = "public"
 
 [functions]
-  # Usar esbuild por defecto, pero NO incrustar supabase-js en los bundles
+  # Bundler por defecto
   node_bundler = "esbuild"
+  # No incrustar supabase-js en los bundles por defecto
   external_node_modules = ["@supabase/supabase-js"]
+  # Asegurar que el shim esté incluido en el deploy
   included_files = [
     "netlify/functions/_supabase-client.cjs"
   ]
 
 ############################################
-# FUNCIONES PROGRAMADAS (cron)
+# FUNCIONES Y SCHEDULES
 ############################################
 
-# Principal: sigue cada 15 min
+# Principal
 [functions."autopick-vip-nuevo"]
   schedule = "*/15 * * * *"
 
-# Background: misma cadencia pero escalonada 2 min para evitar solaparse
-# Corre al minuto 2, 17, 32, 47 de cada hora.
+# Background: corre al minuto 2, 17, 32, 47 de cada hora
 [functions."autopick-vip-nuevo-background"]
   schedule = "2-59/15 * * * *"
 
-# Verificador: cada hora en el minuto 0
+# Verificador: cada hora
 [functions."verificador-aciertos"]
   schedule = "0 * * * *"
 
-# Análisis semanal: lunes 10:00 (hora de servidor/UTC)
+# Análisis semanal: lunes 06:00
 [functions."analisis-semanal"]
-  schedule = "0 10 * * 1"
+  schedule = "0 6 * * 1"
 
 # Diagnóstico/refresh dashboard: cada 10 min
 [functions."diagnostico-total"]
