@@ -7,7 +7,12 @@
 //   - Deep:  /.netlify/functions/diagnostico-total?deep=1
 //   - Auth:  /.netlify/functions/diagnostico-total?code=XXXXX   (AUTH_CODE o PUNTERX_SECRET)
 
-let _createClient; // cache del import dinámico ESM
+// Caché global para evitar doble declaración si el bundler evalúa el archivo más de una vez
+const SUPA_CACHE_KEY = '__PX_SUPA_CREATE__';
+if (typeof globalThis[SUPA_CACHE_KEY] === 'undefined') {
+  globalThis[SUPA_CACHE_KEY] = null;
+}
+let _createClient = globalThis[SUPA_CACHE_KEY];
 
 // ========================== ENV / CONFIG ==========================
 const {
@@ -107,7 +112,12 @@ function fmtDate(d) {
 }
 
 // ========================== SUPABASE (ESM dinámico) ==========================
-let _createClient; // cache del import dinámico ESM
+// Caché global para evitar doble declaración si el bundler evalúa el archivo más de una vez
+const SUPA_CACHE_KEY = '__PX_SUPA_CREATE__';
+if (typeof globalThis[SUPA_CACHE_KEY] === 'undefined') {
+  globalThis[SUPA_CACHE_KEY] = null;
+}
+let _createClient = globalThis[SUPA_CACHE_KEY];
 
 async function getCreateClient() {
   if (_createClient) return _createClient;
@@ -116,11 +126,12 @@ async function getCreateClient() {
     const mod = await import('@supabase/supabase-js');
     _createClient = mod.createClient || (mod.default && mod.default.createClient);
     if (typeof _createClient !== 'function') throw new Error('createClient no encontrado en módulo Supabase');
+    // Guarda en caché global (clave única)
+    globalThis[SUPA_CACHE_KEY] = _createClient;
     return _createClient;
   } catch (e) {
-    // Import falló (no instalado, bundling, ESM, etc.)
     console.error('[DIAG] Error importando @supabase/supabase-js:', e?.message || e);
-    return null; // ← clave: devolvemos null para que el resto no explote
+    return null; // ← Para que el diagnóstico muestre Supabase: DOWN, sin tirar 500
   }
 }
 
