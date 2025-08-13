@@ -1,300 +1,613 @@
 // netlify/functions/diagnostico-total.js
-// Dashboard PRO con modo rápido (gratis) y modo profundo (?deep=1).
-// Soporta ?json=1 para salida JSON (machine-friendly).
+// Diagnóstico integral PunterX — HTML + JSON + persistencia de estado
+// CommonJS (Netlify Functions). Sin claves expuestas. Con auth opcional por querystring:
+//
+//   - HTML:  /.netlify/functions/diagnostico-total
+//   - JSON:  /.netlify/functions/diagnostico-total?json=1
+//   - Deep:  /.netlify/functions/diagnostico-total?deep=1
+//   - Auth:  /.netlify/functions/diagnostico-total?code=XXXXX   (AUTH_CODE o PUNTERX_SECRET)
+//
+// Notas:
+//  - No bloquea si no envías code; solo limita pings y oculta detalles sensibles.
+//  - Persiste estado en Supabase (tablas: diagnostico_estado, diagnostico_ejecuciones).
 
-const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
+const { createClient } = require('@supabase/supabase-js');
 
+// ========================== ENV / CONFIG ==========================
 const {
   SUPABASE_URL,
-  SUPABASE_KEY,
+  SUPABASE_KEY, // usa Service Role si quieres escritura; con anon solo lectura según RLS
   OPENAI_API_KEY,
-  TELEGRAM_BOT_TOKEN,
+  OPENAI_MODEL,
   ODDS_API_KEY,
   API_FOOTBALL_KEY,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_CHANNEL_ID,
+  TELEGRAM_GROUP_ID,
+  AUTH_CODE,
+  PUNTERX_SECRET,
+  TZ,
+  NODE_VERSION
 } = process.env;
 
-// ⬇️ Inicialización segura de Supabase (no reventar si falta ENV)
-const HAS_SB = Boolean(SUPABASE_URL && SUPABASE_KEY);
-const supabase = HAS_SB ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+const SITE_TZ = TZ || 'America/Mexico_City';
+const AUTH_KEYS = [AUTH_CODE, PUNTERX_SECRET].filter(Boolean);
 
-const FUNCIONES = [
-  // Añade aquí las funciones que quieras monitorear
-  'autopick-vip-nuevo',
-  'autopick-vip-nuevo-background',
-  'autopick-outrights',
-  'analisis-semanal',
-  'diagnostico-total',
-];
+// timeouts de red (ms)
+const T_NET = 7000;
 
-function respond(statusCode, body, asJson = false) {
-  return {
-    statusCode,
-    headers: {
-      'content-type': asJson ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8',
-      'cache-control': 'no-store',
-    },
-    body: asJson ? JSON.stringify(body, null, 2) : body,
-  };
+// ========================== UTILS ==========================
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const nowISO = () => new Date().toISOString();
+const ms = (t0) => Date.now() - t0;
+
+function mask(str, keep = 4) {
+  if (!str) return '';
+  const s = String(str);
+  if (s.length <= keep) return '*'.repeat(s.length);
+  return s.slice(0, keep) + '*'.repeat(s.length - keep);
 }
 
-function badge(status) {
-  const c =
-    status === 'UP' || status === 'ok' ? '#16a34a' :
-    status === 'DEGRADED' || status === 'warn' ? '#f59e0b' :
-    '#dc2626';
-  return `<span style="padding:2px 8px;border-radius:999px;background:${c};color:#fff;font-weight:600">${status}</span>`;
-}
-
-function pad2(n) { return String(n).padStart(2, '0'); }
-function ymd(d = new Date()) {
-  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
-}
-
-async function estadoSupabase() {
-  if (!HAS_SB) return 'DOWN';
+async function safeJson(res) {
   try {
-    const { error } = await supabase.from('picks_historicos').select('id').limit(1);
-    return error ? 'DOWN' : 'UP';
-  } catch { return 'DOWN'; }
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
-async function resumenHoy() {
-  if (!HAS_SB) return { enviados: 0, ev_prom: 0 };
+async function safeText(res) {
   try {
-    const today = ymd(new Date());
-    const { data } = await supabase
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+function okToDeep(authenticated, deepRequested) {
+  // Si hay autenticación correcta, permitimos deep cuando se pide (?deep=1)
+  // Si NO hay auth, solo permitimos deep=false (pings ligeros desactivados para evitar costos/ratelimits).
+  return authenticated && deepRequested;
+}
+
+function isAuthed(event) {
+  const code = (event.queryStringParameters && (event.queryStringParameters.code || event.queryStringParameters.token)) || '';
+  if (!AUTH_KEYS.length) return false;
+  return AUTH_KEYS.some(k => k && k === code);
+}
+
+function asJSON(event) {
+  return !!(event.queryStringParameters && event.queryStringParameters.json);
+}
+
+function deepRequested(event) {
+  return !!(event.queryStringParameters && event.queryStringParameters.deep);
+}
+
+function htmlEscape(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function fmtDate(d) {
+  try {
+    const dt = new Date(d);
+    return dt.toLocaleString('es-MX', { timeZone: SITE_TZ, hour12: false });
+  } catch {
+    return d || '';
+  }
+}
+
+// ========================== SUPABASE ==========================
+function supa() {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+  return createClient(SUPABASE_URL, SUPABASE_KEY);
+}
+
+async function sbTestBasic(authenticated) {
+  // Prueba de conectividad + consulta de picks recientes
+  const client = supa();
+  const t0 = Date.now();
+  if (!client) return { status: 'DOWN', ms: ms(t0), error: 'SUPABASE_URL/SUPABASE_KEY ausentes' };
+
+  try {
+    // Intento rápido (limite bajo y orden)
+    const { data, error } = await client
       .from('picks_historicos')
-      .select('ev, timestamp')
-      .gte('timestamp', `${today}T00:00:00.000Z`)
-      .lte('timestamp', `${today}T23:59:59.999Z`);
-    const arr = data || [];
-    const enviados = arr.length;
-    const ev_prom = enviados ? Math.round(arr.reduce((a, b) => a + (b.ev || 0), 0) / enviados) : 0;
-    return { enviados, ev_prom };
-  } catch { return { enviados: 0, ev_prom: 0 }; }
-}
-
-async function resumenWinRate(windowDias) {
-  if (!HAS_SB) return { hit: 0, ev_prom: 0, samples: 0 };
-  try {
-    const desdeISO = new Date(Date.now() - windowDias * 86400000).toISOString();
-    const { data } = await supabase
-      .from('memoria_resumen')
-      .select('hit_rate, ev_prom, samples')
-      .eq('window_dias', windowDias)
-      .order('updated_at', { ascending: false })
+      .select('timestamp')
+      .order('timestamp', { ascending: false })
       .limit(1);
-    if (data && data.length) {
-      const r = data[0];
-      return { hit: r.hit_rate || 0, ev_prom: r.ev_prom || 0, samples: r.samples || 0 };
-    }
-    const { data: res } = await supabase
-      .from('resultados_partidos')
-      .select('resultado, ev, fecha_liq')
-      .gte('fecha_liq', desdeISO);
-    const arr = res || [];
-    const tot = arr.length;
-    const wins = arr.filter(x => x.resultado === 'win').length;
-    const hit = tot ? Math.round((wins * 100) / tot) : 0;
-    const ev_prom = tot ? Math.round(arr.reduce((a, b) => a + (b.ev || 0), 0) / tot) : 0;
-    return { hit, ev_prom, samples: tot };
-  } catch {
-    return { hit: 0, ev_prom: 0, samples: 0 };
+
+    if (error) return { status: 'DOWN', ms: ms(t0), error: error.message };
+    return { status: 'UP', ms: ms(t0), sample: (data && data[0]) ? data[0].timestamp : null };
+  } catch (e) {
+    return { status: 'DOWN', ms: ms(t0), error: e.message || String(e) };
   }
 }
 
-async function getHeartbeats() {
-  if (!HAS_SB) return FUNCIONES.map(name => ({ name, last_seen: null, ok: null }));
+async function sbCounts() {
+  const client = supa();
+  if (!client) return { today: 0, last7d: 0, last30d: 0 };
+
+  const now = new Date();
+  const startToday = new Date(now);
+  startToday.setHours(0,0,0,0);
+
+  const isoToday = startToday.toISOString();
+  const iso7d = new Date(now - 7*86400000).toISOString();
+  const iso30d = new Date(now - 30*86400000).toISOString();
+
+  async function countSince(ts) {
+    const { data, error } = await client
+      .from('picks_historicos')
+      .select('timestamp', { count: 'exact', head: true })
+      .gte('timestamp', ts);
+    return error ? null : data; // para supabase-js v2, count va por header; devolvemos data null (no importa)
+  }
+
+  async function getCount(ts) {
+    const { count, error } = await client
+      .from('picks_historicos')
+      .select('*', { count: 'exact', head: true })
+      .gte('timestamp', ts);
+    return error ? 0 : (count || 0);
+  }
+
   try {
-    const { data, error } = await supabase
-      .from('heartbeats')
-      .select('function_name,last_seen,ok')
-      .in('function_name', FUNCIONES);
-    if (error) throw error;
-    const map = Object.fromEntries((data || []).map(r => [r.function_name, r]));
-    return FUNCIONES.map(name => {
-      const r = map[name];
-      return { name, last_seen: r?.last_seen || null, ok: r?.ok ?? null };
+    const [cT, c7, c30] = await Promise.all([getCount(isoToday), getCount(iso7d), getCount(iso30d)]);
+    return { today: cT, last7d: c7, last30d: c30 };
+  } catch {
+    return { today: 0, last7d: 0, last30d: 0 };
+  }
+}
+
+async function sbFetchExecs(limit = 20) {
+  const client = supa();
+  if (!client) return [];
+  const { data, error } = await client
+    .from('diagnostico_ejecuciones')
+    .select('function_name, started_at, ended_at, duration_ms, ok, error_message')
+    .order('id', { ascending: false })
+    .limit(limit);
+  if (error) return [];
+  return data || [];
+}
+
+async function sbUpsertEstado(payload) {
+  const client = supa();
+  if (!client) return { ok: false, error: 'No Supabase client' };
+  try {
+    const { error } = await client
+      .from('diagnostico_estado')
+      .upsert({
+        fn_name: 'diagnostico-total',
+        status: payload?.global?.status || 'UNKNOWN',
+        details: payload,
+        updated_at: new Date().toISOString()
+      })
+      .select('fn_name')
+      .single();
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function sbInsertEjecucion(row) {
+  const client = supa();
+  if (!client) return;
+  try {
+    await client
+      .from('diagnostico_ejecuciones')
+      .insert([row]);
+  } catch (e) {
+    // silencioso
+  }
+}
+
+// ========================== CHECKS EXTERNOS ==========================
+async function checkOpenAI({ deep, authenticated }) {
+  const t0 = Date.now();
+  if (!OPENAI_API_KEY) return { status: 'DOWN', ms: ms(t0), error: 'OPENAI_API_KEY ausente' };
+  if (!okToDeep(authenticated, deep)) {
+    return { status: 'UP', ms: 0, note: 'modo público (sin deep)' };
+  }
+  try {
+    const res = await fetch('https://api.openai.com/v1/models', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+      timeout: T_NET
     });
-  } catch {
-    return FUNCIONES.map(name => ({ name, last_seen: null, ok: null }));
+    if (!res.ok) {
+      const txt = await safeText(res);
+      return { status: 'DOWN', ms: ms(t0), http: res.status, body: (txt || '').slice(0, 160) };
+    }
+    return { status: 'UP', ms: ms(t0) };
+  } catch (e) {
+    return { status: 'DOWN', ms: ms(t0), error: e.message || String(e) };
   }
 }
 
-async function getCosts(days = 30) {
-  if (!HAS_SB) return { total: null, porProveedor: null };
+async function checkOddsAPI({ deep, authenticated }) {
+  const t0 = Date.now();
+  if (!ODDS_API_KEY) return { status: 'DOWN', ms: ms(t0), error: 'ODDS_API_KEY ausente' };
+  if (!okToDeep(authenticated, deep)) {
+    return { status: 'UP', ms: 0, note: 'modo público (sin deep)' };
+  }
   try {
-    const since = new Date(Date.now() - days * 86400000).toISOString();
-    const { data, error } = await supabase
-      .from('cost_telemetry')
-      .select('provider, usd, ts')
-      .gte('ts', since);
-    if (error) throw error;
-    const total = (data || []).reduce((a, b) => a + (Number(b.usd) || 0), 0);
-    const porProveedor = {};
-    (data || []).forEach(r => { porProveedor[r.provider] = (porProveedor[r.provider] || 0) + (Number(r.usd) || 0); });
-    return { total: Number(total.toFixed(4)), porProveedor };
-  } catch {
-    return { total: null, porProveedor: null };
+    const url = `https://api.the-odds-api.com/v4/sports/?apiKey=${ODDS_API_KEY}`;
+    const res = await fetch(url, { timeout: T_NET });
+    if (!res.ok) {
+      const txt = await safeText(res);
+      return { status: 'DOWN', ms: ms(t0), http: res.status, body: (txt || '').slice(0, 160) };
+    }
+    return { status: 'UP', ms: ms(t0) };
+  } catch (e) {
+    return { status: 'DOWN', ms: ms(t0), error: e.message || String(e) };
   }
 }
 
-function htmlPage(model) {
-  const {
-    fast,
-    states, // { supabase, openai, openai_ms, telegram, telegram_ms, odds, apifootball }
-    today, last7, last30,
-    beats, // [{name,last_seen,ok}]
-    costs, // {total,porProveedor}
-    generatedAt,
-  } = model;
+async function checkAPIFootball({ deep, authenticated }) {
+  const t0 = Date.now();
+  if (!API_FOOTBALL_KEY) return { status: 'DOWN', ms: ms(t0), error: 'API_FOOTBALL_KEY ausente' };
+  if (!okToDeep(authenticated, deep)) {
+    return { status: 'UP', ms: 0, note: 'modo público (sin deep)' };
+  }
+  try {
+    const res = await fetch('https://v3.football.api-sports.io/status', {
+      headers: { 'x-apisports-key': API_FOOTBALL_KEY },
+      timeout: T_NET
+    });
+    if (!res.ok) {
+      const txt = await safeText(res);
+      return { status: 'DOWN', ms: ms(t0), http: res.status, body: (txt || '').slice(0, 160) };
+    }
+    const data = await safeJson(res);
+    const apiStatus = data?.response?.subscription?.active ? 'UP' : 'WARN';
+    return { status: apiStatus, ms: ms(t0) };
+  } catch (e) {
+    return { status: 'DOWN', ms: ms(t0), error: e.message || String(e) };
+  }
+}
 
-  const rowBeat = b => {
-    const s = b.ok === null ? 'UNKNOWN' : b.ok ? 'UP' : 'DOWN';
-    const pill = badge(s === 'UNKNOWN' ? 'DEGRADED' : s);
-    const when = b.last_seen ? new Date(b.last_seen).toLocaleString() : '—';
-    return `<tr>
-      <td style="padding:8px 12px;">${b.name}</td>
-      <td style="padding:8px 12px;">${when}</td>
-      <td style="padding:8px 12px;">${pill}</td>
-    </tr>`;
+async function checkTelegram({ deep, authenticated }) {
+  const t0 = Date.now();
+  if (!TELEGRAM_BOT_TOKEN) return { status: 'DOWN', ms: ms(t0), error: 'TELEGRAM_BOT_TOKEN ausente' };
+  if (!okToDeep(authenticated, deep)) {
+    return { status: 'UP', ms: 0, note: 'modo público (sin deep)' };
+  }
+  try {
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe`;
+    const res = await fetch(url, { timeout: T_NET });
+    if (!res.ok) {
+      const txt = await safeText(res);
+      return { status: 'DOWN', ms: ms(t0), http: res.status, body: (txt || '').slice(0, 160) };
+    }
+    const data = await safeJson(res);
+    const ok = data?.ok === true;
+    return { status: ok ? 'UP' : 'DOWN', ms: ms(t0) };
+  } catch (e) {
+    return { status: 'DOWN', ms: ms(t0), error: e.message || String(e) };
+  }
+}
+
+// ========================== PAYLOAD ==========================
+function globalStatus(parts) {
+  // Prioridad: DOWN > WARN > UP
+  const order = { DOWN: 3, WARN: 2, UP: 1, UNKNOWN: 0 };
+  let worst = 'UP';
+  for (const p of parts) {
+    const s = (p && p.status) || 'UNKNOWN';
+    if (order[s] > order[worst]) worst = s;
+  }
+  return worst;
+}
+
+function buildPayload({ envInfo, sbBasic, counts, execs, checks, authenticated }) {
+  return {
+    generated_at: nowISO(),
+    timezone: SITE_TZ,
+    node: NODE_VERSION || process.version,
+    authenticated,
+    env: envInfo,
+    supabase_basic: sbBasic,
+    counts,
+    execs,
+    checks,
+    global: { status: globalStatus([sbBasic, checks.openai, checks.oddsapi, checks.apifootball, checks.telegram]) }
   };
+}
 
-  const costBox = costs.total === null
-    ? `<p class="muted">Costos (últimos 30 días): N/A (sin tabla cost_telemetry)</p>`
-    : `<p>Costos 30d: <b>$${costs.total}</b></p>
-       <div class="muted">${
-         Object.entries(costs.porProveedor)
-           .map(([k, v]) => `${k}: $${v.toFixed(4)}`)
-           .join(' · ')
-       }</div>`;
+function pickEnvInfo(authenticated) {
+  return {
+    TZ: SITE_TZ,
+    OPENAI_MODEL: OPENAI_MODEL || '(default)',
+    SUPABASE_URL: authenticated ? SUPABASE_URL : mask(SUPABASE_URL, 20),
+    SUPABASE_KEY: authenticated ? mask(SUPABASE_KEY, 6) : '********',
+    ODDS_API_KEY: authenticated ? mask(ODDS_API_KEY, 6) : '********',
+    API_FOOTBALL_KEY: authenticated ? mask(API_FOOTBALL_KEY, 6) : '********',
+    TELEGRAM_BOT_TOKEN: authenticated ? mask(TELEGRAM_BOT_TOKEN, 6) : '********',
+    TELEGRAM_CHANNEL_ID: TELEGRAM_CHANNEL_ID ? mask(TELEGRAM_CHANNEL_ID, 2) : '',
+    TELEGRAM_GROUP_ID: TELEGRAM_GROUP_ID ? mask(TELEGRAM_GROUP_ID, 2) : ''
+  };
+}
 
-  const deepNote = fast
-    ? `<div class="muted">Modo rápido (sin pings a proveedores). <a href="?deep=1">Cambiar a modo profundo</a></div>`
-    : `<div class="muted">Modo profundo: latencias — OpenAI ${states.openai_ms ?? '—'} ms · Telegram ${states.telegram_ms ?? '—'} ms. <a href="?">Cambiar a modo rápido</a></div>`;
+// ========================== HTML UI ==========================
+function colorByStatus(st) {
+  switch (st) {
+    case 'UP': return '#17c964';      // green
+    case 'WARN': return '#f5a524';    // amber
+    case 'DOWN': return '#f31260';    // red/pink
+    default: return '#a1a1aa';        // gray
+  }
+}
+
+function iconByStatus(st) {
+  switch (st) {
+    case 'UP': return '✅';
+    case 'WARN': return '⚠️';
+    case 'DOWN': return '❌';
+    default: return '•';
+  }
+}
+
+function tile(label, status, details) {
+  const c = colorByStatus(status);
+  return `
+  <div class="tile">
+    <div class="tile-top">
+      <span class="dot" style="background:${c}"></span>
+      <span class="label">${htmlEscape(label)}</span>
+      <span class="status" style="color:${c}">${iconByStatus(status)} ${status}</span>
+    </div>
+    <pre class="mono">${htmlEscape(details || '')}</pre>
+  </div>`;
+}
+
+function renderHTML(payload) {
+  const { env, supabase_basic, counts, execs, checks, global } = payload;
+
+  const envBlock = `
+  <table class="env">
+    <tr><td>TZ</td><td>${htmlEscape(env.TZ)}</td></tr>
+    <tr><td>OPENAI_MODEL</td><td>${htmlEscape(env.OPENAI_MODEL)}</td></tr>
+    <tr><td>SUPABASE_URL</td><td>${htmlEscape(env.SUPABASE_URL)}</td></tr>
+    <tr><td>SUPABASE_KEY</td><td>${htmlEscape(env.SUPABASE_KEY)}</td></tr>
+    <tr><td>ODDS_API_KEY</td><td>${htmlEscape(env.ODDS_API_KEY)}</td></tr>
+    <tr><td>API_FOOTBALL_KEY</td><td>${htmlEscape(env.API_FOOTBALL_KEY)}</td></tr>
+    <tr><td>TELEGRAM_BOT_TOKEN</td><td>${htmlEscape(env.TELEGRAM_BOT_TOKEN)}</td></tr>
+    <tr><td>TELEGRAM_CHANNEL_ID</td><td>${htmlEscape(env.TELEGRAM_CHANNEL_ID)}</td></tr>
+    <tr><td>TELEGRAM_GROUP_ID</td><td>${htmlEscape(env.TELEGRAM_GROUP_ID)}</td></tr>
+  </table>`;
+
+  const sbDetails = [
+    `status: ${supabase_basic.status}`,
+    supabase_basic.error ? `error: ${supabase_basic.error}` : null,
+    supabase_basic.sample ? `último pick ts: ${fmtDate(supabase_basic.sample)}` : null,
+    `latencia: ${supabase_basic.ms} ms`
+  ].filter(Boolean).join('\n');
+
+  const openaiDetails = [
+    `status: ${checks.openai.status}`,
+    checks.openai.error ? `error: ${checks.openai.error}` : null,
+    checks.openai.http ? `http: ${checks.openai.http}` : null,
+    `latencia: ${checks.openai.ms} ms`,
+    checks.openai.note ? `nota: ${checks.openai.note}` : null
+  ].filter(Boolean).join('\n');
+
+  const oddsDetails = [
+    `status: ${checks.oddsapi.status}`,
+    checks.oddsapi.error ? `error: ${checks.oddsapi.error}` : null,
+    checks.oddsapi.http ? `http: ${checks.oddsapi.http}` : null,
+    `latencia: ${checks.oddsapi.ms} ms`,
+    checks.oddsapi.note ? `nota: ${checks.oddsapi.note}` : null
+  ].filter(Boolean).join('\n');
+
+  const footDetails = [
+    `status: ${checks.apifootball.status}`,
+    checks.apifootball.error ? `error: ${checks.apifootball.error}` : null,
+    checks.apifootball.http ? `http: ${checks.apifootball.http}` : null,
+    `latencia: ${checks.apifootball.ms} ms`,
+    checks.apifootball.note ? `nota: ${checks.apifootball.note}` : null
+  ].filter(Boolean).join('\n');
+
+  const tgDetails = [
+    `status: ${checks.telegram.status}`,
+    checks.telegram.error ? `error: ${checks.telegram.error}` : null,
+    checks.telegram.http ? `http: ${checks.telegram.http}` : null,
+    `latencia: ${checks.telegram.ms} ms`,
+    checks.telegram.note ? `nota: ${checks.telegram.note}` : null
+  ].filter(Boolean).join('\n');
+
+  const execRows = (execs || []).map(e => `
+    <tr>
+      <td>${htmlEscape(e.function_name)}</td>
+      <td>${fmtDate(e.started_at)}</td>
+      <td>${fmtDate(e.ended_at)}</td>
+      <td class="num">${e.duration_ms ?? ''}</td>
+      <td>${e.ok ? '✅' : '❌'}</td>
+      <td>${htmlEscape(e.error_message || '')}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="6" class="muted">Sin registros</td></tr>';
+
+  const c = colorByStatus(global.status);
 
   return `<!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>PunterX · Diagnóstico</title>
-<style>
-  :root{--bg:#0b0f17;--panel:#0f172a;--card:#111827;--b:#1f2937;--fg:#e5e7eb;--muted:#9ca3af;--accent:#93c5fd}
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:24px}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;align-items:stretch}
-  .card{background:var(--card);border:1px solid var(--b);border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.25)}
-  h1{font-size:22px;margin:0 0 16px}
-  h3{font-size:16px;margin:0 0 8px;color:var(--accent)}
-  p{margin:6px 0}
-  .muted{color:var(--muted)}
-  table{width:100%;border-collapse:collapse;border-spacing:0}
-  th,td{border-top:1px solid var(--b);font-size:14px}
-  th{color:var(--muted);text-align:left;padding:8px 12px}
-  .row{display:flex;gap:12px;flex-wrap:wrap}
-  .kv{background:var(--panel);border:1px solid var(--b);border-radius:12px;padding:8px 10px;font-size:13px}
-  a{color:#60a5fa;text-decoration:none}
-  a:hover{text-decoration:underline}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PunterX — Diagnóstico Total</title>
+  <style>
+    :root{
+      --bg:#0b0b10; --card:#11131a; --muted:#9ca3af; --fg:#e5e7eb; --green:#17c964; --amber:#f5a524; --red:#f31260; --blue:#3b82f6;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;}
+    header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #1f2330;background:#0d0f16;position:sticky;top:0;z-index:10}
+    .brand{display:flex;gap:10px;align-items:center}
+    .brand .dot{width:10px;height:10px;border-radius:50%;}
+    .title{font-weight:700;letter-spacing:0.2px}
+    .subtitle{color:var(--muted);font-size:12px}
+    .grid{display:grid;gap:16px;padding:20px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+    .tile{background:var(--card);border-radius:14px;padding:14px;border:1px solid #1f2330;box-shadow:0 0 0 1px rgba(255,255,255,0.02) inset}
+    .tile-top{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+    .dot{width:10px;height:10px;border-radius:50%;}
+    .label{font-weight:600}
+    .status{margin-left:auto;font-weight:700}
+    .mono{white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace;font-size:12px;color:#d1d5db;background:#0d0f16;padding:10px;border-radius:10px;border:1px solid #1f2330}
+    table.env{width:100%;border-collapse:collapse}
+    table.env td{padding:6px 8px;border-bottom:1px dashed #1f2330;font-size:13px}
+    .section{padding:0 20px 20px}
+    .cards{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+    .card{background:var(--card);border:1px solid #1f2330;border-radius:14px;padding:14px}
+    .muted{color:var(--muted)}
+    h2{margin:12px 0;font-size:16px}
+    table.tbl{width:100%;border-collapse:collapse}
+    table.tbl th, table.tbl td{padding:8px;border-bottom:1px solid #1f2330;font-size:13px;text-align:left}
+    table.tbl th{color:#cbd5e1;font-weight:700}
+    .num{text-align:right}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#0d0f16;border:1px solid #1f2330}
+    .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;background:#0d0f16;border:1px solid #1f2330;border-radius:6px;padding:2px 6px;font-size:12px}
+    footer{padding:16px 20px;color:#94a3b8;font-size:12px;display:flex;justify-content:space-between;border-top:1px solid #1f2330}
+    a{color:#93c5fd;text-decoration:none}
+  </style>
 </head>
 <body>
-  <h1>Diagnóstico PunterX</h1>
+  <header>
+    <div class="brand">
+      <span class="dot" style="background:${c}"></span>
+      <div>
+        <div class="title">PunterX — Diagnóstico Total</div>
+        <div class="subtitle">Estado global: <span class="pill" style="border-color:${c};color:${c}">${global.status}</span></div>
+      </div>
+    </div>
+    <div class="subtitle">
+      ${htmlEscape(payload.generated_at)} · Zona: ${htmlEscape(payload.timezone)} · Node: ${htmlEscape(payload.node)}
+    </div>
+  </header>
 
-  <div class="row" style="margin-bottom:12px">
-    <div class="kv">Supabase ${badge(states.supabase)}</div>
-    <div class="kv">OpenAI ${typeof states.openai==='string' ? badge(states.openai) : badge(states.openai.status)}</div>
-    <div class="kv">OddsAPI ${badge(states.odds)}</div>
-    <div class="kv">API-Football ${badge(states.apifootball)}</div>
-    <div class="kv">Telegram ${typeof states.telegram==='string' ? badge(states.telegram) : badge(states.telegram.status)}</div>
+  <div class="grid">
+    ${tile('Supabase', supabase_basic.status, sbDetails)}
+    ${tile('OpenAI', checks.openai.status, openaiDetails)}
+    ${tile('OddsAPI', checks.oddsapi.status, oddsDetails)}
+    ${tile('API‑Football', checks.apifootball.status, footDetails)}
+    ${tile('Telegram', checks.telegram.status, tgDetails)}
   </div>
 
-  ${deepNote}
+  <section class="section">
+    <h2>Entorno</h2>
+    <div class="card">
+      ${envBlock}
+      <div class="muted" style="margin-top:8px">*Valores sensibles en modo público aparecen enmascarados. Añade <span class="kbd">?code=…</span> para vista autenticada.</div>
+    </div>
+  </section>
 
-  <div class="grid" style="margin-top:12px">
+  <section class="section cards">
     <div class="card">
-      <h3>Hoy</h3>
-      <p>Enviados: <b>${today.enviados}</b></p>
-      <p>EV Promedio: <b>${today.ev_prom}%</b></p>
-      ${costBox}
-    </div>
-    <div class="card">
-      <h3>Últimos 7 días</h3>
-      <p>Hit Rate: <b>${last7.hit}%</b></p>
-      <p>EV Promedio: <b>${last7.ev_prom}%</b></p>
-      <p class="muted">Muestras: ${last7.samples}</p>
-    </div>
-    <div class="card">
-      <h3>Últimos 30 días</h3>
-      <p>Hit Rate: <b>${last30.hit}%</b></p>
-      <p>EV Promedio: <b>${last30.ev_prom}%</b></p>
-      <p class="muted">Muestras: ${last30.samples}</p>
-    </div>
-    <div class="card">
-      <h3>Funciones (heartbeats)</h3>
-      <table>
-        <thead><tr><th>Función</th><th>Último seen</th><th>Estado</th></tr></thead>
-        <tbody>
-          ${beats.map(rowBeat).join('')}
-        </tbody>
+      <h2>Actividad de picks</h2>
+      <table class="tbl">
+        <tr><th>Hoy</th><th>Últimos 7 días</th><th>Últimos 30 días</th></tr>
+        <tr>
+          <td class="num">${counts.today}</td>
+          <td class="num">${counts.last7d}</td>
+          <td class="num">${counts.last30d}</td>
+        </tr>
       </table>
+      <div class="muted" style="margin-top:8px">Fuente: <span class="kbd">picks_historicos</span></div>
     </div>
-  </div>
 
-  <p class="muted" style="margin-top:16px">Actualizado: ${new Date(generatedAt).toLocaleString()} · <a href="?json=1${fast ? '' : '&deep=1'}">Ver JSON</a></p>
+    <div class="card">
+      <h2>Últimas ejecuciones</h2>
+      <table class="tbl">
+        <tr><th>Función</th><th>Inicio</th><th>Fin</th><th>ms</th><th>OK</th><th>Error</th></tr>
+        ${execRows}
+      </table>
+      <div class="muted" style="margin-top:8px">Fuente: <span class="kbd">diagnostico_ejecuciones</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <div>
+      Vista: ${payload.authenticated ? 'Autenticada' : 'Pública'} ·
+      <a href="?json=1${payload.authenticated ? '&code=HIDDEN' : ''}">JSON</a> ·
+      <a href="?deep=1${payload.authenticated ? '&code=HIDDEN' : ''}">Deep</a>
+    </div>
+    <div>© ${new Date().getFullYear()} PunterX</div>
+  </footer>
 </body>
 </html>`;
 }
 
-exports.handler = async (evt) => {
-  const rawUrl = evt?.rawUrl || `http://x/?${evt?.rawQuery || ''}`;
-  const url = new URL(rawUrl);
-  const deep = url.searchParams.get('deep') === '1';
-  const asJson = url.searchParams.get('json') === '1';
+// ========================== HANDLER ==========================
+exports.handler = async (event) => {
+  const startedAt = new Date();
+  const authenticated = isAuthed(event);
+  const wantJSON = asJSON(event);
+  const wantDeep = deepRequested(event);
 
+  // 1) Chequeos base Supabase (conectividad y conteos)
+  const [sbBasic, counts, execs] = await Promise.all([
+    sbTestBasic(authenticated),
+    sbCounts(),
+    sbFetchExecs(20),
+  ]);
+
+  // 2) Chequeos externos (OpenAI, OddsAPI, API‑Football, Telegram)
+  const checks = {
+    openai: await checkOpenAI({ deep: wantDeep, authenticated }),
+    oddsapi: await checkOddsAPI({ deep: wantDeep, authenticated }),
+    apifootball: await checkAPIFootball({ deep: wantDeep, authenticated }),
+    telegram: await checkTelegram({ deep: wantDeep, authenticated }),
+  };
+
+  // 3) Payload consolidado
+  const envInfo = pickEnvInfo(authenticated);
+  const payload = buildPayload({
+    envInfo,
+    sbBasic,
+    counts,
+    execs,
+    checks,
+    authenticated,
+  });
+
+  // 4) Persistencia de estado + ejecución
+  const endedAt = new Date();
   try {
-    // Estados (modo rápido vs profundo)
-    const [sb, odds, foot] = await Promise.all([
-      estadoSupabase(),
-      estadoOddsAPI(),
-      estadoAPIFootball(),
-    ]);
-
-    const oai = await estadoOpenAI({ deep });
-    const tg  = await estadoTelegram({ deep });
-
-    const [today, last7, last30, beats, costs] = await Promise.all([
-      resumenHoy(),
-      resumenWinRate(7),
-      resumenWinRate(30),
-      getHeartbeats(),
-      getCosts(30),
-    ]);
-
-    const model = {
-      fast: !deep,
-      generatedAt: new Date().toISOString(),
-      states: {
-        supabase: sb,
-        openai: typeof oai === 'string' ? oai : oai.status,
-        openai_ms: typeof oai === 'object' ? oai.ms : null,
-        telegram: typeof tg === 'string' ? tg : tg.status,
-        telegram_ms: typeof tg === 'object' ? tg.ms : null,
-        odds,
-        apifootball: foot,
-      },
-      today,
-      last7,
-      last30,
-      beats,
-      costs,
-    };
-
-    if (asJson) return respond(200, model, true);
-    return respond(200, htmlPage(model), false);
+    await sbUpsertEstado(payload);
   } catch (e) {
-    const msg = e?.message || String(e);
-    if (asJson) return respond(500, { error: msg }, true);
-    return respond(500, `<!doctype html><pre style="color:#fca5a5">Error: ${msg}</pre>`, false);
+    // no romper la respuesta por fallas de upsert
   }
+  try {
+    await sbInsertEjecucion({
+      function_name: 'diagnostico-total',
+      started_at: startedAt.toISOString(),
+      ended_at: endedAt.toISOString(),
+      duration_ms: endedAt - startedAt,
+      ok: payload.global.status !== 'DOWN',
+      error_message: null
+    });
+  } catch (e) {
+    // silencioso
+  }
+
+  // 5) Respuesta (HTML o JSON)
+  if (wantJSON) {
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(payload, null, 2)
+    };
+  }
+
+  const html = renderHTML(payload);
+  return {
+    statusCode: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    body: html
+  };
 };
