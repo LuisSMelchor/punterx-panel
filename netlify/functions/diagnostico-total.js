@@ -6,12 +6,7 @@
 //   - JSON:  /.netlify/functions/diagnostico-total?json=1
 //   - Deep:  /.netlify/functions/diagnostico-total?deep=1
 //   - Auth:  /.netlify/functions/diagnostico-total?code=XXXXX   (AUTH_CODE o PUNTERX_SECRET)
-//
-// Notas:
-//  - No bloquea si no envías code; solo limita pings y oculta detalles sensibles.
-//  - Persiste estado en Supabase (tablas: diagnostico_estado, diagnostico_ejecuciones).
 
-const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 
 // ========================== ENV / CONFIG ==========================
@@ -36,6 +31,18 @@ const AUTH_KEYS = [AUTH_CODE, PUNTERX_SECRET].filter(Boolean);
 
 // timeouts de red (ms)
 const T_NET = 7000;
+
+// ========================== FETCH CON TIMEOUT ==========================
+async function fetchWithTimeout(resource, options = {}) {
+  const { timeout = T_NET, ...opts } = options;
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    return await fetch(resource, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
 
 // ========================== UTILS ==========================
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -67,7 +74,7 @@ async function safeText(res) {
 
 function okToDeep(authenticated, deepRequested) {
   // Si hay autenticación correcta, permitimos deep cuando se pide (?deep=1)
-  // Si NO hay auth, solo permitimos deep=false (pings ligeros desactivados para evitar costos/ratelimits).
+  // Sin auth: solo modo superficial (para evitar costos/ratelimits).
   return authenticated && deepRequested;
 }
 
@@ -113,7 +120,6 @@ async function sbTestBasic(authenticated) {
   if (!client) return { status: 'DOWN', ms: ms(t0), error: 'SUPABASE_URL/SUPABASE_KEY ausentes' };
 
   try {
-    // Intento rápido (limite bajo y orden)
     const { data, error } = await client
       .from('picks_historicos')
       .select('timestamp')
@@ -138,14 +144,6 @@ async function sbCounts() {
   const isoToday = startToday.toISOString();
   const iso7d = new Date(now - 7*86400000).toISOString();
   const iso30d = new Date(now - 30*86400000).toISOString();
-
-  async function countSince(ts) {
-    const { data, error } = await client
-      .from('picks_historicos')
-      .select('timestamp', { count: 'exact', head: true })
-      .gte('timestamp', ts);
-    return error ? null : data; // para supabase-js v2, count va por header; devolvemos data null (no importa)
-  }
 
   async function getCount(ts) {
     const { count, error } = await client
@@ -216,7 +214,7 @@ async function checkOpenAI({ deep, authenticated }) {
     return { status: 'UP', ms: 0, note: 'modo público (sin deep)' };
   }
   try {
-    const res = await fetch('https://api.openai.com/v1/models', {
+    const res = await fetchWithTimeout('https://api.openai.com/v1/models', {
       method: 'GET',
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
       timeout: T_NET
@@ -239,7 +237,7 @@ async function checkOddsAPI({ deep, authenticated }) {
   }
   try {
     const url = `https://api.the-odds-api.com/v4/sports/?apiKey=${ODDS_API_KEY}`;
-    const res = await fetch(url, { timeout: T_NET });
+    const res = await fetchWithTimeout(url, { timeout: T_NET });
     if (!res.ok) {
       const txt = await safeText(res);
       return { status: 'DOWN', ms: ms(t0), http: res.status, body: (txt || '').slice(0, 160) };
@@ -257,7 +255,7 @@ async function checkAPIFootball({ deep, authenticated }) {
     return { status: 'UP', ms: 0, note: 'modo público (sin deep)' };
   }
   try {
-    const res = await fetch('https://v3.football.api-sports.io/status', {
+    const res = await fetchWithTimeout('https://v3.football.api-sports.io/status', {
       headers: { 'x-apisports-key': API_FOOTBALL_KEY },
       timeout: T_NET
     });
@@ -281,7 +279,7 @@ async function checkTelegram({ deep, authenticated }) {
   }
   try {
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe`;
-    const res = await fetch(url, { timeout: T_NET });
+    const res = await fetchWithTimeout(url, { timeout: T_NET });
     if (!res.ok) {
       const txt = await safeText(res);
       return { status: 'DOWN', ms: ms(t0), http: res.status, body: (txt || '').slice(0, 160) };
@@ -338,10 +336,10 @@ function pickEnvInfo(authenticated) {
 // ========================== HTML UI ==========================
 function colorByStatus(st) {
   switch (st) {
-    case 'UP': return '#17c964';      // green
-    case 'WARN': return '#f5a524';    // amber
-    case 'DOWN': return '#f31260';    // red/pink
-    default: return '#a1a1aa';        // gray
+    case 'UP': return '#17c964';
+    case 'WARN': return '#f5a524';
+    case 'DOWN': return '#f31260';
+    default: return '#a1a1aa';
   }
 }
 
