@@ -1,13 +1,13 @@
 // netlify/functions/diagnostico-total.js
 // Diagnóstico integral PunterX — HTML + JSON + persistencia de estado
-// CommonJS (Netlify Functions). Sin claves expuestas. Con auth opcional por querystring:
+// CommonJS (Netlify Functions). Sin claves expuestas. Con auth opcional por querystring.
 //
 //   - HTML:  /.netlify/functions/diagnostico-total
 //   - JSON:  /.netlify/functions/diagnostico-total?json=1
 //   - Deep:  /.netlify/functions/diagnostico-total?deep=1
 //   - Auth:  /.netlify/functions/diagnostico-total?code=XXXXX   (AUTH_CODE o PUNTERX_SECRET)
 
-const { createClient } = require('@supabase/supabase-js');
+let _createClient; // cache del import dinámico ESM
 
 // ========================== ENV / CONFIG ==========================
 const {
@@ -45,7 +45,6 @@ async function fetchWithTimeout(resource, options = {}) {
 }
 
 // ========================== UTILS ==========================
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const nowISO = () => new Date().toISOString();
 const ms = (t0) => Date.now() - t0;
 
@@ -107,15 +106,24 @@ function fmtDate(d) {
   }
 }
 
-// ========================== SUPABASE ==========================
-function supa() {
+// ========================== SUPABASE (ESM dinámico) ==========================
+async function getCreateClient() {
+  if (_createClient) return _createClient;
+  // @supabase/supabase-js es ESM-only → import dinámico en CJS
+  const mod = await import('@supabase/supabase-js');
+  _createClient = mod.createClient;
+  return _createClient;
+}
+
+async function supa() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+  const createClient = await getCreateClient();
   return createClient(SUPABASE_URL, SUPABASE_KEY);
 }
 
 async function sbTestBasic(authenticated) {
   // Prueba de conectividad + consulta de picks recientes
-  const client = supa();
+  const client = await supa();
   const t0 = Date.now();
   if (!client) return { status: 'DOWN', ms: ms(t0), error: 'SUPABASE_URL/SUPABASE_KEY ausentes' };
 
@@ -134,7 +142,7 @@ async function sbTestBasic(authenticated) {
 }
 
 async function sbCounts() {
-  const client = supa();
+  const client = await supa();
   if (!client) return { today: 0, last7d: 0, last30d: 0 };
 
   const now = new Date();
@@ -162,7 +170,7 @@ async function sbCounts() {
 }
 
 async function sbFetchExecs(limit = 20) {
-  const client = supa();
+  const client = await supa();
   if (!client) return [];
   const { data, error } = await client
     .from('diagnostico_ejecuciones')
@@ -174,7 +182,7 @@ async function sbFetchExecs(limit = 20) {
 }
 
 async function sbUpsertEstado(payload) {
-  const client = supa();
+  const client = await supa();
   if (!client) return { ok: false, error: 'No Supabase client' };
   try {
     const { error } = await client
@@ -195,7 +203,7 @@ async function sbUpsertEstado(payload) {
 }
 
 async function sbInsertEjecucion(row) {
-  const client = supa();
+  const client = await supa();
   if (!client) return;
   try {
     await client
