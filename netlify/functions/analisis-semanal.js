@@ -1,188 +1,130 @@
 // netlify/functions/analisis-semanal.js
-// Resumen semanal + Telegram, con instrumentación mínima (functions_status + function_runs)
+// Resumen semanal de actividad de picks — usa shim de Supabase (singleton).
+// GET  /.netlify/functions/analisis-semanal
+// JSON /.netlify/functions/analisis-semanal?json=1
 
-const fetch = require('node-fetch');
-const { createClient } = require('@supabase/supabase-js');
+const getSupabase = require('./_supabase-client.cjs');
 
-/** ====== Config / ENV ====== */
-const FN_NAME = 'analisis-semanal';
-const {
-  SUPABASE_URL,
-  SUPABASE_KEY,
-  TELEGRAM_CHANNEL_ID,
-  TELEGRAM_BOT_TOKEN,
-} = process.env;
+const { TZ } = process.env;
+const SITE_TZ = TZ || 'America/Mexico_City';
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const nowISO = () => new Date().toISOString();
+const ms = (t0) => Date.now() - t0;
 
-/** ====== Helpers de instrumentación (Supabase) ====== */
-function nowIso() { return new Date().toISOString(); }
-
-async function upsertFunctionStatus({ enabled = true, schedule = 'cron', env_ok = true, note = '' } = {}) {
+function htmlEscape(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function fmtDate(d) {
   try {
-    await supabase.from('functions_status').upsert({
-      name: FN_NAME,
-      enabled,
-      schedule,
-      env_ok,
-      last_heartbeat: nowIso(),
-      note: String(note || ''),
-      updated_at: nowIso(),
-    });
-  } catch (e) {
-    // silencioso: no romper ejecución por telemetría
-    console.warn('[diag]', FN_NAME, 'upsertFunctionStatus err:', e?.message || e);
+    const dt = new Date(d);
+    return dt.toLocaleString('es-MX', { timeZone: SITE_TZ, hour12: false });
+  } catch { return d || ''; }
+}
+function asJSON(event) { return !!((event.queryStringParameters || {}).json); }
+
+async function getClient() {
+  try { return await getSupabase(); }
+  catch (e) { console.error('[SEMANA] Supabase shim error:', e?.message || e); return null; }
+}
+
+async function loadWeeklyStats() {
+  const t0 = Date.now();
+  const supabase = await getClient();
+  if (!supabase) {
+    return { ok: false, ms: ms(t0), error: 'Supabase no disponible' };
   }
-}
 
-function genRunId() {
-  const rnd = Math.random().toString(16).slice(2, 10);
-  return `${FN_NAME}-${Date.now()}-${rnd}`;
-}
+  const now = new Date();
+  const start7 = new Date(now.getTime() - 7 * 86400000);
+  const iso7 = start7.toISOString();
 
-async function beginRun(run) {
-  try {
-    await supabase.from('function_runs').insert({
-      run_id: run.run_id,
-      function_name: FN_NAME,
-      start_ts: nowIso(),
-      status: 'running',
-      meta: { env_ok: !!run.env_ok }
-    });
-  } catch (e) {
-    console.warn('[diag]', FN_NAME, 'beginRun err:', e?.message || e);
-  }
-}
+  // Ajusta nombres de campos si difieren en tu esquema real
+  const cols = `
+    id, timestamp, ev, resultado, liga, pais, tipo, probabilidad_estim, apuesta
+  `;
 
-async function endRun(run_id, { status = 'ok', summary = {}, error = null } = {}) {
-  try {
-    await supabase.from('function_runs')
-      .update({
-        end_ts: nowIso(),
-        status,
-        summary,
-        error: error ? String(error) : null,
-      })
-      .eq('run_id', run_id);
-  } catch (e) {
-    console.warn('[diag]', FN_NAME, 'endRun err:', e?.message || e);
-  }
-}
-
-/** ====== Lógica existente ====== */
-async function obtenerUltimos100Picks() {
   const { data, error } = await supabase
-    .from('memoria_ia')
-    .select('*')
-    .order('timestamp', { ascending: false })
-    .limit(100);
+    .from('picks_historicos')
+    .select(cols)
+    .gte('timestamp', iso7)
+    .order('timestamp', { ascending: false });
 
-  if (error) throw new Error('Error al consultar picks: ' + error.message);
-  return data;
-}
+  if (error) return { ok: false, ms: ms(t0), error: error.message };
 
-function calcularEstadisticas(picks) {
-  const total = picks.length;
-  const porNivel = {};
-  const porLiga = {};
-  let ganados = 0;
+  const total = data.length;
+  const ganados = data.filter(r => r.resultado === 'ganado').length;
+  const perdidos = data.filter(r => r.resultado === 'perdido').length;
+  const pendientes = data.filter(r => r.resultado === 'pendiente').length;
+  const evProm = Number(
+    (data.reduce((acc, r) => acc + (Number(r.ev) || 0), 0) / (total || 1)).toFixed(2)
+  );
 
-  picks.forEach(pick => {
-    const nivel = pick.nivel || 'Sin nivel';
-    porNivel[nivel] = (porNivel[nivel] || 0) + 1;
-
-    const liga = pick.liga || 'Desconocida';
-    porLiga[liga] = (porLiga[liga] || 0) + 1;
-
-    if (pick.acierto === true) ganados++;
-  });
-
-  const porcentaje = total > 0 ? ((ganados / total) * 100).toFixed(1) : '0.0';
-  return { total, ganados, porcentaje, porNivel, porLiga };
-}
-
-function formatearMensaje({ total, ganados, porcentaje, porNivel, porLiga }) {
-  const topLigas = Object.entries(porLiga)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([liga, cantidad]) => `- ${liga}: ${cantidad} picks`)
-    .join('\n');
-
-  const niveles = Object.entries(porNivel)
-    .map(([nivel, cantidad]) => `- ${nivel}: ${cantidad}`)
-    .join('\n');
-
-  return `
-📊 *Resumen semanal de rendimiento*
-
-✅ Picks ganados: *${ganados}* de *${total}*
-📈 Porcentaje de acierto: *${porcentaje}%*
-
-🎯 Picks por nivel:
-${niveles}
-
-🌍 Ligas más frecuentes:
-${topLigas}
-
-🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.
-
-⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable.
-`.trim();
-}
-
-async function enviarMensaje(mensaje) {
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-  const body = {
-    chat_id: TELEGRAM_CHANNEL_ID,
-    text: mensaje,
-    parse_mode: 'Markdown'
+  return {
+    ok: true,
+    ms: ms(t0),
+    rango: { desde: iso7, hasta: nowISO() },
+    totales: { total, ganados, perdidos, pendientes, evProm },
+    muestra: data.slice(0, 25) // top 25 recientes para vista rápida
   };
-
-  const response = await fetch(url, {
-    method: 'POST',
-    body: JSON.stringify(body),
-    headers: { 'Content-Type': 'application/json' }
-  });
-
-  if (!response.ok) {
-    const errorData = await response.text();
-    throw new Error('Error al enviar mensaje: ' + errorData);
-  }
 }
 
-/** ====== Handler (con instrumentación) ====== */
-exports.handler = async () => {
-  const run_id = genRunId();
-  const env_ok = !!(SUPABASE_URL && SUPABASE_KEY && TELEGRAM_CHANNEL_ID && TELEGRAM_BOT_TOKEN);
+function renderHTML(payload) {
+  const { rango, totales, muestra } = payload;
+  return `<!doctype html>
+<meta charset="utf-8">
+<title>PunterX — Análisis Semanal</title>
+<style>
+  body{background:#0b0b10;color:#e5e7eb;font:14px/1.5 system-ui,Segoe UI,Roboto}
+  h1{font-size:18px}
+  .card{background:#11131a;border:1px solid #1f2330;border-radius:12px;padding:14px;margin:14px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:8px;border-bottom:1px solid #1f2330;text-align:left;font-size:13px}
+  .muted{color:#94a3b8}
+</style>
+<div class="card">
+  <h1>Resumen semanal</h1>
+  <div class="muted">Rango: ${fmtDate(rango.desde)} → ${fmtDate(rango.hasta)}</div>
+  <p>
+    Total: <b>${totales.total}</b> · Ganados: <b>${totales.ganados}</b> ·
+    Perdidos: <b>${totales.perdidos}</b> · Pendientes: <b>${totales.pendientes}</b> ·
+    EV prom.: <b>${totales.evProm}%</b>
+  </p>
+</div>
+<div class="card">
+  <h2>Últimos 25 picks</h2>
+  <table>
+    <tr>
+      <th>Fecha</th><th>Tipo</th><th>Apuesta</th><th>Liga</th><th>EV</th><th>Resultado</th>
+    </tr>
+    ${muestra.map(r => `
+      <tr>
+        <td>${fmtDate(r.timestamp)}</td>
+        <td>${htmlEscape(r.tipo || '')}</td>
+        <td>${htmlEscape(r.apuesta || '')}</td>
+        <td>${htmlEscape([r.pais, r.liga].filter(Boolean).join(' - '))}</td>
+        <td>${Number(r.ev || 0).toFixed(2)}%</td>
+        <td>${htmlEscape(r.resultado || '')}</td>
+      </tr>
+    `).join('')}
+  </table>
+</div>`;
+}
 
-  // marcar estado y comenzar corrida
-  await upsertFunctionStatus({ enabled: true, schedule: 'cron', env_ok });
-  await beginRun({ run_id, env_ok });
-
-  if (!env_ok) {
-    await endRun(run_id, { status: 'error', error: 'ENV incompleto' });
-    return {
-      statusCode: 500,
-      body: 'Error: variables de entorno incompletas'
-    };
-  }
-
+exports.handler = async (event) => {
   try {
-    const picks = await obtenerUltimos100Picks();
-    const estadisticas = calcularEstadisticas(picks);
-    const mensaje = formatearMensaje(estadisticas);
-    await enviarMensaje(mensaje);
-
-    await endRun(run_id, { status: 'ok', summary: { total: estadisticas.total, ganados: estadisticas.ganados, porcentaje: estadisticas.porcentaje } });
-    return {
-      statusCode: 200,
-      body: 'Resumen semanal enviado con éxito.'
-    };
-  } catch (error) {
-    await endRun(run_id, { status: 'error', error: error?.message || String(error) });
-    return {
-      statusCode: 500,
-      body: 'Error en resumen semanal: ' + error.message
-    };
+    const result = await loadWeeklyStats();
+    if (!result.ok) {
+      const body = { ok: false, error: result.error, ms: result.ms };
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+    }
+    if (asJSON(event)) {
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(result) };
+    }
+    return { statusCode: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }, body: renderHTML(result) };
+  } catch (e) {
+    const msg = e?.message || String(e);
+    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok:false, error: msg }) };
   }
 };
