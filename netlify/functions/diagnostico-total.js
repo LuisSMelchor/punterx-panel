@@ -7,12 +7,6 @@
 //   - Deep:  /.netlify/functions/diagnostico-total?deep=1
 //   - Auth:  /.netlify/functions/diagnostico-total?code=XXXXX   (AUTH_CODE o PUNTERX_SECRET)
 
-// Caché global para evitar doble declaración si el bundler evalúa el archivo más de una vez
-const SUPA_CACHE_KEY = '__PX_SUPA_CREATE__';
-if (typeof globalThis[SUPA_CACHE_KEY] === 'undefined') {
-  globalThis[SUPA_CACHE_KEY] = null;
-}
-let _createClient = globalThis[SUPA_CACHE_KEY];
 
 // ========================== ENV / CONFIG ==========================
 const {
@@ -111,38 +105,42 @@ function fmtDate(d) {
   }
 }
 
-// ========================== SUPABASE (ESM dinámico) ==========================
-// Caché global para evitar doble declaración si el bundler evalúa el archivo más de una vez
-const SUPA_CACHE_KEY = '__PX_SUPA_CREATE__';
-if (typeof globalThis[SUPA_CACHE_KEY] === 'undefined') {
-  globalThis[SUPA_CACHE_KEY] = null;
+// ========================== SUPABASE (ESM dinámico, robusto) ==========================
+// Usamos un espacio global para evitar colisiones si el bundler evalúa el archivo más de una vez.
+var __PX_DIAG__ = globalThis.__PX_DIAG__ || (globalThis.__PX_DIAG__ = {});
+if (typeof __PX_DIAG__.__supaCreate === 'undefined') {
+  __PX_DIAG__.__supaCreate = null;
 }
-let _createClient = globalThis[SUPA_CACHE_KEY];
 
+/**
+ * Carga dinámica de @supabase/supabase-js (ESM-only) desde CJS.
+ * Nunca lanza: si falla, devuelve null y el diagnóstico mostrará "Supabase: DOWN".
+ */
 async function getCreateClient() {
-  if (_createClient) return _createClient;
+  if (__PX_DIAG__.__supaCreate) return __PX_DIAG__.__supaCreate;
   try {
-    // @supabase/supabase-js es ESM-only → import dinámico en CJS
     const mod = await import('@supabase/supabase-js');
-    _createClient = mod.createClient || (mod.default && mod.default.createClient);
-    if (typeof _createClient !== 'function') throw new Error('createClient no encontrado en módulo Supabase');
-    // Guarda en caché global (clave única)
-    globalThis[SUPA_CACHE_KEY] = _createClient;
-    return _createClient;
+    const createClient = mod.createClient || (mod.default && mod.default.createClient);
+    if (typeof createClient !== 'function') throw new Error('createClient no encontrado en @supabase/supabase-js');
+    __PX_DIAG__.__supaCreate = createClient; // cache global
+    return __PX_DIAG__.__supaCreate;
   } catch (e) {
-    console.error('[DIAG] Error importando @supabase/supabase-js:', e?.message || e);
-    return null; // ← Para que el diagnóstico muestre Supabase: DOWN, sin tirar 500
+    console.error('[DIAG] Error importando @supabase/supabase-js:', e && (e.message || e));
+    return null; // ← muy importante: no rompemos la función
   }
 }
 
+/**
+ * Devuelve un cliente de Supabase o null si no es posible construirlo.
+ */
 async function supa() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
   const createClient = await getCreateClient();
-  if (!createClient) return null; // ← si el import falló, marcamos DOWN arriba sin tirar 500
+  if (!createClient) return null;
   try {
     return createClient(SUPABASE_URL, SUPABASE_KEY);
   } catch (e) {
-    console.error('[DIAG] Error creando cliente Supabase:', e?.message || e);
+    console.error('[DIAG] Error creando cliente Supabase:', e && (e.message || e));
     return null;
   }
 }
