@@ -1,23 +1,24 @@
-# netlify.toml — PunterX
+# netlify.toml — PunterX (estable)
 
 [build]
-  # Si tienes build real, reemplaza por tu script (y asegúrate que cree "public")
-  # Este comando garantiza que exista la carpeta publish aunque no haya build.
+  # Garantiza que exista la carpeta publish aunque no haya build de frontend
   command = "npm run build || echo 'no build step'; mkdir -p public"
   publish = "public"
 
 [functions]
   # Bundler por defecto
   node_bundler = "esbuild"
-  # No incrustar supabase-js en los bundles por defecto
+  # No incrustar supabase-js en los bundles
   external_node_modules = ["@supabase/supabase-js"]
-  # Asegurar que el shim esté incluido en el deploy
+  # Asegurar que el shim esté en el deploy (para TODAS las funciones)
   included_files = [
     "netlify/functions/_supabase-client.cjs"
   ]
+  # Directorio de funciones
+  directory = "netlify/functions"
 
 ############################################
-# FUNCIONES Y SCHEDULES
+# FUNCIONES + SCHEDULES (sin duplicados)
 ############################################
 
 # Principal
@@ -37,8 +38,11 @@
   schedule = "0 6 * * 1"
 
 # Diagnóstico/refresh dashboard: cada 10 min
+# Forzamos esbuild aquí también para que respete included_files y external_node_modules.
 [functions."diagnostico-total"]
-  node_bundler = "none"
+  node_bundler = "esbuild"
+  external_node_modules = ["@supabase/supabase-js"]
+  included_files = ["netlify/functions/_supabase-client.cjs"]
   schedule = "*/10 * * * *"
 
 # Outrights: cada 30 min
