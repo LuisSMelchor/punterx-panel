@@ -19,6 +19,21 @@ function loadShim() {
   }
 }
 
+// Lazy‑load del shim para evitar fallos en top‑level y dejar trazas claras
+console.log('[DIAG] module-load');
+let _px_supa_factory = null;
+function loadShim() {
+  if (_px_supa_factory) return _px_supa_factory;
+  try {
+    _px_supa_factory = require('./_supabase-client.cjs');
+    console.log('[DIAG] shim-ok');
+  } catch (e) {
+    console.error('[DIAG] shim-fail', e?.message || e);
+    _px_supa_factory = null;
+  }
+  return _px_supa_factory;
+}
+
 // ========================== ENV / CONFIG ==========================
 const {
   SUPABASE_URL,
@@ -96,6 +111,8 @@ function fmtDate(d) {
 // ========================== SUPABASE HELPERS (vía shim) ==========================
 async function sbClient() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+  const getSupabase = loadShim();
+  if (!getSupabase) return null; // degradar sin romper
   const getSupabase = loadShim();
   if (!getSupabase) return null; // degradar sin romper
   try {
@@ -527,6 +544,7 @@ function renderHTML(payload) {
 
 // ========================== HANDLER ==========================
 exports.handler = async (event) => {
+  console.log('[DIAG] boot-ok', new Date().toISOString());
   try {
     const startedAt = new Date();
     const authenticated = isAuthed(event);
