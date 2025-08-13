@@ -1,24 +1,30 @@
 # netlify.toml
 [build]
-  # Si no tienes frontend, usar "." está bien
+  # Si no tienes frontend a publicar, "." está bien
   publish = "."
-  command = "npm run build:functions"
+  # No hay paso de build necesario para las serverless functions
+  command = "echo 'No build step'"
 
 [functions]
+  # Carpeta real de tus funciones
   directory = "netlify/functions"
+  # Bundler recomendado por Netlify para Node 18/20
   node_bundler = "esbuild"
 
-  # Evita que esbuild intente bundlear el ESM de supabase; lo carga en runtime (dynamic import)
+  # (Opcional pero recomendado) Evita que esbuild intente bundlear el ESM de Supabase;
+  # tu función lo carga con import dinámico en runtime.
   external_node_modules = ["@supabase/supabase-js"]
 
-  # Asegura que los md estén disponibles en runtime (tu función lee prompts_punterx.md desde __dirname)
+  # (Recomendado) Incluye plantillas/archivos que lees en runtime con fs desde __dirname
   included_files = [
     "netlify/functions/**/prompts_punterx.md"
   ]
 
 [build.environment]
+  # Asegura zona horaria coherente con tu proyecto
   TZ = "America/Mexico_City"
-  NODE_VERSION = "20.19.0"   # o la que uses en tu build (>=18 recomendado)
+  # Node en producción (Netlify ya está en 20.x; esto documenta la intención)
+  NODE_VERSION = "20.19.0"
 
 ############################################
 # FUNCIONES PROGRAMADAS (cron)
