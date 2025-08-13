@@ -1,16 +1,24 @@
+# netlify.toml
 [build]
-  command = "npm run build"
+  # Si no tienes frontend, usar "." está bien
   publish = "."
-  functions = "netlify/functions"
-
-[build.environment]
-  NODE_VERSION = "20.19.4"   # igual que en tus logs/CI
-  TZ = "UTC"                 # mantiene coherencia con los timestamps Z de tus logs
+  command = "npm run build:functions"
 
 [functions]
+  directory = "netlify/functions"
   node_bundler = "esbuild"
-  # agrega todos los módulos externos que usas en funciones
-  external_node_modules = ["openai", "node-fetch", "dayjs", "dotenv", "@supabase/supabase-js"]
+
+  # Evita que esbuild intente bundlear el ESM de supabase; lo carga en runtime (dynamic import)
+  external_node_modules = ["@supabase/supabase-js"]
+
+  # Asegura que los md estén disponibles en runtime (tu función lee prompts_punterx.md desde __dirname)
+  included_files = [
+    "netlify/functions/**/prompts_punterx.md"
+  ]
+
+[build.environment]
+  TZ = "America/Mexico_City"
+  NODE_VERSION = "20.19.0"   # o la que uses en tu build (>=18 recomendado)
 
 ############################################
 # FUNCIONES PROGRAMADAS (cron)
