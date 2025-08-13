@@ -10,6 +10,9 @@
     "netlify/functions/_supabase-client.cjs"
   ]
 
+[functions."diagnostico-total"]
+  node_bundler = "none"
+
 ############################################
 # FUNCIONES PROGRAMADAS (cron)
 ############################################
