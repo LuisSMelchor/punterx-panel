@@ -653,7 +653,7 @@ function getPromptTemplateFromMD() {    // [PX-CHANGE]
   if (!md) return null;
 
   // Acepta “Pre-match”, “Pre‑match” (con guion Unicode) y variantes de espacios
-  + const rx = /^\s*(?:#+\s*)?1\)\s*Pre[ -‑]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
+  const rx = /^\s*(?:#+\s*)?1\)\s*Pre[ -‑]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
   const m = md.match(rx);
   if (!m) return null;
   return m[0].trim();
