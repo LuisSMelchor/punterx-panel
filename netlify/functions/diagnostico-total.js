@@ -1,6 +1,10 @@
 // netlify/functions/diagnostico-total.js
 // Diagnóstico integral PunterX — HTML + JSON + persistencia de estado
 // CommonJS (Netlify Functions). Sin claves expuestas. Con auth opcional por querystring.
+
+// Polyfill seguro de fetch para CJS/Node 20 bajo esbuild
+const fetch = global.fetch || require('node-fetch');
+
 //
 //   - HTML:  /.netlify/functions/diagnostico-total
 //   - JSON:  /.netlify/functions/diagnostico-total?json=1
