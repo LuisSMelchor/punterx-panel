@@ -10,9 +10,6 @@
     "netlify/functions/_supabase-client.cjs"
   ]
 
-[functions."diagnostico-total"]
-  node_bundler = "none"
-
 ############################################
 # FUNCIONES PROGRAMADAS (cron)
 ############################################
@@ -36,6 +33,7 @@
 
 # Diagnóstico/refresh dashboard: cada 10 min
 [functions."diagnostico-total"]
+  node_bundler = "none"
   schedule = "*/10 * * * *"
 
 # Outrights: cada 30 min
