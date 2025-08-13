@@ -7,10 +7,6 @@
 //   - Deep:  /.netlify/functions/diagnostico-total?deep=1
 //   - Auth:  /.netlify/functions/diagnostico-total?code=XXXXX   (AUTH_CODE o PUNTERX_SECRET)
 
-// ========================== POLYFILLS / BASE ==========================
-// Polyfill robusto de fetch para CJS/Node 18/20 bajo esbuild/Netlify
-const fetch = global.fetch || require('node-fetch');
-
 // ========================== ENV / CONFIG ==========================
 const {
   SUPABASE_URL,
@@ -35,6 +31,7 @@ const AUTH_KEYS = [AUTH_CODE, PUNTERX_SECRET].filter(Boolean);
 const T_NET = 7000;
 
 // ========================== FETCH CON TIMEOUT ==========================
+// Node 20 trae fetch nativo en runtime de Netlify. Evitamos polyfills para no introducir dependencias.
 async function fetchWithTimeout(resource, options = {}) {
   const { timeout = T_NET, ...opts } = options;
   const ctrl = new AbortController();
@@ -58,19 +55,10 @@ function mask(str, keep = 4) {
 }
 
 async function safeJson(res) {
-  try {
-    return await res.json();
-  } catch {
-    return null;
-  }
+  try { return await res.json(); } catch { return null; }
 }
-
 async function safeText(res) {
-  try {
-    return await res.text();
-  } catch {
-    return null;
-  }
+  try { return await res.text(); } catch { return null; }
 }
 
 function okToDeep(authenticated, deepRequested) {
@@ -78,52 +66,32 @@ function okToDeep(authenticated, deepRequested) {
   // Sin auth: solo modo superficial (para evitar costos/ratelimits).
   return authenticated && deepRequested;
 }
-
 function isAuthed(event) {
   const code = (event.queryStringParameters && (event.queryStringParameters.code || event.queryStringParameters.token)) || '';
   if (!AUTH_KEYS.length) return false;
   return AUTH_KEYS.some(k => k && k === code);
 }
-
-function asJSON(event) {
-  return !!(event.queryStringParameters && event.queryStringParameters.json);
-}
-
-function deepRequested(event) {
-  return !!(event.queryStringParameters && event.queryStringParameters.deep);
-}
+function asJSON(event) { return !!(event.queryStringParameters && event.queryStringParameters.json); }
+function deepRequested(event) { return !!(event.queryStringParameters && event.queryStringParameters.deep); }
 
 function htmlEscape(s) {
   return String(s || '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-
 function fmtDate(d) {
   try {
     const dt = new Date(d);
     return dt.toLocaleString('es-MX', { timeZone: SITE_TZ, hour12: false });
-  } catch {
-    return d || '';
-  }
+  } catch { return d || ''; }
 }
 
 // ========================== SUPABASE (ESM dinámico, robusto) ==========================
-// Usamos un espacio global para evitar colisiones si el bundler evalúa el archivo más de una vez.
+// Cache global idempotente: evita colisiones si el bundler evalúa el archivo más de una vez.
 var __PX_DIAG__ = globalThis.__PX_DIAG__ || (globalThis.__PX_DIAG__ = {});
 if (typeof __PX_DIAG__.__supaCreate === 'undefined') {
   __PX_DIAG__.__supaCreate = null;
 }
-
-// 🔒 FIX: clave de caché idempotente para evitar "Identifier 'SUPA_CACHE_KEY' has already been declared"
-if (typeof __PX_DIAG__.SUPA_CACHE_KEY === 'undefined') {
-  __PX_DIAG__.SUPA_CACHE_KEY = 'px_supa_client';
-}
-const SUPA_CACHE_KEY = __PX_DIAG__.SUPA_CACHE_KEY;
-
-// Construcción dinámica del nombre del paquete para evitar que el bundler
-// reescriba la importación y genere variables duplicadas como _createClient.
-const SUPA_PKG = ['@supabase', 'supabase-js'].join('/');
 
 /**
  * Carga dinámica de @supabase/supabase-js (ESM-only) desde CJS.
@@ -132,13 +100,13 @@ const SUPA_PKG = ['@supabase', 'supabase-js'].join('/');
 async function getCreateClient() {
   if (__PX_DIAG__.__supaCreate) return __PX_DIAG__.__supaCreate;
   try {
-    const mod = await import(SUPA_PKG);
+    const mod = await import('@supabase/supabase-js'); // CJS → ESM dynamic import (recomendado por Netlify)
     const createClient = mod.createClient || (mod.default && mod.default.createClient);
-   if (typeof createClient !== 'function') throw new Error('createClient no encontrado en ' + SUPA_PKG);
+    if (typeof createClient !== 'function') throw new Error('createClient no encontrado en @supabase/supabase-js');
     __PX_DIAG__.__supaCreate = createClient; // cache global
     return __PX_DIAG__.__supaCreate;
   } catch (e) {
-    console.error('[DIAG] Error importando', SUPA_PKG + ':', e && (e.message || e));
+    console.error('[DIAG] Error importando @supabase/supabase-js:', e && (e.message || e));
     return null; // ← muy importante: no rompemos la función
   }
 }
@@ -151,8 +119,6 @@ async function supa() {
   const createClient = await getCreateClient();
   if (!createClient) return null;
   try {
-    // Nota: no usamos SUPA_CACHE_KEY aún para mapear múltiples clientes, pero
-    // mantener la constante única evita redeclaraciones en el bundle.
     return createClient(SUPABASE_URL, SUPABASE_KEY);
   } catch (e) {
     console.error('[DIAG] Error creando cliente Supabase:', e && (e.message || e));
@@ -389,7 +355,6 @@ function colorByStatus(st) {
     default: return '#a1a1aa';
   }
 }
-
 function iconByStatus(st) {
   switch (st) {
     case 'UP': return '✅';
@@ -398,7 +363,6 @@ function iconByStatus(st) {
     default: return '•';
   }
 }
-
 function tile(label, status, details) {
   const c = colorByStatus(status);
   return `
@@ -503,7 +467,7 @@ function renderHTML(payload) {
     .dot{width:10px;height:10px;border-radius:50%;}
     .label{font-weight:600}
     .status{margin-left:auto;font-weight:700}
-    .mono{white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace;font-size:12px;color:#d1d5db;background:#0d0f16;padding:10px;border-radius:10px;border:1px solid #1f2330}
+    .mono{white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:12px;color:#d1d5db;background:#0d0f16;padding:10px;border-radius:10px;border:1px solid #1f2330}
     table.env{width:100%;border-collapse:collapse}
     table.env td{padding:6px 8px;border-bottom:1px dashed #1f2330;font-size:13px}
     .section{padding:0 20px 20px}
@@ -623,9 +587,7 @@ exports.handler = async (event) => {
 
     // 4) Persistencia de estado + ejecución
     const endedAt = new Date();
-    try {
-      await sbUpsertEstado(payload);
-    } catch (_) {}
+    try { await sbUpsertEstado(payload); } catch (_) {}
     try {
       await sbInsertEjecucion({
         function_name: 'diagnostico-total',
