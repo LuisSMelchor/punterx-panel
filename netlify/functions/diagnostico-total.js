@@ -1,34 +1,26 @@
 // netlify/functions/diagnostico-total.js
-// Diagnóstico integral — robusto y sin crashes (HTML por defecto / ?json=1 / ?deep=1 / ?ping=1)
-//
-// Cambios clave:
-// - Polyfill global.fetch si no existe (entornos edge / empaquetador).
-// - fetchWithTimeout con AbortController y manejo seguro.
-// - Trampas globales uncaughtException/unhandledRejection (solo log).
-// - Chequeos modulares (Supabase / OpenAI / OddsAPI / API‑Football / Telegram).
-// - Modo rápido (?ping=1), JSON (?json=1) y “deep” (?deep=1) sin romper aunque falten ENV.
+// Dashboard/health integral para PunterX — robusto ante entornos sin fetch y sin ESM en init.
 
+// 1) Shim de fetch (Node <20 / bundlers que no exponen global.fetch)
 if (typeof fetch === 'undefined') {
-  global.fetch = require('node-fetch');
+  try { global.fetch = require('node-fetch'); } catch (_) { /* no-op */ }
 }
 
-// Trampas globales (no rompen respuesta)
-process.on('uncaughtException', (e) => {
-  try { console.error('[DIAG][uncaughtException]', e && (e.stack || e.message || e)); } catch {}
-});
-process.on('unhandledRejection', (e) => {
-  try { console.error('[DIAG][unhandledRejection]', e && (e.stack || e.message || e)); } catch {}
-});
+// 2) Trampas globales para evitar “Internal Error” silencioso
+try {
+  process.on('uncaughtException', (e) => {
+    try { console.error('[DIAG][uncaughtException]', e && (e.stack || e.message || e)); } catch {}
+  });
+  process.on('unhandledRejection', (e) => {
+    try { console.error('[DIAG][unhandledRejection]', e && (e.stack || e.message || e)); } catch {}
+  });
+} catch (_) {}
 
-const getSupabase = require('./_supabase-client.cjs');
-
-// ENV
+// 3) Envs (no fallar si faltan; sólo reportar)
 const {
   SUPABASE_URL,
   SUPABASE_KEY,
   OPENAI_API_KEY,
-  OPENAI_MODEL,
-  OPENAI_MODEL_FALLBACK,
   ODDS_API_KEY,
   API_FOOTBALL_KEY,
   TELEGRAM_BOT_TOKEN,
@@ -42,27 +34,27 @@ const {
 
 const SITE_TZ = TZ || 'America/Mexico_City';
 const AUTH_KEYS = [AUTH_CODE, PUNTERX_SECRET].filter(Boolean);
-const T_NET = 7000;
 
-// Utils
+// 4) Utiles
 const nowISO = () => new Date().toISOString();
 const ms = (t0) => Date.now() - t0;
-function asJSON(event)   { return !!((event.queryStringParameters || {}).json); }
-function asDeep(event)   { return !!((event.queryStringParameters || {}).deep); }
-function asPing(event)   { return !!((event.queryStringParameters || {}).ping); }
+function asJSON(event) { return !!((event.queryStringParameters || {}).json); }
+function isPing(event) { return !!((event.queryStringParameters || {}).ping); }
+function deepRequested(event) { return !!((event.queryStringParameters || {}).deep); }
 function isAuthed(event) {
   const qs = event.queryStringParameters || {};
   const code = qs.code || qs.token || '';
   if (!AUTH_KEYS.length) return false;
   return AUTH_KEYS.some(k => k && k === code);
 }
-function mask(str, keep = 4) {
-  if (!str) return '';
-  const s = String(str);
-  if (s.length <= keep) return '*'.repeat(s.length);
-  return s.slice(0, keep) + '*'.repeat(s.length - keep);
+function mask(s, keep = 4) {
+  if (!s) return '';
+  const str = String(s);
+  if (str.length <= keep) return '*'.repeat(str.length);
+  return str.slice(0, keep) + '*'.repeat(str.length - keep);
 }
 
+const T_NET = 8000;
 async function fetchWithTimeout(resource, options = {}) {
   const { timeout = T_NET, ...opts } = options;
   const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
@@ -70,15 +62,15 @@ async function fetchWithTimeout(resource, options = {}) {
   try {
     const signal = ctrl ? ctrl.signal : undefined;
     return await fetch(resource, { ...opts, signal });
-  } finally {
-    clearTimeout(id);
-  }
+  } finally { clearTimeout(id); }
 }
+
 async function safeJson(res) { try { return await res.json(); } catch { return null; } }
 async function safeText(res) { try { return await res.text(); } catch { return null; } }
 
-// ---- Chequeos ----
-async function checkSupabase() {
+// 5) Supabase via shim seguro (CJS + ESM dinámico dentro)
+const getSupabase = require('./_supabase-client.cjs');
+async function pingSupabase() {
   const t0 = Date.now();
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) {
@@ -93,95 +85,101 @@ async function checkSupabase() {
   }
 }
 
-function buildOpenAIPayload(model, prompt, maxOut = 120) {
-  const m = String(model || '').toLowerCase();
-  const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
-  const base = {
-    model,
-    response_format: { type: 'json_object' },
-    messages: [{ role: 'user', content: prompt }],
-  };
-  if (modern) base.max_completion_tokens = maxOut; else base.max_tokens = maxOut;
-  if (!/gpt-5|o3/.test(m)) base.temperature = 0.2;
-  return base;
-}
-
+// 6) Checks externos (solo si piden deep=1 y están autenticados)
 async function checkOpenAI() {
-  const t0 = Date.now();
   try {
-    if (!OPENAI_API_KEY) return { status: 'DOWN', ms: ms(t0), error: 'OPENAI_API_KEY ausente' };
-    const OpenAI = require('openai');
-    const oai = new OpenAI({ apiKey: OPENAI_API_KEY });
-    const model = OPENAI_MODEL || 'gpt-5-mini';
-    const completion = await oai.chat.completions.create(
-      buildOpenAIPayload(model, 'Devuelve {"ok":true} como JSON.', 20)
-    );
-    const content = completion?.choices?.[0]?.message?.content || '';
-    const ok = /"ok"\s*:\s*true/i.test(content);
-    return { status: ok ? 'UP' : 'WARN', ms: ms(t0), model, bytes: content.length };
+    if (!OPENAI_API_KEY) return { ok: false, error: 'OPENAI_API_KEY ausente' };
+    // ping liviano (sin consumir tokens): HEAD a api.openai.com
+    const res = await fetchWithTimeout('https://api.openai.com/v1/models', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+      timeout: 5000
+    });
+    return { ok: res.ok, status: res.status };
   } catch (e) {
-    return { status: 'DOWN', ms: ms(t0), error: e?.message || String(e) };
+    return { ok: false, error: e?.message || String(e) };
   }
 }
-
 async function checkOddsAPI() {
-  const t0 = Date.now();
   try {
-    if (!ODDS_API_KEY) return { status: 'DOWN', ms: ms(t0), error: 'ODDS_API_KEY ausente' };
-    // endpoint ligero
-    const url = `https://api.the-odds-api.com/v4/sports?apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
+    if (!ODDS_API_KEY) return { ok: false, error: 'ODDS_API_KEY ausente' };
+    const url = `https://api.the-odds-api.com/v4/sports/soccer/odds/?markets=h2h&regions=eu&oddsFormat=decimal&apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
     const res = await fetchWithTimeout(url, { timeout: 6000 });
-    if (!res || !res.ok) return { status: 'DOWN', ms: ms(t0), error: `status ${res?.status}` };
-    const js = await safeJson(res);
-    const n = Array.isArray(js) ? js.length : 0;
-    return { status: 'UP', ms: ms(t0), sports: n };
+    return { ok: res.ok, status: res.status };
   } catch (e) {
-    return { status: 'DOWN', ms: ms(t0), error: e?.message || String(e) };
+    return { ok: false, error: e?.message || String(e) };
   }
 }
-
 async function checkAPIFootball() {
-  const t0 = Date.now();
   try {
-    if (!API_FOOTBALL_KEY) return { status: 'DOWN', ms: ms(t0), error: 'API_FOOTBALL_KEY ausente' };
-    const url = 'https://v3.football.api-sports.io/status';
-    const res = await fetchWithTimeout(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY }, timeout: 6000 });
-    if (!res || !res.ok) return { status: 'DOWN', ms: ms(t0), error: `status ${res?.status}` };
-    const js = await safeJson(res);
-    const st = js?.response?.[0]?.status || js?.response?.status || 'ok?';
-    return { status: 'UP', ms: ms(t0), api: String(st) };
+    if (!API_FOOTBALL_KEY) return { ok: false, error: 'API_FOOTBALL_KEY ausente' };
+    const res = await fetchWithTimeout('https://v3.football.api-sports.io/status', {
+      headers: { 'x-apisports-key': API_FOOTBALL_KEY },
+      timeout: 6000
+    });
+    return { ok: res.ok, status: res.status };
   } catch (e) {
-    return { status: 'DOWN', ms: ms(t0), error: e?.message || String(e) };
+    return { ok: false, error: e?.message || String(e) };
   }
 }
-
 async function checkTelegram() {
-  const t0 = Date.now();
   try {
-    if (!TELEGRAM_BOT_TOKEN) return { status: 'DOWN', ms: ms(t0), error: 'TELEGRAM_BOT_TOKEN ausente' };
+    if (!TELEGRAM_BOT_TOKEN) return { ok: false, error: 'TELEGRAM_BOT_TOKEN ausente' };
+    // Método que no envía mensajes: getMe
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe`;
-    const res = await fetchWithTimeout(url, { timeout: 6000 });
+    const res = await fetchWithTimeout(url, { timeout: 5000 });
     const js = await safeJson(res);
-    const ok = !!(js && js.ok);
-    const name = js?.result?.username || '';
-    return { status: ok ? 'UP' : 'DOWN', ms: ms(t0), bot: name };
+    return { ok: res.ok && js?.ok === true, status: res.status };
   } catch (e) {
-    return { status: 'DOWN', ms: ms(t0), error: e?.message || String(e) };
+    return { ok: false, error: e?.message || String(e) };
   }
 }
 
-// Payload + HTML
-function buildPayload(sb, deep = {}, event) {
+// 7) Render
+function renderHTML(payload) {
+  const c = payload.global.status === 'UP' ? '#17c964' : '#f31260';
+  const deep = payload.deep || {};
+  return `<!doctype html><meta charset="utf-8">
+<title>PunterX — Diagnóstico Total</title>
+<style>
+  body{background:#0b0b10;color:#e5e7eb;font:14px/1.5 system-ui,Segoe UI,Roboto}
+  .card{background:#11131a;border:1px solid #1f2330;border-radius:12px;padding:14px;margin:14px}
+  .muted{color:#94a3b8}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:8px;border-bottom:1px solid #1f2330;text-align:left;font-size:13px}
+  code{background:#0f1220;padding:2px 6px;border-radius:6px}
+</style>
+<div class="card">
+  <h1>Diagnóstico Total <span style="color:${c}">${payload.global.status}</span></h1>
+  <div class="muted">${payload.generated_at} · Node: ${payload.node} · TZ: ${payload.timezone}</div>
+</div>
+<div class="card">
+  <h2>Entorno</h2>
+  <table>
+    ${Object.entries(payload.env_presence).map(([k,v]) => `
+      <tr><td>${k}</td><td>${v ? '✅' : '❌'}</td><td class="muted">${payload.env_masked[k] ?? ''}</td></tr>
+    `).join('')}
+  </table>
+</div>
+<div class="card">
+  <h2>Checks</h2>
+  <table>
+    <tr><td>supabase</td><td>${payload.checks.supabase.status}</td><td>${payload.checks.supabase.ms} ms</td></tr>
+    ${payload.checks.supabase.error ? `<tr><td>supabase.error</td><td colspan="2">${payload.checks.supabase.error}</td></tr>` : ''}
+    ${deep.openai ? `<tr><td>openai</td><td colspan="2">${deep.openai.ok ? 'OK' : 'FAIL'} (status ${deep.openai.status || 'n/a'})</td></tr>` : ''}
+    ${deep.oddsapi ? `<tr><td>oddsapi</td><td colspan="2">${deep.oddsapi.ok ? 'OK' : 'FAIL'} (status ${deep.oddsapi.status || 'n/a'})</td></tr>` : ''}
+    ${deep.apifootball ? `<tr><td>api-football</td><td colspan="2">${deep.apifootball.ok ? 'OK' : 'FAIL'} (status ${deep.apifootball.status || 'n/a'})</td></tr>` : ''}
+    ${deep.telegram ? `<tr><td>telegram</td><td colspan="2">${deep.telegram.ok ? 'OK' : 'FAIL'} (status ${deep.telegram.status || 'n/a'})</td></tr>` : ''}
+  </table>
+  <p class="muted">Tip: añade <code>?json=1</code> para JSON y <code>?deep=1&code=***</code> para pruebas con proveedores.</p>
+</div>`;
+}
+
+function buildPayload(sb, event, deepChecks = {}) {
   return {
     generated_at: nowISO(),
     node: NODE_VERSION || process.version,
     timezone: SITE_TZ,
-    request: {
-      json: asJSON(event),
-      deep: asDeep(event),
-      ping: asPing(event),
-      authed: isAuthed(event)
-    },
     env_presence: {
       SUPABASE_URL: !!SUPABASE_URL,
       SUPABASE_KEY: !!SUPABASE_KEY,
@@ -198,95 +196,46 @@ function buildPayload(sb, deep = {}, event) {
       TELEGRAM_CHANNEL_ID: mask(TELEGRAM_CHANNEL_ID, 2),
       TELEGRAM_GROUP_ID: mask(TELEGRAM_GROUP_ID, 2),
     },
-    checks: {
-      supabase: sb,
-      ...deep
-    },
-    global: {
-      status: (sb.status === 'UP') ? 'UP' : 'DEGRADED'
-    }
+    checks: { supabase: sb },
+    deep: deepChecks,
+    global: { status: (sb.status === 'UP') ? 'UP' : 'DOWN' }
   };
 }
 
-function renderHTML(payload) {
-  const c = payload.global.status === 'UP' ? '#17c964' : '#f59f00';
-  const deep = payload.checks;
-  return `<!doctype html><meta charset="utf-8">
-<title>PunterX — Diagnóstico Total</title>
-<style>
-  body{background:#0b0b10;color:#e5e7eb;font:14px/1.5 system-ui,Segoe UI,Roboto}
-  .card{background:#11131a;border:1px solid #1f2330;border-radius:12px;padding:14px;margin:14px}
-  .muted{color:#94a3b8}
-  table{width:100%;border-collapse:collapse}
-  th,td{padding:8px;border-bottom:1px solid #1f2330;text-align:left;font-size:13px}
-  code{background:#0e1320;border:1px solid #212638;border-radius:6px;padding:2px 6px}
-  a{color:#60a5fa;text-decoration:none}
-</style>
-<div class="card">
-  <h1>Diagnóstico Total <span style="color:${c}">${payload.global.status}</span></h1>
-  <div class="muted">${payload.generated_at} · Node: ${payload.node} · TZ: ${payload.timezone}</div>
-  <div class="muted">Modos: <code>?json=1</code> · <code>?deep=1</code> · <code>?ping=1</code></div>
-</div>
-<div class="card">
-  <h2>Variables de Entorno</h2>
-  <table>
-    ${Object.entries(payload.env_presence).map(([k,v]) => `
-      <tr><td>${k}</td><td>${v ? '✅' : '❌'}</td><td class="muted">${payload.env_masked[k] ?? ''}</td></tr>
-    `).join('')}
-  </table>
-</div>
-<div class="card">
-  <h2>Cheques</h2>
-  <table>
-    <tr><th>Servicio</th><th>Status</th><th>ms</th><th>Extra</th></tr>
-    <tr><td>Supabase</td><td>${deep.supabase?.status}</td><td>${deep.supabase?.ms}</td><td>${deep.supabase?.error ?? ''}</td></tr>
-    <tr><td>OpenAI</td><td>${deep.openai?.status ?? '-'}</td><td>${deep.openai?.ms ?? '-'}</td><td>${deep.openai?.model ?? deep.openai?.error ?? ''}</td></tr>
-    <tr><td>OddsAPI</td><td>${deep.oddsapi?.status ?? '-'}</td><td>${deep.oddsapi?.ms ?? '-'}</td><td>${(deep.oddsapi?.sports!=null)?('sports='+deep.oddsapi.sports): (deep.oddsapi?.error ?? '')}</td></tr>
-    <tr><td>API‑Football</td><td>${deep.apifoot?.status ?? '-'}</td><td>${deep.apifoot?.ms ?? '-'}</td><td>${deep.apifoot?.api ?? deep.apifoot?.error ?? ''}</td></tr>
-    <tr><td>Telegram</td><td>${deep.telegram?.status ?? '-'}</td><td>${deep.telegram?.ms ?? '-'}</td><td>${deep.telegram?.bot ?? deep.telegram?.error ?? ''}</td></tr>
-  </table>
-</div>`;
-}
-
-// Handler
+// 8) Handler
 exports.handler = async (event) => {
+  const t0 = Date.now();
+
   try {
-    const sb = await checkSupabase();
-
-    // Modo PING (súper rápido)
-    if (asPing(event)) {
-      const body = { ok: true, ping: 'pong', at: nowISO(), node: NODE_VERSION || process.version };
-      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+    if (isPing(event)) {
+      return { statusCode: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: 'pong' };
     }
 
-    // Chequeos “deep” solo si lo piden y, si configuraste AUTH_CODE/PUNTERX_SECRET, solo si autentican
+    const sb = await pingSupabase();
     let deep = {};
-    const wantDeep = asDeep(event);
-    const authed = isAuthed(event);
-    if (wantDeep && (authed || !AUTH_KEYS.length)) {
-      const [openai, oddsapi, apifoot, telegram] = await Promise.all([
-        checkOpenAI().catch(e => ({ status:'DOWN', error: e?.message || String(e) })),
-        checkOddsAPI().catch(e => ({ status:'DOWN', error: e?.message || String(e) })),
-        checkAPIFootball().catch(e => ({ status:'DOWN', error: e?.message || String(e) })),
-        checkTelegram().catch(e => ({ status:'DOWN', error: e?.message || String(e) })),
+    if (deepRequested(event) && isAuthed(event)) {
+      // Ejecutar en paralelo pero tolerante a fallos:
+      const [oai, odds, foot, tg] = await Promise.allSettled([
+        checkOpenAI(), checkOddsAPI(), checkAPIFootball(), checkTelegram()
       ]);
-      deep = { supabase: sb, openai, oddsapi, apifoot, telegram };
-    } else {
-      deep = { supabase: sb };
+      const get = (p) => (p.status === 'fulfilled' ? p.value : { ok: false, error: p.reason?.message || String(p.reason) });
+      deep = { openai: get(oai), oddsapi: get(odds), apifootball: get(foot), telegram: get(tg) };
     }
 
-    const payload = buildPayload(sb, deep, event);
+    const payload = buildPayload(sb, event, deep);
 
     if (asJSON(event)) {
-      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: true, ...payload, ms: ms(t0) }) };
     }
     return { statusCode: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }, body: renderHTML(payload) };
 
   } catch (e) {
-    // Nunca devolver 500 al usuario; entregamos JSON “amable”
     const msg = e?.message || String(e);
-    console.error('[DIAG] fatal:', msg);
-    const body = { ok:false, error: msg, at: nowISO() };
-    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+    // 👉 Nunca 500: devolvemos 200 con error en JSON/HTML para evitar “Internal Error”
+    const safe = { ok: false, error: msg, at: 'handler', ms: ms(t0) };
+    if (asJSON(event)) {
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(safe) };
+    }
+    return { statusCode: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: `Error: ${msg}` };
   }
 };
