@@ -107,18 +107,33 @@ function fmtDate(d) {
 }
 
 // ========================== SUPABASE (ESM dinámico) ==========================
+let _createClient; // cache del import dinámico ESM
+
 async function getCreateClient() {
   if (_createClient) return _createClient;
-  // @supabase/supabase-js es ESM-only → import dinámico en CJS
-  const mod = await import('@supabase/supabase-js');
-  _createClient = mod.createClient;
-  return _createClient;
+  try {
+    // @supabase/supabase-js es ESM-only → import dinámico en CJS
+    const mod = await import('@supabase/supabase-js');
+    _createClient = mod.createClient || (mod.default && mod.default.createClient);
+    if (typeof _createClient !== 'function') throw new Error('createClient no encontrado en módulo Supabase');
+    return _createClient;
+  } catch (e) {
+    // Import falló (no instalado, bundling, ESM, etc.)
+    console.error('[DIAG] Error importando @supabase/supabase-js:', e?.message || e);
+    return null; // ← clave: devolvemos null para que el resto no explote
+  }
 }
 
 async function supa() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
   const createClient = await getCreateClient();
-  return createClient(SUPABASE_URL, SUPABASE_KEY);
+  if (!createClient) return null; // ← si el import falló, marcamos DOWN arriba sin tirar 500
+  try {
+    return createClient(SUPABASE_URL, SUPABASE_KEY);
+  } catch (e) {
+    console.error('[DIAG] Error creando cliente Supabase:', e?.message || e);
+    return null;
+  }
 }
 
 async function sbTestBasic(authenticated) {
