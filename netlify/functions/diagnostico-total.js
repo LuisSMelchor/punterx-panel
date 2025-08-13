@@ -7,7 +7,17 @@
 //   - Deep:  /.netlify/functions/diagnostico-total?deep=1
 //   - Auth:  /.netlify/functions/diagnostico-total?code=XXXXX   (AUTH_CODE o PUNTERX_SECRET)
 
-const getSupabase = require('./_supabase-client.cjs'); // ← singleton seguro CJS+ESM
+// Lazy-load del shim para evitar fallos en top-level
+function loadShim() {
+  try {
+    // Nota: ruta relativa desde este archivo
+    // Si esto fallara por empaquetado, capturamos y degradamos a null
+    return require('./_supabase-client.cjs');
+  } catch (e) {
+    console.error('[DIAG] No se pudo cargar _supabase-client.cjs:', e?.message || e);
+    return null;
+  }
+}
 
 // ========================== ENV / CONFIG ==========================
 const {
@@ -86,10 +96,12 @@ function fmtDate(d) {
 // ========================== SUPABASE HELPERS (vía shim) ==========================
 async function sbClient() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+  const getSupabase = loadShim();
+  if (!getSupabase) return null; // degradar sin romper
   try {
     return await getSupabase(); // instancia única por proceso
   } catch (e) {
-    console.error('[DIAG] Supabase shim error:', e && (e.message || e));
+    console.error('[DIAG] Supabase shim error:', e?.message || e);
     return null;
   }
 }
