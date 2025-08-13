@@ -4,6 +4,9 @@
   # Garantiza que exista la carpeta publish aunque no haya build de frontend
   command = "npm run build || echo 'no build step'; mkdir -p public"
   publish = "public"
+  
+  [build.environment]
+  NODE_VERSION = "20"
 
 [functions]
   # Bundler por defecto
