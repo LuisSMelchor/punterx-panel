@@ -7,31 +7,19 @@
 //   - Deep:  /.netlify/functions/diagnostico-total?deep=1
 //   - Auth:  /.netlify/functions/diagnostico-total?code=XXXXX   (AUTH_CODE o PUNTERX_SECRET)
 
-// Lazy-load del shim para evitar fallos en top-level
-function loadShim() {
-  try {
-    // Nota: ruta relativa desde este archivo
-    // Si esto fallara por empaquetado, capturamos y degradamos a null
-    return require('./_supabase-client.cjs');
-  } catch (e) {
-    console.error('[DIAG] No se pudo cargar _supabase-client.cjs:', e?.message || e);
-    return null;
-  }
-}
-
-// Lazy‑load del shim para evitar fallos en top‑level y dejar trazas claras
+// --------- Shim de Supabase (lazy require con logs; NUNCA top-level require del shim) ----------
 console.log('[DIAG] module-load');
-let _px_supa_factory = null;
+let __px_supa_factory = null;
 function loadShim() {
-  if (_px_supa_factory) return _px_supa_factory;
+  if (__px_supa_factory) return __px_supa_factory;
   try {
-    _px_supa_factory = require('./_supabase-client.cjs');
+    __px_supa_factory = require('./_supabase-client.cjs'); // devuelve una función async que crea/recupera el cliente
     console.log('[DIAG] shim-ok');
   } catch (e) {
-    console.error('[DIAG] shim-fail', e?.message || e);
-    _px_supa_factory = null;
+    console.error('[DIAG] shim-fail', e && (e.message || e));
+    __px_supa_factory = null;
   }
-  return _px_supa_factory;
+  return __px_supa_factory;
 }
 
 // ========================== ENV / CONFIG ==========================
@@ -111,14 +99,12 @@ function fmtDate(d) {
 // ========================== SUPABASE HELPERS (vía shim) ==========================
 async function sbClient() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
-  const getSupabase = loadShim();
-  if (!getSupabase) return null; // degradar sin romper
-  const getSupabase = loadShim();
-  if (!getSupabase) return null; // degradar sin romper
+  const supaFactory = loadShim();          // ← NO usar nombre getSupabase para evitar choques
+  if (!supaFactory) return null;           // degradar sin romper
   try {
-    return await getSupabase(); // instancia única por proceso
+    return await supaFactory();            // instancia única por proceso (singleton en shim)
   } catch (e) {
-    console.error('[DIAG] Supabase shim error:', e?.message || e);
+    console.error('[DIAG] Supabase shim error:', e && (e.message || e));
     return null;
   }
 }
@@ -126,7 +112,7 @@ async function sbClient() {
 async function sbTestBasic(authenticated) {
   const t0 = Date.now();
   const client = await sbClient();
-  if (!client) return { status: 'DOWN', ms: ms(t0), error: 'SUPABASE_URL/SUPABASE_KEY ausentes' };
+  if (!client) return { status: 'DOWN', ms: ms(t0), error: 'SUPABASE_URL/SUPABASE_KEY ausentes o shim no disponible' };
 
   try {
     const { data, error } = await client
@@ -544,8 +530,9 @@ function renderHTML(payload) {
 
 // ========================== HANDLER ==========================
 exports.handler = async (event) => {
-  console.log('[DIAG] boot-ok', new Date().toISOString());
   try {
+    console.log('[DIAG] boot-ok', new Date().toISOString());
+
     const startedAt = new Date();
     const authenticated = isAuthed(event);
     const wantJSON = asJSON(event);
