@@ -10,10 +10,6 @@
     "netlify/functions/_supabase-client.cjs"
   ]
 
-# 🔒 Aislar SOLO diagnostico-total del bundler (evita colisión SUPA_CACHE_KEY)
-[functions."diagnostico-total"]
-  node_bundler = "none"
-
 ############################################
 # FUNCIONES PROGRAMADAS (cron)
 ############################################
