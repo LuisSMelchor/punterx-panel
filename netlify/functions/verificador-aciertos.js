@@ -1,220 +1,102 @@
 // netlify/functions/verificador-aciertos.js
-// Verifica resultados de picks, registra win/lose/push y actualiza memoria_resumen.
-// Nota: Evaluador simple para H2H y Totals; puedes ampliarlo según tus mercados.
+// Verifica resultados y actualiza estado de picks (esqueleto seguro).
+// POST/GET /.netlify/functions/verificador-aciertos
+// Nota: ajusta la lógica de verificación según tu fuente de resultados.
 
-const fetch = require('node-fetch');
-const { createClient } = require('@supabase/supabase-js');
+const getSupabase = require('./_supabase-client.cjs');
 
-const {
-  SUPABASE_URL, SUPABASE_KEY,
-  API_FOOTBALL_KEY
-} = process.env;
+const RESULTADOS_VALIDOS = new Set(['ganado', 'perdido', 'nulo', 'pendiente']);
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+function asJSON(event) { return !!((event.queryStringParameters || {}).json); }
 
-function json(statusCode, body) {
-  return { statusCode, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+async function getClient() {
+  try { return await getSupabase(); }
+  catch (e) { console.error('[VERIFY] Supabase shim error:', e?.message || e); return null; }
 }
-function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
-async function fetchWithRetry(url, opt={}, retries=2) {
-  try {
-    const res = await fetch(url, opt);
-    if (!res.ok && retries > 0 && (res.status === 429 || (res.status >= 500 && res.status <= 599))) {
-      const ra = Number(res.headers.get('retry-after') || 0);
-      const d = ra > 0 ? ra*1000 : 800;
-      await sleep(d);
-      return fetchWithRetry(url, opt, retries-1);
-    }
-    return res;
-  } catch (e) {
-    if (retries > 0) { await sleep(600); return fetchWithRetry(url, opt, retries-1); }
-    throw e;
+async function listarPendientes(limit = 100) {
+  const supabase = await getClient();
+  if (!supabase) return { ok: false, error: 'Supabase no disponible' };
+
+  const { data, error } = await supabase
+    .from('picks_historicos')
+    .select('id, evento_id, timestamp, apuesta, liga, pais, resultado')
+    .eq('resultado', 'pendiente')
+    .order('timestamp', { ascending: true })
+    .limit(limit);
+
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, data: data || [] };
+}
+
+async function actualizarResultado(id, resultado, meta = {}) {
+  if (!RESULTADOS_VALIDOS.has(resultado)) {
+    return { ok: false, error: `Resultado inválido: ${resultado}` };
   }
+  const supabase = await getClient();
+  if (!supabase) return { ok: false, error: 'Supabase no disponible' };
+
+  const { error } = await supabase
+    .from('picks_historicos')
+    .update({ resultado, meta_verificacion: meta, verificado_en: new Date().toISOString() })
+    .eq('id', id);
+
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
-// ===== Supabase I/O =====
-async function registrarResultadoPartido({ pick_id, evento, mercado, cuota, probabilidad, ev, resultado }) {
-  try {
-    await supabase.from('resultados_partidos').insert({
-      pick_id, evento, mercado, cuota, probabilidad, ev, resultado
-    });
-  } catch (e) {
-    console.error('[verificador] insert resultado error:', e?.message || e);
+// Ejemplo de verificación “mock”: marca pendientes antiguos como “nulo” pasado cierto tiempo.
+// Sustituye por tu integración real (API de resultados, scraping, etc.).
+async function runVerificacion() {
+  const { ok, data, error } = await listarPendientes(200);
+  if (!ok) return { ok: false, error };
+
+  const ahora = Date.now();
+  const cambios = [];
+
+  for (const p of data) {
+    try {
+      const edadMin = 6 * 60 * 60 * 1000; // 6 horas
+      const ts = new Date(p.timestamp).getTime();
+      if (ahora - ts > edadMin) {
+        const up = await actualizarResultado(p.id, 'nulo', { razon: 'timeout_auto' });
+        if (up.ok) cambios.push({ id: p.id, de: p.resultado, a: 'nulo' });
+      }
+    } catch (e) {
+      // continuar con el siguiente
+    }
   }
+  return { ok: true, revisados: data.length, actualizados: cambios.length, cambios };
 }
 
-async function actualizarMemoriaResumen(liga, windowDias = 30) {
+exports.handler = async (event) => {
   try {
-    const desde = new Date(Date.now() - windowDias*24*60*60*1000).toISOString();
-
-    const { data: picks } = await supabase
-      .from('picks_historicos')
-      .select('id, liga')
-      .gte('timestamp', desde);
-
-    const ids = (picks || []).filter(r => r.liga === liga).map(r => r.id);
-    if (!ids.length) return;
-
-    const { data: res } = await supabase
-      .from('resultados_partidos')
-      .select('pick_id, resultado, ev, mercado')
-      .in('pick_id', ids);
-
-    if (!res || !res.length) return;
-
-    const samples = res.length;
-    const wins = res.filter(r => r.resultado === 'win').length;
-    const hit_rate = +(wins * 100 / samples).toFixed(2);
-    const ev_prom = +((res.reduce((a,b)=>a+(b.ev||0),0) / samples) || 0).toFixed(2);
-
-    const cnt = {};
-    res.forEach(r => { cnt[r.mercado||'s/d'] = (cnt[r.mercado||'s/d']||0)+1; });
-    const mercados_top = Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,3).map(x=>x[0]);
-
-    await supabase.from('memoria_resumen').upsert({
-      liga, window_dias: windowDias, samples, hit_rate, ev_prom, mercados_top
-    }, { onConflict: 'liga,window_dias' });
-  } catch (e) {
-    console.error('[verificador] memoria_resumen error:', e?.message || e);
-  }
-}
-
-// ===== API-Football util =====
-async function buscarFixturePorEquiposFecha(equiposTxt, fechaIso) {
-  // Estrategia simple: search por equipos; si trae varios, elegimos el más cercano a fecha objetivo.
-  const q = encodeURIComponent(equiposTxt.replace(' vs ', ' '));
-  const url = `https://v3.football.api-sports.io/fixtures?search=${q}`;
-  const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, 2);
-  if (!res?.ok) return null;
-  const data = await res.json().catch(()=>null);
-  const arr = data?.response || [];
-  if (!Array.isArray(arr) || !arr.length) return null;
-
-  if (!fechaIso) return arr[0];
-
-  const target = new Date(fechaIso).getTime();
-  let best = arr[0], bestDiff = Infinity;
-  for (const it of arr) {
-    const ts = new Date(it?.fixture?.date || it?.fixture?.timestamp*1000 || 0).getTime();
-    const diff = Math.abs(ts - target);
-    if (Number.isFinite(diff) && diff < bestDiff) { best = it; bestDiff = diff; }
-  }
-  return best;
-}
-
-function resolverResultado(mercado, apuestaTxt, fixture) {
-  try {
-    const goalsHome = fixture?.goals?.home ?? fixture?.score?.fulltime?.home ?? null;
-    const goalsAway = fixture?.goals?.away ?? fixture?.score?.fulltime?.away ?? null;
-    if (goalsHome == null || goalsAway == null) return 'push'; // desconocido
-
-    const total = Number(goalsHome) + Number(goalsAway);
-    const t = String(apuestaTxt || '').toLowerCase();
-
-    // H2H simple
-    if (t.includes('local') || t.includes('home') || t.includes('ganador') || t.includes('h2h')) {
-      if (goalsHome > goalsAway) return 'win';
-      if (goalsHome < goalsAway) return 'lose';
-      return 'push';
-    }
-    if (t.includes('visitante') || t.includes('away')) {
-      if (goalsAway > goalsHome) return 'win';
-      if (goalsAway < goalsHome) return 'lose';
-      return 'push';
-    }
-    if (t.includes('empate') || t.includes('draw')) {
-      return (goalsHome === goalsAway) ? 'win' : 'lose';
-    }
-
-    // Totals
-    const mOver = t.match(/(over|más de)\s*([0-9]+(\.[0-9]+)?)/);
-    const mUnder = t.match(/(under|menos de)\s*([0-9]+(\.[0-9]+)?)/);
-    if (mOver) {
-      const line = parseFloat(mOver[2]);
-      if (total > line) return 'win';
-      if (total < line) return 'lose';
-      return 'push';
-    }
-    if (mUnder) {
-      const line = parseFloat(mUnder[2]);
-      if (total < line) return 'win';
-      if (total > line) return 'lose';
-      return 'push';
-    }
-
-    // Spread/hándicap: simplificado — marcar push si no podemos evaluar fiablemente
-    if (t.includes('hándicap') || t.includes('handicap') || t.includes('spread')) {
-      return 'push';
-    }
-
-    return 'push';
-  } catch { return 'push'; }
-}
-
-exports.handler = async () => {
-  try {
-    if (!SUPABASE_URL || !SUPABASE_KEY || !API_FOOTBALL_KEY) {
-      return json(500, { error: 'Config incompleta' });
-    }
-
-    // 1) Traer picks recientes (últimas 36h) que aún no tengan resultado
-    const desde = new Date(Date.now() - 36*60*60*1000).toISOString();
-    const { data: picks } = await supabase
-      .from('picks_historicos')
-      .select('id, evento, liga, equipos, apuesta, ev, probabilidad, timestamp')
-      .gte('timestamp', desde)
-      .order('timestamp', { ascending: false })
-      .limit(80);
-
-    const procesados = [];
-    if (!Array.isArray(picks) || !picks.length) {
-      return json(200, { ok: true, procesados });
-    }
-
-    for (const p of picks) {
+    // Si POST con body { id, resultado }, actualiza uno directo
+    if (event.httpMethod === 'POST' && event.body) {
       try {
-        // Evitar duplicar si ya existe resultado
-        const { data: ya } = await supabase
-          .from('resultados_partidos')
-          .select('id')
-          .eq('pick_id', p.id)
-          .limit(1);
-        if (Array.isArray(ya) && ya.length) continue;
-
-        const equiposTxt = p.equipos || (p.evento || '').split('|').pop()?.trim() || '';
-        const fx = await buscarFixturePorEquiposFecha(equiposTxt, p.timestamp);
-        if (!fx) continue;
-
-        // Resolver resultado
-        const resultado = resolverResultado(p.apuesta || '', p.apuesta || '', fx);
-        await registrarResultadoPartido({
-          pick_id: p.id,
-          evento: p.evento || '',
-          mercado: (p.apuesta || '').toLowerCase().includes('over') || (p.apuesta || '').toLowerCase().includes('under') ? 'totals' : 'h2h',
-          cuota: null, // opcional, si la tenías guardada en otro campo
-          probabilidad: p.probabilidad || null,
-          ev: p.ev || null,
-          resultado
-        });
-
-        // Actualiza resúmenes 7/30
-        if (p.liga) {
-          await actualizarMemoriaResumen(p.liga, 7);
-          await actualizarMemoriaResumen(p.liga, 30);
-        }
-
-        procesados.push({ id: p.id, resultado });
-        // pequeño respiro para no saturar
-        await sleep(120);
+        const payload = JSON.parse(event.body);
+        const { id, resultado, meta } = payload || {};
+        const res = await actualizarResultado(id, resultado, meta);
+        return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(res) };
       } catch (e) {
-        console.error('[verificador] item error:', e?.message || e);
+        return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok:false, error: e?.message || String(e) }) };
       }
     }
 
-    return json(200, { ok: true, procesados });
+    // Ejecución general (GET)
+    const out = await runVerificacion();
+    if (asJSON(event)) {
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out) };
+    }
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      body: out.ok
+        ? `Verificación OK — revisados: ${out.revisados}, actualizados: ${out.actualizados}`
+        : `Error: ${out.error}`
+    };
   } catch (e) {
-    console.error('[verificador] error:', e?.message || e);
-    return json(500, { error: 'internal' });
+    const msg = e?.message || String(e);
+    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok:false, error: msg }) };
   }
 };
