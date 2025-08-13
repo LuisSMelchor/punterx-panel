@@ -121,6 +121,10 @@ if (typeof __PX_DIAG__.SUPA_CACHE_KEY === 'undefined') {
 }
 const SUPA_CACHE_KEY = __PX_DIAG__.SUPA_CACHE_KEY;
 
+// Construcción dinámica del nombre del paquete para evitar que el bundler
+// reescriba la importación y genere variables duplicadas como _createClient.
+const SUPA_PKG = ['@supabase', 'supabase-js'].join('/');
+
 /**
  * Carga dinámica de @supabase/supabase-js (ESM-only) desde CJS.
  * Nunca lanza: si falla, devuelve null y el diagnóstico mostrará "Supabase: DOWN".
@@ -128,13 +132,13 @@ const SUPA_CACHE_KEY = __PX_DIAG__.SUPA_CACHE_KEY;
 async function getCreateClient() {
   if (__PX_DIAG__.__supaCreate) return __PX_DIAG__.__supaCreate;
   try {
-    const mod = await import('@supabase/supabase-js');
+    const mod = await import(SUPA_PKG);
     const createClient = mod.createClient || (mod.default && mod.default.createClient);
-    if (typeof createClient !== 'function') throw new Error('createClient no encontrado en @supabase/supabase-js');
+   if (typeof createClient !== 'function') throw new Error('createClient no encontrado en ' + SUPA_PKG);
     __PX_DIAG__.__supaCreate = createClient; // cache global
     return __PX_DIAG__.__supaCreate;
   } catch (e) {
-    console.error('[DIAG] Error importando @supabase/supabase-js:', e && (e.message || e));
+    console.error('[DIAG] Error importando', SUPA_PKG + ':', e && (e.message || e));
     return null; // ← muy importante: no rompemos la función
   }
 }
