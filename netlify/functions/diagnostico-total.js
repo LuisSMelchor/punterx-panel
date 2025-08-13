@@ -7,20 +7,7 @@
 //   - Deep:  /.netlify/functions/diagnostico-total?deep=1
 //   - Auth:  /.netlify/functions/diagnostico-total?code=XXXXX   (AUTH_CODE o PUNTERX_SECRET)
 
-// --------- Shim de Supabase (lazy require con logs; NUNCA top-level require del shim) ----------
 console.log('[DIAG] module-load');
-let __px_supa_factory = null;
-function loadShim() {
-  if (__px_supa_factory) return __px_supa_factory;
-  try {
-    __px_supa_factory = require('./_supabase-client.cjs'); // devuelve una función async que crea/recupera el cliente
-    console.log('[DIAG] shim-ok');
-  } catch (e) {
-    console.error('[DIAG] shim-fail', e && (e.message || e));
-    __px_supa_factory = null;
-  }
-  return __px_supa_factory;
-}
 
 // ========================== ENV / CONFIG ==========================
 const {
@@ -96,15 +83,45 @@ function fmtDate(d) {
   } catch { return d || ''; }
 }
 
-// ========================== SUPABASE HELPERS (vía shim) ==========================
+// ========================== Supabase (shim inline, singleton) ==========================
+// Sin require local. Import ESM dinámico + cache en globalThis para evitar múltiples instancias.
+let __supaPromise = null;
+async function getSupabase() {
+  if (__supaPromise) return __supaPromise;
+
+  if (!globalThis.__PX_SUPA__) globalThis.__PX_SUPA__ = {};
+  if (globalThis.__PX_SUPA__.client) {
+    __supaPromise = Promise.resolve(globalThis.__PX_SUPA__.client);
+    return __supaPromise;
+  }
+
+  try {
+    const mod = await import('@supabase/supabase-js');
+    const createClient = mod.createClient || (mod.default && mod.default.createClient);
+    if (typeof createClient !== 'function') {
+      throw new Error('No se encontró createClient en @supabase/supabase-js');
+    }
+    const url = SUPABASE_URL;
+    const key = SUPABASE_KEY;
+    if (!url || !key) throw new Error('Faltan SUPABASE_URL / SUPABASE_KEY');
+
+    const client = createClient(url, key);
+    globalThis.__PX_SUPA__.client = client;
+    __supaPromise = Promise.resolve(client);
+    return client;
+  } catch (e) {
+    console.error('[DIAG] getSupabase fail:', e?.message || e);
+    __supaPromise = null;
+    throw e;
+  }
+}
+
 async function sbClient() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
-  const supaFactory = loadShim();          // ← NO usar nombre getSupabase para evitar choques
-  if (!supaFactory) return null;           // degradar sin romper
   try {
-    return await supaFactory();            // instancia única por proceso (singleton en shim)
+    return await getSupabase(); // instancia única por proceso
   } catch (e) {
-    console.error('[DIAG] Supabase shim error:', e && (e.message || e));
+    // degradar sin romper la función
     return null;
   }
 }
@@ -112,7 +129,7 @@ async function sbClient() {
 async function sbTestBasic(authenticated) {
   const t0 = Date.now();
   const client = await sbClient();
-  if (!client) return { status: 'DOWN', ms: ms(t0), error: 'SUPABASE_URL/SUPABASE_KEY ausentes o shim no disponible' };
+  if (!client) return { status: 'DOWN', ms: ms(t0), error: 'SUPABASE_URL/SUPABASE_KEY ausentes o cliente no disponible' };
 
   try {
     const { data, error } = await client
@@ -193,9 +210,7 @@ async function sbInsertEjecucion(row) {
   if (!client) return;
   try {
     await client.from('diagnostico_ejecuciones').insert([row]);
-  } catch (e) {
-    // silencioso
-  }
+  } catch (_) {}
 }
 
 // ========================== CHECKS EXTERNOS ==========================
