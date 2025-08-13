@@ -1,6 +1,9 @@
 // netlify/functions/diagnostico-total.js
 // Diagnóstico integral — versión con trampas globales y ping de vida
 
+// Compatibilidad: asegurar fetch en runtime (Node <20 / entornos sin global.fetch)
+const _fetch = (typeof fetch !== 'undefined') ? fetch : require('node-fetch');
+
 // ---- Trampas globales para capturar cualquier crash temprano ----
 process.on('uncaughtException', (e) => {
   try { console.error('[DIAG][uncaughtException]', e && (e.stack || e.message || e)); } catch {}
@@ -33,9 +36,12 @@ const T_NET = 7000;
 
 async function fetchWithTimeout(resource, options = {}) {
   const { timeout = T_NET, ...opts } = options;
-  const ctrl = new AbortController();
-  const id = setTimeout(() => ctrl.abort(), timeout);
-  try { return await fetch(resource, { ...opts, signal: ctrl.signal }); }
+  const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const id = setTimeout(() => { try { ctrl && ctrl.abort(); } catch {} }, timeout);
+  try {
+    const signal = ctrl ? ctrl.signal : undefined;
+    return await _fetch(resource, { ...opts, signal });
+  }
   finally { clearTimeout(id); }
 }
 
