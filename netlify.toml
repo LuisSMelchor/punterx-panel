@@ -1,24 +1,29 @@
 # netlify.toml — PunterX (estable)
 
 [build]
-  # Garantiza que exista la carpeta publish aunque no haya build de frontend
   command = "npm run build || echo 'no build step'; mkdir -p public"
   publish = "public"
-  
   [build.environment]
-  NODE_VERSION = "20"
+    NODE_VERSION = "20" # Recomendado por Netlify/Supabase
 
 [functions]
-  # Bundler por defecto
   node_bundler = "esbuild"
-  # No incrustar supabase-js en los bundles
-  external_node_modules = ["@supabase/supabase-js"]
-  # Asegurar que el shim esté en el deploy (para TODAS las funciones)
+
+# Asegura que el shim y dependencias dinámicas estén disponibles en RUNTIME
+[functions."diagnostico-total"]
   included_files = [
     "netlify/functions/_supabase-client.cjs"
   ]
-  # Directorio de funciones
-  directory = "netlify/functions"
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "openai",
+    "node-fetch"
+  ]
+
+# (Opcional) send.js también usa fetch → no necesita included_files,
+# pero lo declaramos por consistencia (no es obligatorio)
+[functions."send"]
+  external_node_modules = ["node-fetch"]
 
 ############################################
 # FUNCIONES + SCHEDULES (sin duplicados)
