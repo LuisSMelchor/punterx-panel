@@ -1,12 +1,38 @@
 // netlify/functions/diagnostico-total.js
 // Diagnóstico integral — robusto y sin “Internal Error”.
 
-// Polyfill de fetch (por si el runtime frío no lo trae aún)
+// netlify/functions/diagnostico-total.js
+// Endpoint HTTP del diagnóstico (no programado; URL pública)
+
 try {
   if (typeof fetch === 'undefined') {
     global.fetch = require('node-fetch');
   }
 } catch (_) {}
+
+const { runChecks, renderHTML } = require('./_diag-core.cjs');
+
+const nowISO = () => new Date().toISOString();
+const asJSON = (e) => !!((e.queryStringParameters || {}).json);
+const isPing = (e) => !!((e.queryStringParameters || {}).ping);
+
+exports.handler = async (event) => {
+  try {
+    if (isPing(event)) {
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok:true, ping:'pong', at: nowISO() }) };
+    }
+
+    const payload = await runChecks();
+
+    if (asJSON(event)) {
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
+    }
+    return { statusCode: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }, body: renderHTML(payload) };
+  } catch (e) {
+    const body = { ok:false, error: e?.message || String(e), at: nowISO() };
+    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  }
+};
 
 const getSupabase = require('./_supabase-client.cjs');
 
