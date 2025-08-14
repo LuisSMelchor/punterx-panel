@@ -23,20 +23,12 @@
 [functions."diagnostico-total"]
   included_files = [
     "netlify/functions/_supabase-client.cjs",
-    "netlify/functions/_diag-core-v3.cjs"
+    "netlify/functions/_diag-core-v4.cjs"
   ]
   external_node_modules = [
     "@supabase/supabase-js",
     "openai",
     "node-fetch"
-  ]
-  
-# --- CRON (no tiene URL pública; se ejecuta por scheduler) ---
-[functions."diagnostico-total-cron"]
-  schedule = "*/10 * * * *" # el intervalo que prefieras
-  included_files = [
-    "netlify/functions/_supabase-client.cjs",
-    "netlify/functions/_diag-core.cjs"
   ]
   
   external_node_modules = [
