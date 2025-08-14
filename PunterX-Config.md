@@ -1,3 +1,51 @@
+# 📄 PunterX Config — Estado, Avances y Histórico de Cambios  
+**Última actualización:** 14 de agosto de 2025  
+
+---
+
+## 🗓 Contexto Actual
+- **Proyecto:** PunterX — sistema automatizado de picks deportivos con IA.  
+- **Estado:** Producción activa en Netlify Functions con ejecución programada (CRON) y endpoints HTTP públicos.  
+- **Script principal:** `autopick-vip-nuevo.cjs` ejecutándose cada 15 minutos (America/Mexico_City).  
+- **Objetivo:** Detectar y enviar picks de alto valor esperado (EV) usando OddsAPI + API-FOOTBALL PRO + análisis GPT-5, con registro en Supabase y envío diferenciado a Telegram.
+
+---
+
+## ⚙ Arquitectura
+- **Frontend:** Panel en Netlify (`punterx-panel-vip.netlify.app`).  
+- **Backend:** Netlify Functions (serverless).  
+- **Base de datos:** Supabase.  
+- **Fuentes de datos:**
+  - **OddsAPI:** Fuente principal de partidos y cuotas.
+  - **API-FOOTBALL PRO:** Datos avanzados (alineaciones, clima, árbitros, historial, forma, lesiones).  
+  - **OpenAI GPT-5:** Análisis y predicciones.
+- **Mensajería:** Bot de Telegram (canal público y grupo VIP).  
+- **Zona horaria:** America/Mexico_City (ejecuciones) y America/Toronto (diagnóstico ajustable).
+
+---
+
+## 📜 Archivos clave
+- `autopick-vip-nuevo.cjs` → Script maestro picks pre-match.  
+- `autopick-vip-nuevo-background.cjs` → Ejecuciones en segundo plano.  
+- `autopick-outrights.cjs` → Picks a largo plazo.  
+- `send.js` → Envió manual de mensajes.  
+- `diagnostico-total.js` + `_diag-core-v4.cjs` → Endpoint de diagnóstico web.  
+- `verificador-aciertos.js` → Verificación de resultados.  
+- `memoria-inteligente.js` → Optimización de memoria IA.  
+- `analisis-semanal.js` → Resumen semanal.  
+- `netlify.toml` → Configuración unificada (build, funciones, CRON).  
+- `prompts_punterx.md` → Prompts optimizados para GPT-5.
+
+---
+
+## 🛠 Cambios y Mejoras Recientes
+### 1. Problema con la URL de diagnóstico
+- **Síntoma:** Al acceder a `/.netlify/functions/diagnostico-total` devolvía:  
+Internal Error. ID: XXXXX
+
+markdown
+Copiar
+Editar
 - **Causas encontradas:**
 - Falta de `global.fetch` en entorno Netlify.
 - Doble declaración de funciones (`nowISO`) → colisión en bundle.
