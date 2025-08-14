@@ -1,5 +1,9 @@
 // netlify/functions/_diag-core.cjs
 // Núcleo compartido del diagnóstico (checks + render + actividad de picks)
+// UI profesional + Montreal por defecto + build tag visible
+
+// === Build tag para verificar despliegue en pantalla ===
+const DIAG_BUILD_TAG = 'PunterX diag v3';
 
 // Polyfill fetch por si el runtime frío no lo trae aún (harmless en Node 20)
 try {
@@ -242,13 +246,13 @@ function renderHTML(payload) {
   const bg = '#0b0d12', card = '#0f121a', border = '#1b2233', text = '#EAEFF7', muted = '#9AA8BF';
   const htmlEscape = (s) => String(s || '').replace(/[&<>"]/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
 
-  // rowsEnv (sin template literal anidado)
+  // rowsEnv
   const rowsEnv = Object.entries(payload.env_presence).map(([k,v]) => {
     const masked = payload.env_masked[k] ?? '';
     return '<tr><td>'+k+'</td><td>'+(v ? '✅' : '❌')+'</td><td class="muted">'+htmlEscape(masked)+'</td></tr>';
   }).join('');
 
-  // rowsChecks (sin template literal anidado)
+  // rowsChecks
   const rowsChecks = Object.entries(payload.checks).map(([k,obj]) => {
     const stColor = (obj.status==='UP' ? '#16a34a' : '#f59f00');
     let details = '';
@@ -269,21 +273,18 @@ function renderHTML(payload) {
       + '</div>';
   }).join('');
 
-  // picksSection (sin template literal anidado para meter/filas)
+  // picksSection
   let picksSection = '';
   if (payload.activity) {
     const a = payload.activity;
 
-    // meters
     const meters = Object.entries(a.metrics.niveles || {}).map(([label, n]) => {
       const width = Math.min(100, (a.metrics.total ? (n*100/a.metrics.total) : 0));
       return '<div class="meter"><span>'+htmlEscape(label)+'</span><div class="bar"><i style="width:'+width+'%"></i></div><b>'+n+'</b></div>';
     }).join('');
 
-    // top ligas
     const topLigas = (a.metrics.top_ligas || []).map(([k, n]) => '<li><span>'+htmlEscape(k)+'</span><b>'+n+'</b></li>').join('');
 
-    // rows picks
     const rows = (a.rows || []).map(row => {
       const ev = Number.isNaN(row.ev) ? '—' : (row.ev.toFixed(2)+'%');
       const prob = Number.isNaN(row.prob) ? '—' : (row.prob.toFixed(1)+'%');
@@ -324,7 +325,7 @@ function renderHTML(payload) {
       + '</div>';
   }
 
-  // HTML principal (un único template literal grande y estable)
+  // HTML principal
   return `<!doctype html><meta charset="utf-8">
 <title>PunterX — Diagnóstico</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -370,6 +371,7 @@ function renderHTML(payload) {
   <div class="header">
     <h1 style="margin:0;font-size:20px">PunterX — Diagnóstico <span class="badge">${ok ? 'UP' : 'DEGRADED'}</span></h1>
     <div class="chips">
+      <div class="chip">Build: ${htmlEscape(DIAG_BUILD_TAG)}</div>
       <div class="chip">TZ: ${htmlEscape(payload.tz)}</div>
       <div class="chip">Node: ${htmlEscape(payload.node)}</div>
       <div class="chip">Generado: ${htmlEscape(payload.generated_at)}</div>
