@@ -637,7 +637,7 @@ async function enviarTelegram(chatId, text) {
   }
 }
 const enviarFREE = (text) => enviarTelegram(TELEGRAM_CHANNEL_ID, text);
-the enviarVIP  = (text) => enviarTelegram(Number(TELEGRAM_GROUP_ID), text);
+const enviarVIP  = (text) => enviarTelegram(Number(TELEGRAM_GROUP_ID), text);
 
 /* ============================ Handler ============================ */
 exports.handler = async (event, context) => {
