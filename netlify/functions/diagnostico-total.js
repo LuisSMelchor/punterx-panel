@@ -1,8 +1,6 @@
 // netlify/functions/diagnostico-total.js
-// Endpoint HTTP del diagnóstico (no programado; URL pública)
-// (Versión corregida: evita colisiones de identificadores con _diag-core.cjs)
+// Endpoint HTTP del diagnóstico (URL pública) — usa core con UI pro
 
-// Polyfill fetch por si el runtime frío no lo trae aún
 try {
   if (typeof fetch === 'undefined') {
     global.fetch = require('node-fetch');
@@ -11,7 +9,7 @@ try {
 
 const { runChecks, renderHTML } = require('./_diag-core.cjs');
 
-// Nombres únicos para evitar choque con símbolos del bundle
+// Nombres únicos (evita colisiones de bundle)
 const __nowISO = () => new Date().toISOString();
 const __wantsJSON = (e) => !!((e.queryStringParameters || {}).json);
 const __wantsPing = (e) => !!((e.queryStringParameters || {}).ping);
