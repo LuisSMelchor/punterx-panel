@@ -3,13 +3,14 @@
 
 try {
   if (typeof fetch === 'undefined') {
+    // Polyfill defensivo; en Node 20 ya existe, pero no estorba en cold start
     global.fetch = require('node-fetch');
   }
-} catch (_) {}
+} catch (_) { /* no-op */ }
 
 const { runChecks, runDeepActivity, renderHTML } = require('./_diag-core.cjs');
 
-// Identificadores únicos (evita colisiones en bundle)
+// Identificadores únicos (evita colisiones en bundle con el core)
 const __nowISO = () => new Date().toISOString();
 const __wantsJSON = (e) => !!((e.queryStringParameters || {}).json);
 const __wantsPing = (e) => !!((e.queryStringParameters || {}).ping);
@@ -21,6 +22,7 @@ const __num = (v, d) => {
 
 exports.handler = async (event) => {
   try {
+    // Salud mínima
     if (__wantsPing(event)) {
       return {
         statusCode: 200,
@@ -29,37 +31,44 @@ exports.handler = async (event) => {
       };
     }
 
-    const base = await runChecks();
+    // Checks base (si algo cae, igual devolvemos 200 con estado DEGRADED)
+    const payload = await runChecks();
 
-    // Deep mode: consultas a Supabase para actividad de picks
+    // Modo profundo: actividad de picks reciente desde Supabase
     if (__wantsDeep(event)) {
       const qs = event.queryStringParameters || {};
       const limit = __num(qs.limit, 30);
       const hours = __num(qs.hours, 24);
+
       const activity = await runDeepActivity({ limit, hours });
-      base.activity = {
+      payload.activity = {
         ok: activity.ok,
         limit,
         window_hours: hours,
         took_ms: activity.took_ms,
-        ...(activity.ok ? { rows: activity.rows, metrics: activity.metrics } : { error: activity.error })
+        ...(activity.ok
+          ? { rows: activity.rows, metrics: activity.metrics }
+          : { error: activity.error })
       };
     }
 
+    // Salida JSON sin HTML si se solicita
     if (__wantsJSON(event)) {
       return {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(base)
+        body: JSON.stringify(payload)
       };
     }
 
+    // HTML bonito por defecto
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
-      body: renderHTML(base)
+      body: renderHTML(payload)
     };
   } catch (e) {
+    // Nunca 500: devolvemos 200 con error legible (evita "Internal Error")
     const body = { ok: false, error: e?.message || String(e), at: __nowISO() };
     return {
       statusCode: 200,
