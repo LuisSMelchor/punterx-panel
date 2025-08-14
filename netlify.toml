@@ -23,7 +23,7 @@
 [functions."diagnostico-total"]
   included_files = [
     "netlify/functions/_supabase-client.cjs",
-    "netlify/functions/_diag-core.cjs"
+    "netlify/functions/_diag-core-v3.cjs"
   ]
   external_node_modules = [
     "@supabase/supabase-js",
