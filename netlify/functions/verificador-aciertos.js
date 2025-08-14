@@ -3,6 +3,25 @@
 // POST/GET /.netlify/functions/verificador-aciertos
 // Nota: ajusta la lógica de verificación según tu fuente de resultados.
 
+// --- BLINDAJE RUNTIME: fetch + trampas globales (añadir al inicio del archivo) ---
+try {
+  if (typeof fetch === 'undefined') {
+    // Polyfill para runtimes/lambdas donde fetch aún no está disponible
+    global.fetch = require('node-fetch');
+  }
+} catch (_) { /* no-op */ }
+
+try {
+  // Evita “Internal Error” si algo revienta antes del handler
+  process.on('uncaughtException', (e) => {
+    try { console.error('[UNCAUGHT]', e && (e.stack || e.message || e)); } catch {}
+  });
+  process.on('unhandledRejection', (e) => {
+    try { console.error('[UNHANDLED]', e && (e.stack || e.message || e)); } catch {}
+  });
+} catch (_) { /* no-op */ }
+// --- FIN BLINDAJE RUNTIME ---
+
 const getSupabase = require('./_supabase-client.cjs');
 
 const RESULTADOS_VALIDOS = new Set(['ganado', 'perdido', 'nulo', 'pendiente']);
