@@ -1,16 +1,28 @@
-# netlify.toml — PunterX (estable)
+# ===============================
+# Netlify config unificado PunterX
+# ===============================
 
 [build]
+  # Si no tienes build, este comando no falla y deja /public
   command = "npm run build || echo 'no build step'; mkdir -p public"
-  publish = "public"
-  [build.environment]
-    NODE_VERSION = "20" # Recomendado por Netlify/Supabase
+  publish  = "public"
+  functions = "netlify/functions"
 
+[build.environment]
+  NODE_VERSION = "20"
+  TZ = "America/Toronto" # Ajusta si prefieres MX: America/Mexico_City
+
+# Defaults para TODAS las funciones
 [functions]
   node_bundler = "esbuild"
 
-# Asegura que el shim y dependencias dinámicas estén disponibles en RUNTIME
+# -------------------------------
+# Diagnóstico (URL pública + cron)
+# -------------------------------
 [functions."diagnostico-total"]
+  # CRON: cada 10 minutos (ajusta si ya usabas otro)
+  schedule = "*/10 * * * *"
+  # Shim + SDKs externos (no empaquetar ESM pesados)
   included_files = [
     "netlify/functions/_supabase-client.cjs"
   ]
@@ -20,39 +32,120 @@
     "node-fetch"
   ]
 
-# (Opcional) send.js también usa fetch → no necesita included_files,
-# pero lo declaramos por consistencia (no es obligatorio)
+# ---------------------------------------
+# Envíos (sin cron; endpoint HTTP público)
+# ---------------------------------------
 [functions."send"]
   external_node_modules = ["node-fetch"]
 
-############################################
-# FUNCIONES + SCHEDULES (sin duplicados)
-############################################
-
-# Principal
+# --------------------------------------
+# Autopick pre-match (cron frecuente)
+# --------------------------------------
 [functions."autopick-vip-nuevo"]
+  # CRON: cada 15 minutos (ajusta si usabas otro)
   schedule = "*/15 * * * *"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs",
+    "prompts_punterx.md"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "openai",
+    "node-fetch"
+  ]
 
-# Background: corre al minuto 2, 17, 32, 47 de cada hora
+# ---------------------------------------------------
+# Autopick en background (cron frecuente, mismo ritmo)
+# ---------------------------------------------------
 [functions."autopick-vip-nuevo-background"]
-  schedule = "2-59/15 * * * *"
+  # CRON: cada 15 minutos (ajusta si usabas otro)
+  schedule = "*/15 * * * *"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs",
+    "prompts_punterx.md"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "openai",
+    "node-fetch"
+  ]
 
-# Verificador: cada hora
-[functions."verificador-aciertos"]
-  schedule = "0 * * * *"
-
-# Análisis semanal: lunes 06:00
-[functions."analisis-semanal"]
-  schedule = "0 6 * * 1"
-
-# Diagnóstico/refresh dashboard: cada 10 min
-# Forzamos esbuild aquí también para que respete included_files y external_node_modules.
-[functions."diagnostico-total"]
-  node_bundler = "esbuild"
-  external_node_modules = ["@supabase/supabase-js"]
-  included_files = ["netlify/functions/_supabase-client.cjs"]
-  schedule = "*/10 * * * *"
-
-# Outrights: cada 30 min
+# --------------------------------------
+# Outrights (menos frecuente por volumen)
+# --------------------------------------
 [functions."autopick-outrights"]
+  # CRON: cada 6 horas (ajusta si usabas otro)
+  schedule = "0 */6 * * *"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs",
+    "prompts_punterx.md"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "openai",
+    "node-fetch"
+  ]
+
+# --------------------------------------
+# Análisis semanal (ej. lunes al mediodía)
+# --------------------------------------
+[functions."analisis-semanal"]
+  # CRON: lunes 12:00 (ajusta si usabas otro)
+  schedule = "0 12 * * MON"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+# --------------------------------------
+# Verificador de aciertos (regular)
+# --------------------------------------
+[functions."verificador-aciertos"]
+  # CRON: cada 30 minutos (ajusta si usabas otro)
   schedule = "*/30 * * * *"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+# --------------------------------------
+# Memoria inteligente (mantenimiento regular)
+# --------------------------------------
+[functions."memoria-inteligente"]
+  # CRON: a los 15 de cada hora (ajusta si usabas otro)
+  schedule = "15 * * * *"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+# --------------------------------------
+# Check de estado (ligero y frecuente)
+# --------------------------------------
+[functions."check-status"]
+  # CRON: cada 10 minutos (ajusta si usabas otro)
+  schedule = "*/10 * * * *"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+# ----------------
+# Redirects útiles
+# ----------------
+[[redirects]]
+  from = "/diag"
+  to = "/.netlify/functions/diagnostico-total"
+  status = 200
