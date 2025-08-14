@@ -120,11 +120,6 @@ async function checkTelegram() {
 }
 
 // -------------- ACTIVIDAD: PICKS (Supabase) --------------
-// Nota: hacemos el código tolerante a esquemas distintos.
-// - Intentamos usar `created_at` si existe; si no, ordenamos por `id`.
-// - Campos preferidos: liga/competencia, pais, apuesta/seleccion, ev, prob*_est*, canal/tipo/nivel.
-// - Si ciertas columnas no existen, rellenamos con '—'.
-
 function safeGet(row, keys, fallback='—') {
   for (const k of keys) {
     if (k in row && row[k] != null && row[k] !== '') return row[k];
@@ -133,7 +128,7 @@ function safeGet(row, keys, fallback='—') {
 }
 
 function classifyVIP(ev) {
-  if (typeof ev !== 'number') return '—';
+  if (typeof ev !== 'number' || Number.isNaN(ev)) return '—';
   if (ev >= 40) return '🟣 Ultra Élite';
   if (ev >= 30) return '🎯 Élite Mundial';
   if (ev >= 20) return '🥈 Avanzado';
@@ -146,11 +141,9 @@ async function fetchPicksSnapshot({ limit = 30, hours = 24 } = {}) {
   const t0 = Date.now();
   try {
     const supabase = await getSupabase();
-
-    // Intentar filtrar por ventana de tiempo si existe created_at
     const sinceISO = new Date(Date.now() - hours * 3600e3).toISOString();
 
-    // 1) Intento preferido: usar created_at
+    // Intento 1: created_at
     let q = supabase.from('picks_historicos')
       .select('*')
       .gte('created_at', sinceISO)
@@ -158,7 +151,7 @@ async function fetchPicksSnapshot({ limit = 30, hours = 24 } = {}) {
       .limit(limit);
 
     let { data, error } = await q;
-    // 2) Si falla por columna inexistente, probamos sin filtro temporal
+    // Intento 2: sin created_at
     if (error) {
       q = supabase.from('picks_historicos').select('*').order('id', { ascending: false }).limit(limit);
       const alt = await q;
@@ -180,27 +173,33 @@ async function fetchPicksSnapshot({ limit = 30, hours = 24 } = {}) {
       return { id, liga, pais, apuesta, ev, prob, canal, fecha, vipNivel: classifyVIP(ev) };
     });
 
-    // Métricas
-    const m = {
-      total: mapped.length,
-      vip: mapped.filter(x => String(x.canal||'').toLowerCase().includes('vip')).length,
-      free: mapped.filter(x => String(x.canal||'').toLowerCase().includes('free')).length,
-      ev_avg: mapped.length ? Number((mapped.filter(x=>!isNaN(x.ev)).reduce((a,b)=>a+b.ev,0)/mapped.filter(x=>!isNaN(x.ev)).length).toFixed(2)) : null,
-      niveles: {
-        '🟣 Ultra Élite': mapped.filter(x=>x.vipNivel==='🟣 Ultra Élite').length,
-        '🎯 Élite Mundial': mapped.filter(x=>x.vipNivel==='🎯 Élite Mundial').length,
-        '🥈 Avanzado': mapped.filter(x=>x.vipNivel==='🥈 Avanzado').length,
-        '🥉 Competitivo': mapped.filter(x=>x.vipNivel==='🥉 Competitivo').length,
-        'FREE (10–14.9%)': mapped.filter(x=>x.vipNivel==='FREE (10–14.9%)').length,
-        'Descartado (<10%)': mapped.filter(x=>x.vipNivel==='Descartado (<10%)').length
-      },
-      top_ligas: Object.entries(mapped.reduce((acc, x)=>{
-        const k = `${x.pais} • ${x.liga}`;
-        acc[k] = (acc[k]||0)+1; return acc;
-      }, {})).sort((a,b)=>b[1]-a[1]).slice(0,6),
+    const total = mapped.length;
+    const withEV = mapped.filter(x => !Number.isNaN(x.ev));
+    const ev_avg = withEV.length ? Number((withEV.reduce((a,b)=>a+b.ev,0)/withEV.length).toFixed(2)) : null;
+
+    const nivelesCount = {
+      '🟣 Ultra Élite': mapped.filter(x=>x.vipNivel==='🟣 Ultra Élite').length,
+      '🎯 Élite Mundial': mapped.filter(x=>x.vipNivel==='🎯 Élite Mundial').length,
+      '🥈 Avanzado': mapped.filter(x=>x.vipNivel==='🥈 Avanzado').length,
+      '🥉 Competitivo': mapped.filter(x=>x.vipNivel==='🥉 Competitivo').length,
+      'FREE (10–14.9%)': mapped.filter(x=>x.vipNivel==='FREE (10–14.9%)').length,
+      'Descartado (<10%)': mapped.filter(x=>x.vipNivel==='Descartado (<10%)').length
     };
 
-    return { ok:true, took_ms: ms(t0), rows: mapped, metrics: m };
+    const top_ligas_map = mapped.reduce((acc, x)=>{
+      const k = (x.pais || '—') + ' • ' + (x.liga || '—');
+      acc[k] = (acc[k]||0)+1; return acc;
+    }, {});
+    const top_ligas = Object.entries(top_ligas_map).sort((a,b)=>b[1]-a[1]).slice(0,6);
+
+    return { ok:true, took_ms: ms(t0), rows: mapped, metrics: {
+      total,
+      vip: mapped.filter(x => String(x.canal||'').toLowerCase().includes('vip')).length,
+      free: mapped.filter(x => String(x.canal||'').toLowerCase().includes('free')).length,
+      ev_avg,
+      niveles: nivelesCount,
+      top_ligas
+    }};
   } catch (e) {
     return { ok:false, took_ms: ms(t0), error: e?.message || String(e) };
   }
@@ -243,76 +242,89 @@ function renderHTML(payload) {
   const bg = '#0b0d12', card = '#0f121a', border = '#1b2233', text = '#EAEFF7', muted = '#9AA8BF';
   const htmlEscape = (s) => String(s || '').replace(/[&<>"]/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
 
-  const rowsEnv = Object.entries(payload.env_presence).map(([k,v]) =>
-    `<tr><td>${k}</td><td>${v ? '✅' : '❌'}</td><td class="muted">${htmlEscape(payload.env_masked[k] ?? '')}</td></tr>`
-  ).join('');
+  // rowsEnv (sin template literal anidado)
+  const rowsEnv = Object.entries(payload.env_presence).map(([k,v]) => {
+    const masked = payload.env_masked[k] ?? '';
+    return '<tr><td>'+k+'</td><td>'+(v ? '✅' : '❌')+'</td><td class="muted">'+htmlEscape(masked)+'</td></tr>';
+  }).join('');
 
-  const rowsChecks = Object.entries(payload.checks).map(([k,obj]) => `
-    <div class="check-card">
-      <div class="check-title">${k}</div>
-      <div class="check-row"><span>status</span><b style="color:${obj.status==='UP'?'#16a34a':'#f59f00'}">${htmlEscape(obj.status)}</b></div>
-      <div class="check-row"><span>latencia</span><code>${htmlEscape(String(obj.ms || 0))} ms</code></div>
-      ${obj.error ? `<div class="check-row"><span>error</span><code class="code">${htmlEscape(obj.error)}</code></div>` : ''}
-      ${obj.details ? `<div class="check-row"><span>detalles</span><pre class="code">${htmlEscape(JSON.stringify(obj.details, null, 2))}</pre></div>` : ''}
-    </div>
-  ).join('');
+  // rowsChecks (sin template literal anidado)
+  const rowsChecks = Object.entries(payload.checks).map(([k,obj]) => {
+    const stColor = (obj.status==='UP' ? '#16a34a' : '#f59f00');
+    let details = '';
+    if (obj.details) {
+      details = '<div class="check-row"><span>detalles</span><pre class="code">'+htmlEscape(JSON.stringify(obj.details, null, 2))+'</pre></div>';
+    }
+    let err = '';
+    if (obj.error) {
+      err = '<div class="check-row"><span>error</span><code class="code">'+htmlEscape(obj.error)+'</code></div>';
+    }
+    return ''
+      + '<div class="check-card">'
+      +   '<div class="check-title">'+k+'</div>'
+      +   '<div class="check-row"><span>status</span><b style="color:'+stColor+'">'+htmlEscape(obj.status)+'</b></div>'
+      +   '<div class="check-row"><span>latencia</span><code>'+htmlEscape(String(obj.ms || 0))+' ms</code></div>'
+      +   err
+      +   details
+      + '</div>';
+  }).join('');
 
-  // Sección dinámica: actividad de picks (cuando exists payload.activity)
+  // picksSection (sin template literal anidado para meter/filas)
   let picksSection = '';
   if (payload.activity) {
     const a = payload.activity;
+
+    // meters
     const meters = Object.entries(a.metrics.niveles || {}).map(([label, n]) => {
       const width = Math.min(100, (a.metrics.total ? (n*100/a.metrics.total) : 0));
-      return `<div class="meter"><span>${htmlEscape(label)}</span><div class="bar"><i style="width:${width}%"></i></div><b>${n}</b></div>`;
+      return '<div class="meter"><span>'+htmlEscape(label)+'</span><div class="bar"><i style="width:'+width+'%"></i></div><b>'+n+'</b></div>';
     }).join('');
 
-    const topLigas = (a.metrics.top_ligas || []).map(([k, n]) => `<li><span>${htmlEscape(k)}</span><b>${n}</b></li>`).join('');
+    // top ligas
+    const topLigas = (a.metrics.top_ligas || []).map(([k, n]) => '<li><span>'+htmlEscape(k)+'</span><b>'+n+'</b></li>').join('');
 
-    const rows = (a.rows || []).map(row => `
-      <tr>
-        <td>${htmlEscape(row.pais)} • ${htmlEscape(row.liga)}</td>
-        <td><code class="code">${htmlEscape(String(row.apuesta))}</code></td>
-        <td>${isNaN(row.ev)?'—':(row.ev.toFixed(2)+'%')}</td>
-        <td>${isNaN(row.prob)?'—':(row.prob.toFixed(1)+'%')}</td>
-        <td>${htmlEscape(row.vipNivel)}</td>
-        <td><span class="pill">${htmlEscape(String(row.canal||'—').toUpperCase())}</span></td>
-        <td class="muted">${htmlEscape(row.fecha)}</td>
-      </tr>
-    `).join('');
+    // rows picks
+    const rows = (a.rows || []).map(row => {
+      const ev = Number.isNaN(row.ev) ? '—' : (row.ev.toFixed(2)+'%');
+      const prob = Number.isNaN(row.prob) ? '—' : (row.prob.toFixed(1)+'%');
+      return ''
+        + '<tr>'
+        +   '<td>'+htmlEscape(row.pais)+' • '+htmlEscape(row.liga)+'</td>'
+        +   '<td><code class="code">'+htmlEscape(String(row.apuesta))+'</code></td>'
+        +   '<td>'+ev+'</td>'
+        +   '<td>'+prob+'</td>'
+        +   '<td>'+htmlEscape(row.vipNivel)+'</td>'
+        +   '<td><span class="pill">'+htmlEscape(String(row.canal||'—').toUpperCase())+'</span></td>'
+        +   '<td class="muted">'+htmlEscape(row.fecha)+'</td>'
+        + '</tr>';
+    }).join('');
 
-    picksSection = `
-    <div class="card">
-      <h2 style="margin-top:0">Actividad de picks (últ. ${htmlEscape(String(a.window_hours))} h)</h2>
-      <div class="stats">
-        <div class="stat"><div class="stat-kpi">${a.metrics.total}</div><div class="stat-label">Total picks</div></div>
-        <div class="stat"><div class="stat-kpi">${a.metrics.vip}</div><div class="stat-label">Enviados VIP</div></div>
-        <div class="stat"><div class="stat-kpi">${a.metrics.free}</div><div class="stat-label">Enviados FREE</div></div>
-        <div class="stat"><div class="stat-kpi">${a.metrics.ev_avg ?? '—'}</div><div class="stat-label">EV promedio (%)</div></div>
-      </div>
-
-      <div class="grid2">
-        <div class="box">
-          <h3>Niveles VIP / FREE</h3>
-          <div class="meters">${meters}</div>
-        </div>
-        <div class="box">
-          <h3>Top ligas / países</h3>
-          <ul class="toplist">${topLigas || '<li class="muted">Sin datos</li>'}</ul>
-        </div>
-      </div>
-
-      <h3>Últimos ${htmlEscape(String(a.limit))} picks</h3>
-      <div class="table-wrap">
-        <table class="picks">
-          <thead><tr>
-            <th>Liga</th><th>Selección</th><th>EV</th><th>Prob.</th><th>Nivel</th><th>Canal</th><th>Fecha</th>
-          </tr></thead>
-          <tbody>${rows || '<tr><td colspan="7" class="muted">Sin registros</td></tr>'}</tbody>
-        </table>
-      </div>
-    </div>`;
+    picksSection =
+      '<div class="card">'
+      + '<h2 style="margin-top:0">Actividad de picks (últ. '+htmlEscape(String(a.window_hours))+' h)</h2>'
+      + '<div class="stats">'
+      +   '<div class="stat"><div class="stat-kpi">'+a.metrics.total+'</div><div class="stat-label">Total picks</div></div>'
+      +   '<div class="stat"><div class="stat-kpi">'+a.metrics.vip+'</div><div class="stat-label">Enviados VIP</div></div>'
+      +   '<div class="stat"><div class="stat-kpi">'+a.metrics.free+'</div><div class="stat-label">Enviados FREE</div></div>'
+      +   '<div class="stat"><div class="stat-kpi">'+(a.metrics.ev_avg ?? '—')+'</div><div class="stat-label">EV promedio (%)</div></div>'
+      + '</div>'
+      + '<div class="grid2">'
+      +   '<div class="box"><h3>Niveles VIP / FREE</h3><div class="meters">'+meters+'</div></div>'
+      +   '<div class="box"><h3>Top ligas / países</h3><ul class="toplist">'+(topLigas || '<li class="muted">Sin datos</li>')+'</ul></div>'
+      + '</div>'
+      + '<h3>Últimos '+htmlEscape(String(a.limit))+' picks</h3>'
+      + '<div class="table-wrap">'
+      +   '<table class="picks">'
+      +     '<thead><tr>'
+      +       '<th>Liga</th><th>Selección</th><th>EV</th><th>Prob.</th><th>Nivel</th><th>Canal</th><th>Fecha</th>'
+      +     '</tr></thead>'
+      +     '<tbody>'+ (rows || '<tr><td colspan="7" class="muted">Sin registros</td></tr>') +'</tbody>'
+      +   '</table>'
+      + '</div>'
+      + '</div>';
   }
 
+  // HTML principal (un único template literal grande y estable)
   return `<!doctype html><meta charset="utf-8">
 <title>PunterX — Diagnóstico</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
