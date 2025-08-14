@@ -6,6 +6,25 @@
 // - Robusto: lock de ciclo, circuit breaker, timeouts y reintentos
 // - Mensaje incluye fecha de inicio del torneo (si se puede resolver)
 
+// --- BLINDAJE RUNTIME: fetch + trampas globales (añadir al inicio del archivo) ---
+try {
+  if (typeof fetch === 'undefined') {
+    // Polyfill para runtimes/lambdas donde fetch aún no está disponible
+    global.fetch = require('node-fetch');
+  }
+} catch (_) { /* no-op */ }
+
+try {
+  // Evita “Internal Error” si algo revienta antes del handler
+  process.on('uncaughtException', (e) => {
+    try { console.error('[UNCAUGHT]', e && (e.stack || e.message || e)); } catch {}
+  });
+  process.on('unhandledRejection', (e) => {
+    try { console.error('[UNHANDLED]', e && (e.stack || e.message || e)); } catch {}
+  });
+} catch (_) { /* no-op */ }
+// --- FIN BLINDAJE RUNTIME ---
+
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 // ⬇️ Migración a openai@4
