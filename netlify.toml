@@ -30,12 +30,6 @@
     "openai",
     "node-fetch"
   ]
-  
-  external_node_modules = [
-    "@supabase/supabase-js",
-    "openai",
-    "node-fetch"
-  ]
 
 
 # ---------------------------------------
