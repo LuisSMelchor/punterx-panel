@@ -19,18 +19,32 @@
 # -------------------------------
 # Diagnóstico (URL pública + cron)
 # -------------------------------
+# --- HTTP (URL pública) ---
 [functions."diagnostico-total"]
-  # CRON: cada 10 minutos (ajusta si ya usabas otro)
-  schedule = "*/10 * * * *"
-  # Shim + SDKs externos (no empaquetar ESM pesados)
   included_files = [
-    "netlify/functions/_supabase-client.cjs"
+    "netlify/functions/_supabase-client.cjs",
+    "netlify/functions/_diag-core.cjs"
   ]
   external_node_modules = [
     "@supabase/supabase-js",
     "openai",
     "node-fetch"
   ]
+  
+# --- CRON (no tiene URL pública; se ejecuta por scheduler) ---
+[functions."diagnostico-total-cron"]
+  schedule = "*/10 * * * *" # el intervalo que prefieras
+  included_files = [
+    "netlify/functions/_supabase-client.cjs",
+    "netlify/functions/_diag-core.cjs"
+  ]
+  
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "openai",
+    "node-fetch"
+  ]
+
 
 # ---------------------------------------
 # Envíos (sin cron; endpoint HTTP público)
