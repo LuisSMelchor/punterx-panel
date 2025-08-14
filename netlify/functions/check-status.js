@@ -1,43 +1,58 @@
 // netlify/functions/check-status.js
-// Healthcheck rápido del entorno y conectividad básica.
-// GET /.netlify/functions/check-status?json=1
-//
-// Reporta: presencia de envs críticos + ping mínimo a Supabase + echo de versión Node.
+// Check de estado ligero para PunterX — seguro, rápido y sin 500.
 
+// 1) Polyfill global.fetch si el runtime llega sin fetch (cold start / empaquetador)
+try {
+  if (typeof fetch === 'undefined') {
+    // node-fetch v2 en CJS
+    global.fetch = require('node-fetch');
+  }
+} catch (_) { /* no romper por el polyfill */ }
+
+// 2) Shim de Supabase (singleton, compatible ESM/CJS)
 const getSupabase = require('./_supabase-client.cjs');
 
+// 3) ENV y utilidades
 const {
   SUPABASE_URL,
   SUPABASE_KEY,
-  OPENAI_API_KEY,
-  ODDS_API_KEY,
-  API_FOOTBALL_KEY,
-  TELEGRAM_BOT_TOKEN,
-  TELEGRAM_CHANNEL_ID,
-  TELEGRAM_GROUP_ID,
   TZ,
   NODE_VERSION
 } = process.env;
 
-const SITE_TZ = TZ || 'America/Mexico_City';
+const SITE_TZ = TZ || 'America/Toronto';
+const T_NET = 5000;
+
 const nowISO = () => new Date().toISOString();
 const ms = (t0) => Date.now() - t0;
-
-function asJSON(event) { return !!((event.queryStringParameters || {}).json); }
-function mask(s, keep = 4) {
+const mask = (s, keep = 4) => {
   if (!s) return '';
   const str = String(s);
   if (str.length <= keep) return '*'.repeat(str.length);
   return str.slice(0, keep) + '*'.repeat(str.length - keep);
+};
+
+function asJSON(e) { return !!((e.queryStringParameters || {}).json); }
+function isPing(e) { return !!((e.queryStringParameters || {}).ping); }
+
+async function fetchWithTimeout(resource, options = {}) {
+  const { timeout = T_NET, ...opts } = options;
+  const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const id = setTimeout(() => { try { ctrl && ctrl.abort(); } catch {} }, timeout);
+  try {
+    const signal = ctrl ? ctrl.signal : undefined;
+    return await fetch(resource, { ...opts, signal });
+  } finally { clearTimeout(id); }
 }
 
-async function pingSupabase() {
+// 4) Check ligero de Supabase (lectura mínima)
+async function checkSupabase() {
   const t0 = Date.now();
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) {
       return { status: 'DOWN', ms: ms(t0), error: 'SUPABASE_URL/SUPABASE_KEY ausentes' };
     }
-    const supabase = await getSupabase(); // ← singleton
+    const supabase = await getSupabase();
     const { error } = await supabase.from('picks_historicos').select('id').limit(1);
     if (error) return { status: 'DOWN', ms: ms(t0), error: error.message };
     return { status: 'UP', ms: ms(t0) };
@@ -46,79 +61,83 @@ async function pingSupabase() {
   }
 }
 
-function buildPayload(sb) {
+// 5) Payload + render
+function buildPayload(checks) {
+  const env_presence = {
+    SUPABASE_URL: !!SUPABASE_URL,
+    SUPABASE_KEY: !!SUPABASE_KEY,
+  };
+  const env_masked = {
+    SUPABASE_URL: mask(SUPABASE_URL, 24),
+    SUPABASE_KEY: mask(SUPABASE_KEY, 6),
+  };
+  const global = Object.values(checks).every(c => c?.status === 'UP') ? 'UP' : 'DEGRADED';
   return {
     generated_at: nowISO(),
     node: NODE_VERSION || process.version,
-    timezone: SITE_TZ,
-    env_presence: {
-      SUPABASE_URL: !!SUPABASE_URL,
-      SUPABASE_KEY: !!SUPABASE_KEY,
-      OPENAI_API_KEY: !!OPENAI_API_KEY,
-      ODDS_API_KEY: !!ODDS_API_KEY,
-      API_FOOTBALL_KEY: !!API_FOOTBALL_KEY,
-      TELEGRAM_BOT_TOKEN: !!TELEGRAM_BOT_TOKEN,
-      TELEGRAM_CHANNEL_ID: !!TELEGRAM_CHANNEL_ID,
-      TELEGRAM_GROUP_ID: !!TELEGRAM_GROUP_ID,
-    },
-    env_masked: {
-      SUPABASE_URL: mask(SUPABASE_URL, 20),
-      SUPABASE_KEY: mask(SUPABASE_KEY, 6),
-      TELEGRAM_CHANNEL_ID: mask(TELEGRAM_CHANNEL_ID, 2),
-      TELEGRAM_GROUP_ID: mask(TELEGRAM_GROUP_ID, 2),
-    },
-    checks: {
-      supabase: sb
-    },
-    global: {
-      status: (sb.status === 'UP') ? 'UP' : 'DOWN'
-    }
+    tz: SITE_TZ,
+    env_presence,
+    env_masked,
+    checks,
+    global
   };
 }
 
 function renderHTML(payload) {
-  const c = payload.global.status === 'UP' ? '#17c964' : '#f31260';
+  const c = payload.global === 'UP' ? '#17c964' : '#f59f00';
+  const htmlEscape = (s) => String(s || '').replace(/[&<>"]/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+  const rowsEnv = Object.entries(payload.env_presence).map(([k,v]) =>
+    `<tr><td>${k}</td><td>${v ? '✅' : '❌'}</td><td class="muted">${htmlEscape(payload.env_masked[k] ?? '')}</td></tr>`
+  ).join('');
+  const rowsChecks = Object.entries(payload.checks).map(([k,obj]) => `
+    <tr><th colspan="2">${k}</th></tr>
+    <tr><td>status</td><td>${htmlEscape(obj.status)}</td></tr>
+    <tr><td>ms</td><td>${htmlEscape(String(obj.ms || 0))}</td></tr>
+    ${obj.error ? `<tr><td>error</td><td><code>${htmlEscape(obj.error)}</code></td></tr>` : ''}
+  `).join('');
   return `<!doctype html><meta charset="utf-8">
 <title>PunterX — Check Status</title>
 <style>
-  body{background:#0b0b10;color:#e5e7eb;font:14px/1.5 system-ui,Segoe UI,Roboto}
-  .card{background:#11131a;border:1px solid #1f2330;border-radius:12px;padding:14px;margin:14px}
+  body{background:#0b0b10;color:#e5e7eb;font:14px/1.5 system-ui,Segoe UI,Roboto;margin:0}
+  .wrap{max-width:820px;margin:0 auto;padding:16px}
+  .card{background:#11131a;border:1px solid #1f2330;border-radius:12px;padding:14px;margin:14px 0}
   .muted{color:#94a3b8}
   table{width:100%;border-collapse:collapse}
-  th,td{padding:8px;border-bottom:1px solid #1f2330;text-align:left;font-size:13px}
+  th,td{padding:8px;border-bottom:1px solid #1f2330;text-align:left;font-size:13px;vertical-align:top}
 </style>
-<div class="card">
-  <h1>Check Status <span style="color:${c}">${payload.global.status}</span></h1>
-  <div class="muted">${payload.generated_at} · Node: ${payload.node} · TZ: ${payload.timezone}</div>
-</div>
-<div class="card">
-  <h2>Variables de Entorno</h2>
-  <table>
-    ${Object.entries(payload.env_presence).map(([k,v]) => `
-      <tr><td>${k}</td><td>${v ? '✅' : '❌'}</td><td class="muted">${payload.env_masked[k] ?? ''}</td></tr>
-    `).join('')}
-  </table>
-</div>
-<div class="card">
-  <h2>Supabase</h2>
-  <table>
-    <tr><td>status</td><td>${payload.checks.supabase.status}</td></tr>
-    <tr><td>ms</td><td>${payload.checks.supabase.ms}</td></tr>
-    ${payload.checks.supabase.error ? `<tr><td>error</td><td>${payload.checks.supabase.error}</td></tr>` : ''}
-  </table>
+<div class="wrap">
+  <div class="card">
+    <h1>Check Status <span style="color:${c}">${payload.global}</span></h1>
+    <div class="muted">${htmlEscape(payload.generated_at)} · Node: ${htmlEscape(payload.node)} · TZ: ${htmlEscape(payload.tz)}</div>
+    <div class="muted">Modos: <code>?json=1</code> · <code>?ping=1</code></div>
+  </div>
+  <div class="card"><h2>Env</h2><table>${rowsEnv}</table></div>
+  <div class="card"><h2>Checks</h2><table>${rowsChecks}</table></div>
 </div>`;
 }
 
+// 6) Handler (siempre 200, sin “Internal Error”)
 exports.handler = async (event) => {
   try {
-    const sb = await pingSupabase();
-    const payload = buildPayload(sb);
+    if (isPing(event)) {
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok:true, ping:'pong', at: nowISO() }) };
+    }
+
+    const [sb] = await Promise.all([
+      checkSupabase()
+    ]);
+
+    const payload = buildPayload({
+      supabase: sb
+    });
+
     if (asJSON(event)) {
       return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
     }
     return { statusCode: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }, body: renderHTML(payload) };
   } catch (e) {
-    const msg = e?.message || String(e);
-    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok:false, error: msg }) };
+    // Nunca 500: respuesta amigable
+    const body = { ok:false, error: e?.message || String(e), at: nowISO() };
+    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
   }
 };
