@@ -93,3 +93,197 @@ exports.handler = async (event) => {
     return ok({ ok:false, error: e?.message || String(e) });
   }
 };
+
+// =======================================================
+// ===============  PunterX · LIVE helpers  ===============
+// =======================================================
+"use strict";
+
+try { if (typeof fetch === "undefined") global.fetch = require("node-fetch"); } catch (_) {}
+
+const _TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const _TG_FREE  = process.env.TELEGRAM_CHANNEL_ID; // Canal gratuito
+const _TG_VIP   = process.env.TELEGRAM_GROUP_ID;   // Grupo VIP
+
+// -- Utilidades de formato --
+function _fmt(str, map) {
+  let out = String(str || "");
+  for (const [k, v] of Object.entries(map || {})) {
+    out = out.replace(new RegExp(`\\{${k}\\}`, "g"), String(v ?? ""));
+  }
+  return out;
+}
+function _renderBullets(arr) {
+  const a = Array.isArray(arr) ? arr : [];
+  if (!a.length) return "—";
+  return a.map(s => `- ${s}`).join("\n");
+}
+function _renderTop3NoNumbers(top3) {
+  const a = Array.isArray(top3) ? top3 : [];
+  if (!a.length) return "—";
+  // Elementos esperados: { bookie, price } (decimal). Primera casa en **negritas**
+  return a.map((t, i) => {
+    const line = `${t.bookie} — ${Number(t.price).toFixed(2)}`;
+    return i === 0 ? `**${line}**` : line;
+  }).join("\n");
+}
+
+// -- Cliente Telegram básico --
+async function _tg(method, body) {
+  const url = `https://api.telegram.org/bot${_TG_TOKEN}/${method}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const json = await res.json().catch(()=> ({}));
+  if (!res.ok || json.ok === false) {
+    throw new Error(`[Telegram ${method}] ${res.status} ${json.description || ""}`);
+  }
+  return json.result;
+}
+async function _sendText(chatId, text, { pin=false } = {}) {
+  const msg = await _tg("sendMessage", {
+    chat_id: chatId,
+    text,
+    parse_mode: "Markdown",
+    disable_web_page_preview: true
+  });
+  if (pin) {
+    try {
+      await _tg("pinChatMessage", {
+        chat_id: chatId,
+        message_id: msg.message_id,
+        disable_notification: true
+      });
+    } catch (e) {
+      // Si no hay permisos de admin para fijar, solo registrar y continuar.
+      console.warn("[pinChatMessage]", e.message || e);
+    }
+  }
+  return msg; // incluye message_id
+}
+async function _editText(chatId, messageId, text) {
+  return _tg("editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+    parse_mode: "Markdown",
+    disable_web_page_preview: true
+  });
+}
+
+// ===================
+// Plantillas EN VIVO
+// ===================
+
+// FREE (LIVE_FREE)
+const _TPL_LIVE_FREE = [
+  "🔴 EN VIVO - RADAR DE VALOR",
+  "🏆 {pais} - {liga} - {equipos}",
+  "⏱️ {minuto}  |  Marcador: {marcador}  |  Fase: {fase}",
+  "",
+  "📊 Análisis en tiempo real:",
+  "{razonamiento}",
+  "",
+  "💬 “En vivo, cada jugada puede cambiarlo todo. Aquí es donde nacen las oportunidades.”",
+  "",
+  "🎁 Únete al VIP para ver:",
+  "- Apuesta sugerida y apuestas extra",
+  "- EV y probabilidad estimada",
+  "- Top-3 casas con la mejor cuota",
+  "",
+  "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.",
+  "⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder."
+].join("\n");
+
+// VIP (LIVE_VIP) — sin numeración en top‑3; #1 en negritas
+const _TPL_LIVE_VIP = [
+  "🔴 LIVE PICK - {nivel}",
+  "🏆 {pais} - {liga} - {equipos}",
+  "⏱️ {minuto}  |  Marcador: {marcador}  |  Fase: {fase}",
+  "",
+  "EV: {ev}% | Prob. estimada IA: {probabilidad}% | Momio: {momio}",
+  "",
+  "💡 Apuesta sugerida: {apuesta_sugerida}",
+  "📌 Vigencia: {vigencia}",
+  "",
+  "Apuestas extra:",
+  "{apuestas_extra}",
+  "",
+  "📊 Razonamiento EN VIVO:",
+  "{razonamiento}",
+  "",
+  "🏆 Top‑3 casas (mejor resaltada):",
+  "{top3}",
+  "",
+  "🧭 Snapshot mercado:",
+  "{snapshot}",
+  "",
+  "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.",
+  "⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder."
+].join("\n");
+
+// ========================
+// Builders de texto LIVE
+// ========================
+function _buildLiveFreeMessage(payload) {
+  const razonamiento = _renderBullets(payload.razonamiento || []);
+  return _fmt(_TPL_LIVE_FREE, {
+    pais: payload.pais || "—",
+    liga: payload.liga || "—",
+    equipos: payload.equipos || "—",
+    minuto: payload.minuto || "—",
+    marcador: payload.marcador || "—",
+    fase: payload.fase || "—",
+    razonamiento
+  });
+}
+
+function _buildLiveVipMessage(payload) {
+  const apuestas_extra = _renderBullets(payload.apuestas_extra || []);
+  const top3 = _renderTop3NoNumbers(payload.top3 || []);
+  const snapshot = payload.snapshot || "—";
+  return _fmt(_TPL_LIVE_VIP, {
+    nivel: payload.nivel || "🥈 Avanzado",
+    pais: payload.pais || "—",
+    liga: payload.liga || "—",
+    equipos: payload.equipos || "—",
+    minuto: payload.minuto || "—",
+    marcador: payload.marcador || "—",
+    fase: payload.fase || "—",
+    ev: (payload.ev ?? "").toString(),
+    probabilidad: (payload.probabilidad ?? "").toString(),
+    momio: (payload.momio ?? "").toString(),
+    apuesta_sugerida: payload.apuesta_sugerida || "—",
+    vigencia: payload.vigencia || "—",
+    apuestas_extra,
+    razonamiento: _renderBullets(payload.razonamiento || []),
+    top3,
+    snapshot
+  });
+}
+
+// =========================
+// API pública (exports)
+// =========================
+module.exports.sendLiveFree = async function sendLiveFree(payload) {
+  if (!_TG_TOKEN || !_TG_FREE) throw new Error("Faltan TELEGRAM_BOT_TOKEN o TELEGRAM_CHANNEL_ID");
+  const text = _buildLiveFreeMessage(payload);
+  return _sendText(_TG_FREE, text, { pin: false });
+};
+
+module.exports.sendLiveVip = async function sendLiveVip(payload, { pin = true } = {}) {
+  if (!_TG_TOKEN || !_TG_VIP) throw new Error("Faltan TELEGRAM_BOT_TOKEN o TELEGRAM_GROUP_ID");
+  const text = _buildLiveVipMessage(payload);
+  return _sendText(Number(_TG_VIP), text, { pin });
+};
+
+// Edita el mismo post (evita spam). chat: "VIP" | "FREE"
+module.exports.editLiveMessage = async function editLiveMessage({ chat = "VIP", message_id, payload }) {
+  if (!_TG_TOKEN) throw new Error("Falta TELEGRAM_BOT_TOKEN");
+  const chatId = chat === "FREE" ? _TG_FREE : Number(_TG_VIP);
+  if (!chatId) throw new Error("ChatId inválido para edición");
+  const text = (chat === "FREE") ? _buildLiveFreeMessage(payload) : _buildLiveVipMessage(payload);
+  return _editText(chatId, message_id, text);
+};
