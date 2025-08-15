@@ -42,7 +42,6 @@ const {
   OPENAI_MODEL,
   OPENAI_MODEL_FALLBACK,
   COUNTRY_FLAG,
-  // Opcionales para fuentes de outrights si las integras luego
   ODDS_API_KEY,
   API_FOOTBALL_KEY,
 } = process.env;
@@ -50,7 +49,7 @@ const {
 function assertEnv() {
   const required = [
     "SUPABASE_URL","SUPABASE_KEY","OPENAI_API_KEY","TELEGRAM_BOT_TOKEN",
-    "TELEGRAM_CHANNEL_ID","TELEGRAM_GROUP_ID"
+    "TELEGRAM_CHANNEL_ID","TELEGRAM_GROUP_ID","ODDS_API_KEY","API_FOOTBALL_KEY"
   ];
   const missing = required.filter(k => !process.env[k]);
   if (missing.length) {
@@ -139,13 +138,162 @@ function decimalToAmerican(d) {
   return `-${Math.round(100 / (dec - 1))}`;
 }
 
-/* ============================ Outrights datasource ============================ */
-// TODO: reemplaza este stub por tu fuente real de outrights.
-// Debe devolver un array de torneos con:
-// { torneoClave, liga, temporada, pais, startsAtISO, markets: [{market,label,price,bookie,point?}], extrasSugeridas?:[...] }
+/* ============================ OddsAPI + API-FOOTBALL (fetchOutrights) ============================ */
+/**
+ * Devuelve torneos con mercados OUTRIGHTS normalizados:
+ * [{
+ *   torneoClave, liga, temporada, pais, startsAtISO,
+ *   markets: [{ market:"Outright", label:"Manchester City", price:5.5, bookie:"Bet365" }, ...],
+ *   extrasSugeridas: [] // opcional
+ * }]
+ */
 async function fetchOutrights() {
-  // Ejemplo vacío seguro (no rompe el ciclo).
-  return [];
+  const out = [];
+
+  // 1) Lista de sports en OddsAPI y filtra Soccer con has_outrights = true
+  const sportsURL = `https://api.the-odds-api.com/v4/sports/?apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
+  const sRes = await fetchWithRetry(sportsURL, { method: "GET" }, { retries: 1, base: 600 });
+  if (!sRes.ok) {
+    console.error("[OUT] OddsAPI /sports error:", sRes.status, await safeText(sRes));
+    return out;
+  }
+  const sports = await safeJson(sRes);
+  const soccerOutrights = (Array.isArray(sports) ? sports : [])
+    .filter(s => String(s.group).toLowerCase() === "soccer" && s.has_outrights === true);
+
+  if (!soccerOutrights.length) {
+    console.info("[OUT] OddsAPI: sin sports de soccer con has_outrights=true por ahora.");
+    return out;
+  }
+
+  // 2) Para cada sport con outrights, pedir mercado `outrights`
+  //    Regions: priorizamos EU y UK (puedes ajustar), odds decimal
+  const REGIONS = "eu,uk,us";
+  for (const s of soccerOutrights) {
+    const oddsURL =
+      `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(s.key)}/odds` +
+      `?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=${encodeURIComponent(REGIONS)}` +
+      `&markets=outrights&oddsFormat=decimal&dateFormat=iso`;
+    const oRes = await fetchWithRetry(oddsURL, { method: "GET" }, { retries: 1, base: 800 });
+    if (!oRes.ok) {
+      const bodyTxt = await safeText(oRes);
+      console.warn("[OUT] OddsAPI /odds outrights error:", s.key, oRes.status, bodyTxt.slice(0,400));
+      continue;
+    }
+    const events = await safeJson(oRes);
+    if (!Array.isArray(events) || !events.length) continue;
+
+    // 3) Para cada "evento" de outrights, construir markets consolidando mejor cuota por selección
+    for (const ev of events) {
+      // Mapea bookies -> markets -> outcomes (outrights)
+      // Estructura odds v4: ev.bookmakers[].markets[].key === 'outrights'
+      const offers = [];
+      for (const bk of (ev.bookmakers || [])) {
+        const bkTitle = bk.title || bk.key || "bookie";
+        for (const mk of (bk.markets || [])) {
+          if (String(mk.key).toLowerCase() !== "outrights") continue;
+          for (const oc of (mk.outcomes || [])) {
+            const label = oc.name;
+            const price = Number(oc.price);
+            if (!label || !Number.isFinite(price)) continue;
+            offers.push({ market: "Outright", label, price, bookie: bkTitle });
+          }
+        }
+      }
+      if (!offers.length) continue;
+
+      // Consolidar mejor cuota por selección
+      const bestByLabel = new Map();
+      for (const o of offers) {
+        const k = String(o.label).trim().toLowerCase();
+        const prev = bestByLabel.get(k);
+        if (!prev || o.price > prev.price) bestByLabel.set(k, o);
+      }
+      const markets = Array.from(bestByLabel.values()).sort((a,b)=> b.price - a.price);
+
+      // 4) Enriquecer con API-FOOTBALL: start/end de la temporada del torneo
+      const ligaTitle = s.title || ev.sport_title || "Torneo";
+      const enrich = await apiFootballResolveLeague(ligaTitle);
+      const liga = enrich.leagueName || ligaTitle;
+      const temporada = enrich.season || guessSeasonFromTitle(ligaTitle) || new Date().getUTCFullYear().toString();
+      const pais = enrich.country || (s.description || "INT");
+      const startsAtISO = enrich.start || ev.commence_time || soonInDaysISO(7); // fallback seguro
+
+      const torneoClave = `${pais}:${liga}:${temporada}`;
+      out.push({
+        torneoClave, liga, temporada, pais, startsAtISO,
+        markets,
+        extrasSugeridas: [] // puedes poblar con otras fuentes si quieres
+      });
+    }
+  }
+
+  return out;
+}
+
+// Heurística: intenta extraer un año (temporada) del título, si aplica
+function guessSeasonFromTitle(title) {
+  if (!title) return null;
+  const m = String(title).match(/(20\d{2})/);
+  return m ? m[1] : null;
+}
+function soonInDaysISO(d=7) {
+  const t = new Date(Date.now() + d*864e5);
+  return new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), 12, 0, 0)).toISOString();
+}
+
+/**
+ * API‑FOOTBALL: resuelve liga por nombre aproximado y devuelve
+ * { leagueName, season, country, start, end }
+ */
+async function apiFootballResolveLeague(searchName) {
+  const out = { leagueName: null, season: null, country: null, start: null, end: null };
+  if (!searchName) return out;
+
+  const url = `https://v3.football.api-sports.io/leagues?search=${encodeURIComponent(searchName)}`;
+  const res = await fetchWithRetry(url, {
+    method: "GET",
+    headers: { "x-apisports-key": API_FOOTBALL_KEY }
+  }, { retries: 1, base: 700 });
+
+  if (!res.ok) {
+    console.warn("[OUT] API-FOOTBALL leagues?search error:", res.status, await safeText(res));
+    return out;
+  }
+  const data = await safeJson(res);
+  const arr = (data && data.response) || [];
+  if (!Array.isArray(arr) || !arr.length) return out;
+
+  // Elegimos la mejor coincidencia: prioriza "cup" y "league" con seasons válidas
+  arr.sort((a,b)=>{
+    const an = (a.league?.name || "").toLowerCase();
+    const bn = (b.league?.name || "").toLowerCase();
+    // score por cercanía al término
+    const sa = (an.includes(searchName.toLowerCase()) ? 1 : 0) + (a.league?.type === "Cup" ? 1 : 0);
+    const sb = (bn.includes(searchName.toLowerCase()) ? 1 : 0) + (b.league?.type === "Cup" ? 1 : 0);
+    return sb - sa;
+  });
+
+  const pick = arr[0];
+  out.leagueName = pick?.league?.name || searchName;
+  out.country   = pick?.country?.name || null;
+
+  const seasons = Array.isArray(pick?.seasons) ? pick.seasons : [];
+  // Preferimos la season "current": true; si no, la próxima futura por fecha de inicio
+  let best = null;
+  for (const s of seasons) {
+    if (s.current === true) { best = s; break; }
+  }
+  if (!best && seasons.length) {
+    seasons.sort((a,b)=> (Date.parse(a.start||"")||0) - (Date.parse(b.start||"")||0));
+    best = seasons[0];
+  }
+  if (best) {
+    out.season = String(best.year || best.season || "").trim() || null;
+    out.start  = best.start || null;
+    out.end    = best.end || null;
+  }
+  return out;
 }
 
 /* ============================ IA (OpenAI) ============================ */
@@ -181,7 +329,7 @@ function ensurePickShape(p) {
     analisis_vip: p.analisis_vip ?? "s/d",
     apuesta: p.apuesta ?? "",
     apuestas_extra: p.apuestas_extra ?? "",
-    frase_motivacional: p.frase_motivacional ?? "s/d", // no se usa en VIP; puede usarse en teaser FREE si quisieras
+    frase_motivacional: p.frase_motivacional ?? "s/d",
     probabilidad: Number.isFinite(p.probabilidad) ? Number(p.probabilidad) : 0,
     no_pick: p.no_pick === true,
     motivo_no_pick: p.motivo_no_pick ?? ""
@@ -285,8 +433,8 @@ function renderTemplateWithMarkers(tpl, { contexto, opcionesList }) {
 function construirOpcionesOutrights(markets) {
   if (!Array.isArray(markets)) return [];
   return markets.map(m => {
-    // etiqueta humana: "Campeón: Man City — cuota 5.50 (Bet365)"
-    const market = (m.market || "").trim();
+    // etiqueta humana: "Outright: Man City — cuota 5.50 (Bet365)"
+    const market = (m.market || "Outright").trim();
     const label = (m.label  || "").trim();
     const price = Number(m.price);
     const bookie= (m.bookie||"").trim();
@@ -498,7 +646,7 @@ function construirMensajeOutrightVIP({ torneo, temporada, hleft, pick, probPct, 
     top3Block,
     ``,
     `📊 Datos a considerar:`,
-    `- ${pick.analisis_vip || "s/d"}`, // puedes enriquecer con métricas reales
+    `- ${pick.analisis_vip || "s/d"}`,
     ``,
     TAGLINE,
     `⚠️ Apuesta responsable. Este contenido es informativo; ninguna apuesta es segura.`
@@ -537,7 +685,7 @@ exports.handler = async (event, context) => {
   global.__punterx_out_lock = true;
 
   try {
-    // 1) Obtener torneos y mercados (reemplaza fetchOutrights con tu fuente real)
+    // 1) Obtener torneos y mercados OUTRIGHTS (OddsAPI + API‑FOOTBALL)
     const torneos = await fetchOutrights();
     resumen.torneos = Array.isArray(torneos) ? torneos.length : 0;
     if (!resumen.torneos) {
@@ -599,7 +747,6 @@ exports.handler = async (event, context) => {
         if (!pickCompleto(pick)) continue;
 
         // Seleccionar precio para la apuesta principal
-        // Busca coincidencia literal con la opción del mercado
         const apuestaTxt = String(pick.apuesta || "");
         const match = markets.find(m => {
           const human = `${m.market}: ${m.label} — cuota ${m.price} (${m.bookie})`;
@@ -622,13 +769,12 @@ exports.handler = async (event, context) => {
         if (ev == null) continue;
         if (ev < EV_MIN_SAVE) continue; // no guardar
 
-        // Top‑3 para el mercado principal
+        // Top‑3 para el mercado principal (Outright)
         const top3 = top3ByPrice(markets.filter(m =>
-          String(m.market).toLowerCase().trim() === String(match.market).toLowerCase().trim()
+          String(m.market).toLowerCase().trim() === "outright"
         ));
 
         // Extras (filtradas por prob alta)
-        // Si tu JSON IA devuelve un bloque de extras crudo, parsea aquí; si no, puedes construir algunas basadas en T.extrasSugeridas
         const extrasCrudas = Array.isArray(T.extrasSugeridas) ? T.extrasSugeridas : []; // [{mercado, descripcion, probabilidad, cuota}]
         const extrasFiltradas = filtrarApuestasExtra(extrasCrudas, { umbralPct: EXTRA_UMBRAL_PCT, maxN: EXTRA_MAX });
 
