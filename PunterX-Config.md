@@ -166,5 +166,138 @@ Editar
 - ✅ Manejo robusto de errores y reintentos en llamadas a APIs.
 - ✅ Logs mejorados para depuración en producción.
 
+## 9. Picks EN VIVO (In‑Play)
+
+### 9.1 Objetivo
+Agregar un flujo de señales EN VIVO (in‑play) para detectar “picks mágicos” durante el partido, utilizando OddsAPI (cuotas live), API‑FOOTBALL PRO (minuto, marcador, eventos, árbitro, odds live) y OpenAI (análisis y diagnóstico exprés). El foco está en **oportunidades reales con EV** y **bajo spam**.
+
+### 9.2 Fuentes y ciclo
+- **OddsAPI**: descubrimiento de eventos in‑play y cuotas recientes.
+- **API‑FOOTBALL PRO**: minuto, estado (fase), marcador, eventos (goles/rojas), odds live de respaldo.
+- **OpenAI (GPT‑5)**: una llamada solo si el **prefiltro de valor** (gap consenso vs mejor cuota) sugiere oportunidad.
+- **Supabase**: persistencia (histórico + telemetría) y anti‑duplicado.
+- **Telegram**: envío de mensajes (FREE/VIP), “fijado” en VIP y **edición** del mismo post.
+
+### 9.3 Criterios de selección (runtime)
+1) Partido en **estado live** y con **≥3 bookies activos** en el mercado objetivo.  
+2) Mercados elegibles V1: **1X2, Totales, Hándicap asiático** (se amplía luego).  
+3) **Señales de juego**: gol/roja, rachas de presión/xThreat, cambios ofensivos/defensivos, patrón de tarjetas del árbitro.  
+4) **Prefiltro de valor**: gap > ~5 p.p. entre “consenso” (mediana de 5–8 bookies) y mejor cuota.  
+5) **Umbrales** y validaciones:
+   - Prob IA ∈ [5%, 85%]
+   - Diferencia con implícita ≤ 15 p.p.
+   - **EV**: FREE 10–14.9%, **VIP ≥ 15%**
+   - Anti‑duplicado por (fixture_id, mercado, point, **bucket de minuto** de 5’)
+
+### 9.4 Ventanas de oportunidad
+- **Early (1’–15’)**: ajustes tempranos (totales/handicap).  
+- **HT (40’–50’ incluyendo descanso)**: reposicionamientos de línea útiles.  
+- **Late (75’–90’(+))**: valor en líneas con volatilidad por cansancio/cierre.
+
+### 9.5 Política anti‑spam
+- **Un (1) mensaje por señal** y luego **solo ediciones** del mismo post (salvo cierre/cashout).
+- Máximo **3 intervenciones** por partido (Señal → Update opcional → Cierre).
+- **Cooldown** ≥ 8–10 min por partido (excepto gol/roja).
+
+### 9.6 Formatos de mensaje EN VIVO
+
+#### 9.6.1 VIP (LIVE_VIP)
+🔴 LIVE PICK - {nivel}
+🏆 {pais} - {liga} - {equipos}
+⏱️ {minuto} | Marcador: {marcador} | Fase: {fase}
+
+EV: {ev}% | Prob. estimada IA: {probabilidad}% | Momio: {momio}
+
+💡 Apuesta sugerida: {apuesta_sugerida}
+📌 Vigencia: {vigencia}
+
+Apuestas extra:
+{apuestas_extra}
+
+📊 Razonamiento EN VIVO:
+{razonamiento}
+
+🏆 Top‑3 casas (mejor resaltada):
+{top3}
+
+🧭 Snapshot mercado:
+{snapshot}
+
+🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.
+⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder. Recuerda que ninguna apuesta es segura, incluso cuando el análisis sea sólido.
+
+markdown
+Copiar
+Editar
+
+**Notas:**
+- `{nivel}`: 🥉/🥈/🎯/🟣 según EV.  
+- `{top3}`: **sin numeración**; #1 en **negritas**.  
+- `{snapshot}` ejemplo:
+Consenso: 1.96 | Mejor: 2.05 | Volatilidad: media
+Disparador: doble cambio ofensivo + amarilla en zona crítica
+
+shell
+Copiar
+Editar
+
+#### 9.6.2 FREE (LIVE_FREE)
+🔴 EN VIVO - RADAR DE VALOR
+🏆 {pais} - {liga} - {equipos}
+⏱️ {minuto} | Marcador: {marcador} | Fase: {fase}
+
+📊 Análisis en tiempo real:
+{razonamiento}
+
+💬 “En vivo, cada jugada puede cambiarlo todo. Aquí es donde nacen las oportunidades.”
+
+🎁 Únete al VIP para ver:
+
+Apuesta sugerida y apuestas extra
+
+EV y probabilidad estimada
+
+Top-3 casas con la mejor cuota
+
+🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.
+⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder.
+
+markdown
+Copiar
+Editar
+
+### 9.7 Envío, fijado y edición
+- **VIP**: se **fija** automáticamente en el grupo al enviarse (`pinChatMessage`).  
+- **Ambos (FREE/VIP)**: se **editan** con `editMessageText` ante: gol/roja, salto de cuota relevante, cambio de EV o ajuste en “apuestas extra”.  
+- Límite de **ediciones** sugerido: cada 2–3 min o ante evento clave (no spam).  
+
+### 9.8 Supabase — esquema y guardado
+- Tabla `picks_historicos` (se mantiene) con nuevas columnas sugeridas:
+  - `is_live` (bool, default false)
+  - `minute_at_pick` (smallint)
+  - `score_at_pick` (text)
+  - `phase` (text: "early" | "ht" | "late")
+  - `market_point` (numeric, opcional para totals/spread)
+  - `vigencia_text` (text)
+  - `hash_pick` (text, opcional para trazabilidad)
+- **Anti‑duplicado LIVE** por `(fixture_id, mercado, point, minute_bucket)`.
+
+### 9.9 Variables de entorno (sugeridas)
+- `LIVE_MIN_BOOKIES=3`
+- `LIVE_POLL_MS=25000`
+- `LIVE_COOLDOWN_MIN=8`
+- `LIVE_MARKETS=h2h,totals,spreads`
+- `LIVE_REGIONS=eu,uk`
+- (Reutiliza `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID`, `TELEGRAM_GROUP_ID` ya existentes.)
+
+### 9.10 Flujo completo EN VIVO
+1) Descubrimiento in‑play → 2) Prefiltro de valor (gap consenso vs mejor) → 3) Llamada IA (si pasa) →  
+4) Cálculo EV y validaciones → 5) Clasificación (FREE/VIP) → 6) Envío (VIP fijado) → 7) Ediciones → 8) Cierre → 9) Guardado en Supabase → 10) Memoria IA.
+
+### 9.11 Ligas y alcance
+- **Pool inicial**: ligas con **liquidez real** (UCL/UEL, EPL, LaLiga, Serie A, Bundesliga, Ligue 1, Eredivisie, Primeira, MLS, Libertadores, Sudamericana, etc.).  
+- se amplía conforme la memoria IA detecte patrones de valor sostenido.
+
 ---
+
 📌 **Última actualización:** 14 de agosto de 2025
