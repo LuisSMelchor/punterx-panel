@@ -717,55 +717,52 @@ function construirOpcionesApostables(mejoresMercados) {
 
 function construirPrompt(partido, info, memoria) {
   const offers = partido?.marketsOffers || {};
-  const mejoresMercados = [];
+  const mejores = [];
 
   const mH2H = arrBest(offers.h2h);
-  if (mH2H) mejoresMercados.push({ marketLabel: '1X2', outcomeLabel: mH2H.name, price: mH2H.price, bookie: mH2H.bookie });
+  if (mH2H) mejores.push({ marketLabel: "1X2", outcomeLabel: mH2H.name, price: mH2H.price, bookie: mH2H.bookie });
+
   const mOver = arrBest(offers.totals_over);
-  if (mOver) mejoresMercados.push({ marketLabel: 'Total', outcomeLabel: `Más de ${mOver.point}`, price: mOver.price, bookie: mOver.bookie });
+  if (mOver) mejores.push({ marketLabel: "Total", outcomeLabel: `Más de ${mOver.point}`,  price: mOver.price,  bookie: mOver.bookie });
+
   const mUnder = arrBest(offers.totals_under);
-  if (mUnder) mejoresMercados.push({ marketLabel: 'Total', outcomeLabel: `Menos de ${mUnder.point}`, price: mUnder.price, bookie: mUnder.bookie });
+  if (mUnder) mejores.push({ marketLabel: "Total", outcomeLabel: `Menos de ${mUnder.point}`, price: mUnder.price, bookie: mUnder.bookie });
+
   const mSpread = arrBest(offers.spreads);
-  if (mSpread) mejoresMercados.push({ marketLabel: 'Hándicap', outcomeLabel: mSpread.name, price: mSpread.price, bookie: mSpread.bookie });
+  if (mSpread) mejores.push({ marketLabel: "Hándicap", outcomeLabel: mSpread.name, price: mSpread.price, bookie: mSpread.bookie });
 
   const contexto = {
-    liga: partido?.liga || '(por confirmar)',
+    liga: partido?.liga || "(por confirmar)",
     equipos: `${partido.home} vs ${partido.away}`,
     hora_relativa: formatMinAprox(Math.max(0, Math.round(partido.minutosFaltantes))),
     info_extra: info,
     memoria: (memoria || []).slice(0,5)
   };
 
-  const opciones_apostables = construirOpcionesApostables(mejoresMercados);
+  const opciones_apostables = construirOpcionesApostables(mejores);
 
-  // [PX-CHANGE] Intentar cargar desde MD (sección 1) Pre‑match) con reemplazo de marcadores
-  const tpl = getPromptTemplateFromMD(); // [PX-CHANGE]
+  // Si existe el prompt MD, úsalo; si no, fallback embebido
+  const tpl = getPromptTemplateFromMD();
   if (tpl) {
     let rendered = renderTemplateWithMarkers(tpl, { contexto, opcionesList: opciones_apostables });
     if (rendered && rendered.length > 0) {
-      // Hard-cap de caracteres para evitar silencios por prompts excesivos
-      if (rendered.length > 8000) rendered = rendered.slice(0, 8000);
-      return rendered;}
-  } 
-  
-  {console.log('[PROMPT] source=md len=', rendered.length); // [PX-CHANGE]
-      return rendered; // [PX-CHANGE]
-  }
-  
+      if (rendered.length > 8000) rendered = rendered.slice(0, 8000); // hard-cap
+      return rendered;
+    }
   }
 
-  // [PX-CHANGE] Fallback seguro: prompt embebido actual (sin caída)
+  // Fallback seguro embebido (estructura estable y corta)
   const prompt = [
     `Eres un analista de apuestas experto. Devuelve SOLO un JSON EXACTO con esta forma:`,
     `{`,
     `  "analisis_gratuito": ""`,
     `  "analisis_vip": ""`,
-    `  "apuesta": "",                 // Debe ser EXACTAMENTE una de las opciones_apostables`,
-    `  "apuestas_extra": "",          // Opcional`,
-    `  "frase_motivacional": ""`,
-    `  "probabilidad": 0.0,           // decimal 0.05–0.85`,
-    `  "no_pick": false,              // true si NO recomiendas apostar`,
-    `  "motivo_no_pick": ""           // breve justificación si no_pick=true`,
+    `  "apuesta": "",`,
+    `  "apuestas_extra": "",`,
+    `  "frase_motivacional": "",`,
+    `  "probabilidad": 0.0,`,
+    `  "no_pick": false,`,
+    `  "motivo_no_pick": ""`,
     `}`,
     `Reglas:`,
     `- Si "no_pick" = false ⇒ "apuesta" OBLIGATORIA y "probabilidad" ∈ [0.05, 0.85].`,
@@ -773,15 +770,14 @@ function construirPrompt(partido, info, memoria) {
     `- Si "no_pick" = true ⇒ se permite que "apuesta" esté vacía y "probabilidad" = 0.0.`,
     `- Responde SOLO el JSON sin texto adicional.`,
     ``,
-    `Contexto del partido (resumen de datos reales ya pasados: liga, equipos, hora, alineaciones, árbitro, clima, historial, forma, xG, top 3 bookies, memoria 30d, etc.)`,
-    JSON.stringify(contexto),
+    JSON.stringify(contexto),  // ✅ único uso válido de 'contexto'
     ``,
     `opciones_apostables (elige UNA y pégala EXACTA en "apuesta"):`,
     ...opciones_apostables.map((s, i) => `${i+1}) ${s}`)
-  ].join('\n');
+  ].join("\n");
 
-  console.log('[PROMPT] source=fallback len=', prompt.length); // [PX-CHANGE]
   return prompt;
+}
 
 // =============== EV/PROB & CHEQUEOS ===============
 function estimarlaProbabilidadPct(pick) {
