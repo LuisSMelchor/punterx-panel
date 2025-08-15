@@ -534,7 +534,7 @@ async function obtenerMemoriaSimilar(partido) {
 // =============== OPENAI ===============
 
 // Helper para chat.completions (v4/v5): usa max_completion_tokens en modelos modernos
-function buildOpenAIPayload(model, prompt, maxOut = 450) {
+function buildOpenAIPayload(model, prompt, maxOut=450, systemMsg) {
   const m = String(model || '').toLowerCase();
   // Modelos “modernos” que requieren max_completion_tokens
   const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
@@ -542,7 +542,10 @@ function buildOpenAIPayload(model, prompt, maxOut = 450) {
   const base = {
     model,
     response_format: { type: 'json_object' },
-    messages: [{ role: 'user', content: prompt }],
+    messages: [
+      ...(systemMsg ? [{ role: "system", content: systemMsg }] : []),
+      { role: "user", content: prompt }
+    ],
   };
 
   // Clave crítica del fix:
@@ -611,71 +614,49 @@ function pickCompleto(p) {
   return !!(p && p.analisis_vip && p.analisis_gratuito && p.apuesta && typeof p.probabilidad === 'number');
 }
 
-async function pedirPickConModelo(modelo, prompt, resumenRef = null) {
-  // 1) Contar intento de llamada a OAI
-  if (resumenRef) {
-    resumenRef.oai_calls = (resumenRef.oai_calls || 0) + 1;
-    resumenRef.oai_calls_intento = (resumenRef.oai_calls_intento || 0) + 1;
-  }
-
-  console.log('[OAI] modelo=', modelo);
-  console.log('[OAI] prompt.len=', (prompt || '').length);
-
-  // 2) Llamada v4
-  const completion = await openai.chat.completions.create(
-    buildOpenAIPayload(modelo, prompt, 450)
-  );
-
-  // 3) Contar éxito si la llamada no lanzó error
-  if (resumenRef) {
-    resumenRef.oai_calls_ok = (resumenRef.oai_calls_ok || 0) + 1;
-  }
-
-  const raw = completion?.choices?.[0]?.message?.content || '';
-  console.log('[OAI] raw.len=', raw.length);
-
-  // 1) parse directo
+async function pedirPickConModelo(modelo, prompt) {
+  const systemHint = "Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {\"no_pick\":true,\"motivo_no_pick\":\"sin señal\"}.";
+  const req = buildOpenAIPayload(modelo, prompt, 450, systemHint);
+  const t0 = Date.now();
+  const completion = await openai.chat.completions.create(req);
+  const choice = completion?.choices?.[0];
+  const raw = choice?.message?.content || "";
+  const meta = {
+    model: modelo,
+    ms: Date.now() - t0,
+    finish_reason: choice?.finish_reason || completion?.choices?.[0]?.finish_reason || "n/d",
+    usage: completion?.usage || null
+  };
+  try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
   let obj = extractFirstJsonBlock(raw);
-
-  // 2) reparación JSON si falla
+  if (!obj && raw) {
+    try { obj = await repairPickJSON(modelo, raw); }
+    catch(e){ console.warn("[REPAIR] fallo:", e?.message || e); }
+  }
+  // Retry corto si vacío o no parseable
   if (!obj) {
-    try {
-      obj = await repairPickJSON(modelo, raw);
-      if (obj) obj._repaired = true;
-      if (obj?._repaired) console.log('[OAI] JSON reparado');
-    } catch (e) {
-      console.warn('[REPAIR] fallo reformateo:', e?.message || e);
-    }
+    const mini = `Devuelve SOLO este JSON si tienes cualquier duda o falta de datos:
+    {"analisis_gratuito":"s/d","analisis_vip":"s/d","apuesta":"","apuestas_extra":"","frase_motivacional":"s/d","probabilidad":0.0,"no_pick":true,"motivo_no_pick":"respuesta vacía o no parseable"}`;
+    const req2 = buildOpenAIPayload(modelo, mini, 120, systemHint);
+    const c2 = await openai.chat.completions.create(req2);
+    const raw2 = c2?.choices?.[0]?.message?.content || "";
+    obj = extractFirstJsonBlock(raw2);
   }
-
-  if (!obj) {
-    console.warn('[OAI] sin JSON parseable');
-    return null;
-  }
-
-  const pick = ensurePickShape(obj);
-
-  if (esNoPick(pick)) {
-    console.log('[IA] NO PICK:', pick?.motivo_no_pick || 's/d');
-  } else {
-    if (!pick.apuesta) console.warn('[IA] falta "apuesta" (sin no_pick)');
-    if (typeof pick.probabilidad !== 'number') console.warn('[IA] falta "probabilidad" (sin no_pick)');
-  }
-
-  return pick;
+  if (!obj) return null;
+  return ensurePickShape(obj);
 }
 
-async function obtenerPickConFallback(prompt, resumenRef = null) {
-  // intento principal
-  let pick = await pedirPickConModelo(MODEL, prompt, resumenRef);
-  if (esNoPick(pick)) return { pick, modeloUsado: MODEL };
-  // fallback
-  if (!pickCompleto(pick)) {
-    console.log('♻️ Fallback de modelo →', MODEL_FALLBACK);
-    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt, resumenRef);
-    return { pick, modeloUsado: MODEL_FALLBACK };
+async function obtenerPickConFallback(prompt) {
+  let pick = await pedirPickConModelo(MODEL, prompt);
+  if (!pick || !pickCompleto(pick)) {
+    console.info("♻️ Fallback de modelo →", MODEL_FALLBACK);
+    pick = await pedirPickConModelo(MODEL_FALLBACK, prompt);
   }
-  return { pick, modeloUsado: MODEL };
+  // Último recurso: no_pick para no romper el ciclo
+  if (!pick) {
+    pick = ensurePickShape({ no_pick: true, motivo_no_pick: "sin respuesta del modelo" });
+  }
+  return { pick, modeloUsado: (pick && pick.no_pick) ? MODEL_FALLBACK : MODEL };
 }
 
 // =============== PROMPT ===============
@@ -760,11 +741,17 @@ function construirPrompt(partido, info, memoria) {
   // [PX-CHANGE] Intentar cargar desde MD (sección 1) Pre‑match) con reemplazo de marcadores
   const tpl = getPromptTemplateFromMD(); // [PX-CHANGE]
   if (tpl) {
-    const rendered = renderTemplateWithMarkers(tpl, { contexto, opcionesList: opciones_apostables }); // [PX-CHANGE]
+    let rendered = renderTemplateWithMarkers(tpl, { contexto, opcionesList: opciones_apostables });
     if (rendered && rendered.length > 0) {
-      console.log('[PROMPT] source=md len=', rendered.length); // [PX-CHANGE]
+      // Hard-cap de caracteres para evitar silencios por prompts excesivos
+      if (rendered.length > 8000) rendered = rendered.slice(0, 8000);
+      return rendered;}
+  } 
+  
+  {console.log('[PROMPT] source=md len=', rendered.length); // [PX-CHANGE]
       return rendered; // [PX-CHANGE]
-    }
+  }
+  
   }
 
   // [PX-CHANGE] Fallback seguro: prompt embebido actual (sin caída)
