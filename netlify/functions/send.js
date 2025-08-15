@@ -197,7 +197,7 @@ const _TPL_LIVE_FREE = [
   "⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder."
 ].join("\n");
 
-// VIP (LIVE_VIP) — sin numeración en top‑3; #1 en negritas
+// VIP (LIVE_VIP) — sin numeración en top-3; #1 en negritas
 const _TPL_LIVE_VIP = [
   "🔴 LIVE PICK - {nivel}",
   "🏆 {pais} - {liga} - {equipos}",
@@ -214,7 +214,7 @@ const _TPL_LIVE_VIP = [
   "📊 Razonamiento EN VIVO:",
   "{razonamiento}",
   "",
-  "🏆 Top‑3 casas (mejor resaltada):",
+  "🏆 Top-3 casas (mejor resaltada):",
   "{top3}",
   "",
   "🧭 Snapshot mercado:",
@@ -222,6 +222,88 @@ const _TPL_LIVE_VIP = [
   "",
   "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.",
   "⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder."
+].join("\n");
+
+// ============================
+// Plantillas PRE-MATCH (NEW)
+// ============================
+
+// FREE PRE
+const _TPL_PRE_FREE = [
+  "📡 RADAR DE VALOR",
+  "🏆 {pais} - {liga} - {equipos}",
+  "🕒 Inicio: {kickoff}",
+  "",
+  "📊 Análisis:",
+  "{analisis}",
+  "",
+  "🎁 Únete al VIP para ver:",
+  "- EV y probabilidad estimada",
+  "- Apuesta sugerida + Apuestas extra",
+  "- Top-3 casas con mejor cuota",
+  "",
+  "🔎 IA Avanzada, monitoreando el mercado global 24/7.",
+  "⚠️ Este contenido es informativo. Apostar conlleva riesgo."
+].join("\n");
+
+// VIP PRE
+const _TPL_PRE_VIP = [
+  "🎯 PICK {nivel}",
+  "🏆 {pais} - {liga} - {equipos}",
+  "🕒 Inicio: {kickoff}",
+  "",
+  "EV: {ev}% | Prob. estimada IA: {probabilidad}% | Momio: {momio}",
+  "",
+  "💡 Apuesta sugerida: {apuesta_sugerida}",
+  "",
+  "Apuestas extra:",
+  "{apuestas_extra}",
+  "",
+  "🏆 Top-3 casas (mejor resaltada):",
+  "{top3}",
+  "",
+  "📊 Datos avanzados:",
+  "{datos}",
+  "",
+  "🔎 IA Avanzada, monitoreando el mercado global 24/7.",
+  "⚠️ Este contenido es informativo. Apostar conlleva riesgo."
+].join("\n");
+
+// ============================
+// Plantillas OUTRIGHTS (NEW)
+// ============================
+
+// FREE OUTRIGHT
+const _TPL_OUT_FREE = [
+  "📡 RADAR DE VALOR — OUTRIGHT",
+  "🏆 {pais} - {liga} - {mercado}",
+  "",
+  "📊 Análisis:",
+  "{analisis}",
+  "",
+  "🎁 Únete al VIP para ver EV, probabilidad y mejores casas.",
+  "",
+  "🔎 IA Avanzada, monitoreando el mercado global 24/7.",
+  "⚠️ Este contenido es informativo. Apostar conlleva riesgo."
+].join("\n");
+
+// VIP OUTRIGHT
+const _TPL_OUT_VIP = [
+  "🎯 PICK OUTRIGHT {nivel}",
+  "🏆 {pais} - {liga} - {mercado}",
+  "",
+  "EV: {ev}% | Prob. estimada IA: {probabilidad}% | Momio: {momio}",
+  "",
+  "💡 Apuesta sugerida: {apuesta_sugerida}",
+  "",
+  "Apuestas extra:",
+  "{apuestas_extra}",
+  "",
+  "🏆 Top-3 casas (mejor resaltada):",
+  "{top3}",
+  "",
+  "🔎 IA Avanzada, monitoreando el mercado global 24/7.",
+  "⚠️ Este contenido es informativo. Apostar conlleva riesgo."
 ].join("\n");
 
 // ========================
@@ -264,6 +346,72 @@ function _buildLiveVipMessage(payload) {
   });
 }
 
+// ============================
+// Builders PRE-MATCH (NEW)
+// ============================
+function _buildPreFreeMessage(p) {
+  return _fmt(_TPL_PRE_FREE, {
+    pais: (p.pais || "—"),
+    liga: (p.liga || "—"),
+    equipos: (p.equipos || "—"),
+    kickoff: (p.kickoff || "—"),
+    analisis: _renderBullets((p.analisis || "").split("\n").filter(Boolean))
+  });
+}
+
+function _buildPreVipMessage(p) {
+  const apuestas_extra = _renderBullets(p.apuestas_extra || []);
+  const top3 = _renderTop3NoNumbers(p.top3 || []);
+  const datos = _renderBullets(p.datos || [
+    p.clima ? `Clima: ${p.clima}` : null,
+    p.arbitro ? `Árbitro: ${p.arbitro}` : null,
+    p.historial ? `Historial: ${p.historial}` : null,
+    p.xg ? `xG: ${p.xg}` : null
+  ].filter(Boolean));
+  return _fmt(_TPL_PRE_VIP, {
+    nivel: p.nivel || "🥈 Avanzado",
+    pais: p.pais || "—",
+    liga: p.liga || "—",
+    equipos: p.equipos || "—",
+    kickoff: p.kickoff || "—",
+    ev: (p.ev ?? "").toString(),
+    probabilidad: (p.probabilidad ?? "").toString(),
+    momio: (p.momio ?? "").toString(),
+    apuesta_sugerida: p.apuesta_sugerida || "—",
+    apuestas_extra,
+    top3,
+    datos
+  });
+}
+
+// ============================
+// Builders OUTRIGHTS (NEW)
+// ============================
+function _buildOutFreeMessage(p) {
+  return _fmt(_TPL_OUT_FREE, {
+    pais: p.pais || "—",
+    liga: p.liga || "—",
+    mercado: p.mercado || "—",
+    analisis: _renderBullets((p.analisis || "").split("\n").filter(Boolean))
+  });
+}
+function _buildOutVipMessage(p) {
+  const apuestas_extra = _renderBullets(p.apuestas_extra || []);
+  const top3 = _renderTop3NoNumbers(p.top3 || []);
+  return _fmt(_TPL_OUT_VIP, {
+    nivel: p.nivel || "🥈 Avanzado",
+    pais: p.pais || "—",
+    liga: p.liga || "—",
+    mercado: p.mercado || "—",
+    ev: (p.ev ?? "").toString(),
+    probabilidad: (p.probabilidad ?? "").toString(),
+    momio: (p.momio ?? "").toString(),
+    apuesta_sugerida: p.apuesta_sugerida || "—",
+    apuestas_extra,
+    top3
+  });
+}
+
 // =========================
 // API pública (exports)
 // =========================
@@ -286,4 +434,34 @@ module.exports.editLiveMessage = async function editLiveMessage({ chat = "VIP", 
   if (!chatId) throw new Error("ChatId inválido para edición");
   const text = (chat === "FREE") ? _buildLiveFreeMessage(payload) : _buildLiveVipMessage(payload);
   return _editText(chatId, message_id, text);
+};
+
+// =========================
+// PRE-MATCH (exports NEW)
+// =========================
+module.exports.sendFreePrematch = async function sendFreePrematch(p) {
+  if (!_TG_TOKEN || !_TG_FREE) throw new Error("Faltan TELEGRAM_BOT_TOKEN o TELEGRAM_CHANNEL_ID");
+  const text = _buildPreFreeMessage(p);
+  return _sendText(_TG_FREE, text, { pin: false });
+};
+
+module.exports.sendVipPrematch = async function sendVipPrematch(p, { pin = false } = {}) {
+  if (!_TG_TOKEN || !_TG_VIP) throw new Error("Faltan TELEGRAM_BOT_TOKEN o TELEGRAM_GROUP_ID");
+  const text = _buildPreVipMessage(p);
+  return _sendText(Number(_TG_VIP), text, { pin });
+};
+
+// =========================
+// OUTRIGHTS (exports NEW)
+// =========================
+module.exports.sendFreeOutright = async function sendFreeOutright(p) {
+  if (!_TG_TOKEN || !_TG_FREE) throw new Error("Faltan TELEGRAM_BOT_TOKEN o TELEGRAM_CHANNEL_ID");
+  const text = _buildOutFreeMessage(p);
+  return _sendText(_TG_FREE, text, { pin: false });
+};
+
+module.exports.sendVipOutright = async function sendVipOutright(p, { pin = false } = {}) {
+  if (!_TG_TOKEN || !_TG_VIP) throw new Error("Faltan TELEGRAM_BOT_TOKEN o TELEGRAM_GROUP_ID");
+  const text = _buildOutVipMessage(p);
+  return _sendText(Number(_TG_VIP), text, { pin });
 };
