@@ -782,7 +782,6 @@ function construirPrompt(partido, info, memoria) {
 
   console.log('[PROMPT] source=fallback len=', prompt.length); // [PX-CHANGE]
   return prompt;
-}
 
 // =============== EV/PROB & CHEQUEOS ===============
 function estimarlaProbabilidadPct(pick) {
