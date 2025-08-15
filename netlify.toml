@@ -74,8 +74,8 @@
 # Outrights (menos frecuente por volumen)
 # --------------------------------------
 [functions."autopick-outrights"]
-  # CRON: cada 6 horas (ajusta si usabas otro)
-  schedule = "0 */6 * * *"
+  # CRON: cada 1 hora (ajusta si usabas otro)
+  schedule = "0 * * * *"
   included_files = [
     "netlify/functions/_supabase-client.cjs",
     "prompts_punterx.md"
