@@ -246,7 +246,7 @@ function soonInDaysISO(d=7) {
  * API‑FOOTBALL: resuelve liga por nombre aproximado y devuelve
  * { leagueName, season, country, start, end }
  */
-async 
+
 // ---- Mapa OddsAPI sport_key → API-FOOTBALL league_id (outrights) ----
 const AF_LEAGUE_ID_BY_SPORTKEY = {
   "soccer_spain_la_liga": 140,
