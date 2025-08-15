@@ -213,7 +213,7 @@ async function fetchOutrights() {
 
       // 4) Enriquecer con API-FOOTBALL: start/end de la temporada del torneo
       const ligaTitle = s.title || ev.sport_title || "Torneo";
-      const enrich = await apiFootballResolveLeague(ligaTitle);
+      const enrich = await apiFootballResolveLeague(ligaTitle, s.key || ev.sport_key);
       const liga = enrich.leagueName || ligaTitle;
       const temporada = enrich.season || guessSeasonFromTitle(ligaTitle) || new Date().getUTCFullYear().toString();
       const pais = enrich.country || (s.description || "INT");
@@ -246,7 +246,59 @@ function soonInDaysISO(d=7) {
  * API‑FOOTBALL: resuelve liga por nombre aproximado y devuelve
  * { leagueName, season, country, start, end }
  */
-async function apiFootballResolveLeague(searchName) {
+async 
+// ---- Mapa OddsAPI sport_key → API-FOOTBALL league_id (outrights) ----
+const AF_LEAGUE_ID_BY_SPORTKEY = {
+  "soccer_spain_la_liga": 140,
+  "soccer_epl": 39,
+  "soccer_italy_serie_a": 135,
+  "soccer_germany_bundesliga": 78,
+  "soccer_france_ligue_one": 61,
+  "soccer_netherlands_eredivisie": 88,
+  "soccer_portugal_primeira_liga": 94,
+  "soccer_usa_mls": 253,
+  "soccer_uefa_champs_league": 2,
+  "soccer_uefa_europa_league": 3
+};
+
+function apiFootballResolveLeague(searchName, sportKey) {
+  const out = { leagueName: null, season: null, country: null, start: null, end: null };
+  const afId = AF_LEAGUE_ID_BY_SPORTKEY[String(sportKey||"").trim()] || null;
+
+  // 1) Si tenemos mapeo directo por sport_key → league_id, usa /leagues?id=
+  if (afId) {
+    return (async () => {
+      const url = `https://v3.football.api-sports.io/leagues?id=${encodeURIComponent(afId)}`;
+      const res = await fetchWithRetry(url, { method: "GET", headers: { "x-apisports-key": API_FOOTBALL_KEY } }, { retries: 1, base: 700 });
+      if (res && res.ok) {
+        const data = await safeJson(res);
+        const item = data?.response?.[0];
+        if (item) {
+          out.leagueName = item.league?.name || searchName || null;
+          out.country   = item.country?.name || null;
+          // Selecciona temporada más reciente con fechas
+          const seasons = Array.isArray(item.seasons) ? item.seasons : [];
+          let best = seasons.filter(s=>s.start && s.end).sort((a,b)=> (Date.parse(b.start||"")||0) - (Date.parse(a.start||"")||0))[0] || seasons[0];
+          if (best) {
+            out.season = String(best.year || best.season || "").trim() || null;
+            out.start  = best.start || null;
+            out.end    = best.end || null;
+          }
+          return out;
+        }
+      } else if (res) {
+        console.warn("[OUT] AF leagues?id error:", res.status, await safeText(res));
+      }
+      // Si no hay datos, cae al fallback textual
+      return await apiFootballResolveLeagueFallback(searchName);
+    })();
+  }
+
+  // 2) Fallback textual
+  return apiFootballResolveLeagueFallback(searchName);
+}
+
+async function apiFootballResolveLeagueFallback(searchName) {
   const out = { leagueName: null, season: null, country: null, start: null, end: null };
   if (!searchName) return out;
 
@@ -264,22 +316,12 @@ async function apiFootballResolveLeague(searchName) {
   const arr = (data && data.response) || [];
   if (!Array.isArray(arr) || !arr.length) return out;
 
-  // Elegimos la mejor coincidencia: prioriza "cup" y "league" con seasons válidas
-  arr.sort((a,b)=>{
-    const an = (a.league?.name || "").toLowerCase();
-    const bn = (b.league?.name || "").toLowerCase();
-    // score por cercanía al término
-    const sa = (an.includes(searchName.toLowerCase()) ? 1 : 0) + (a.league?.type === "Cup" ? 1 : 0);
-    const sb = (bn.includes(searchName.toLowerCase()) ? 1 : 0) + (b.league?.type === "Cup" ? 1 : 0);
-    return sb - sa;
-  });
+  // Toma la mejor coincidencia y la temporada reciente
+  let bestItem = arr[0];
+  out.leagueName = bestItem?.league?.name || searchName || null;
+  out.country    = bestItem?.country?.name || null;
 
-  const pick = arr[0];
-  out.leagueName = pick?.league?.name || searchName;
-  out.country   = pick?.country?.name || null;
-
-  const seasons = Array.isArray(pick?.seasons) ? pick.seasons : [];
-  // Preferimos la season "current": true; si no, la próxima futura por fecha de inicio
+  const seasons = Array.isArray(bestItem?.seasons) ? bestItem.seasons : [];
   let best = null;
   for (const s of seasons) {
     if (s.current === true) { best = s; break; }
