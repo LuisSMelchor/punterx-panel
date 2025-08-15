@@ -149,3 +149,10 @@
   from = "/diag"
   to = "/.netlify/functions/diagnostico-total"
   status = 200
+
+  [functions."autopick-live"]
+  node_bundler = "esbuild"
+  included_files = ["netlify/functions/send.js", "prompts_punterx.md"]
+  external_node_modules = ["node-fetch", "@supabase/supabase-js", "openai"]
+  timeout = 60
+
