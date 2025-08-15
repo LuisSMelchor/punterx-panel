@@ -454,7 +454,22 @@ function scorePreliminar(p) {
   return score;
 }
 
+// ---- Mapa rápido: sport_title OddsAPI → API-FOOTBALL league_id (ampliable) ----
+const AF_LEAGUE_ID_BY_TITLE = {
+  "Spain - LaLiga": 140,
+  "England - Premier League": 39,
+  "Italy - Serie A": 135,
+  "Germany - Bundesliga": 78,
+  "France - Ligue 1": 61,
+  "Netherlands - Eredivisie": 88,
+  "Portugal - Primeira Liga": 94,
+  "USA - MLS": 253,
+  "UEFA - Champions League": 2,
+  "UEFA - Europa League": 3
+};
+
 // =============== API-FOOTBALL ENRIQUECIMIENTO ===============
+
 async function enriquecerPartidoConAPIFootball(partido) {
   try {
     if (!partido?.home || !partido?.away) {
@@ -462,36 +477,88 @@ async function enriquecerPartidoConAPIFootball(partido) {
       return {};
     }
 
-    const q = `${partido.home} ${partido.away}`;
-    const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}`;
+    // 1) Intento por liga + fecha (mejor precisión que search por texto)
+    const sportTitle = String(partido?.sport_title || partido?.league || "").trim();
+    const afLeagueId = AF_LEAGUE_ID_BY_TITLE[sportTitle] || null;
+    const dt = partido?.commence_time ? new Date(partido.commence_time) : null;
+    const dateStr = dt && !isNaN(dt) ? dt.toISOString().slice(0,10) : new Date().toISOString().slice(0,10);
 
-    const res = await fetchWithRetry(
-      url,
-      { headers: { 'x-apisports-key': API_FOOTBALL_KEY } },
-      { retries: 1 }
-    );
+    const norm = s => String(s||"").toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+      .replace(/\b(fc|cf|sc|afc|c\.f\.|f\.c\.)\b/g,"")
+      .replace(/[^a-z0-9]+/g," ").trim();
 
-    if (!res || !res.ok) {
-      console.error(`[evt:${partido.id}] Football no ok:`, res?.status, await safeText(res));
-      return {};
+    if (afLeagueId) {
+      const url = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dateStr)}&league=${encodeURIComponent(afLeagueId)}`;
+      const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
+      if (res && res.ok) {
+        const data = await safeJson(res);
+        const arr = Array.isArray(data?.response) ? data.response : [];
+        const hN = norm(partido.home), aN = norm(partido.away);
+        const match = arr.find(x => {
+          const th = norm(x?.teams?.home?.name), ta = norm(x?.teams?.away?.name);
+          return (th===hN && ta===aN) || (th===aN && ta===hN);
+        }) || null;
+        if (match) {
+          return {
+            liga: match?.league?.name || sportTitle || null,
+            pais: match?.league?.country || null,
+            fixture_id: match?.fixture?.id || null,
+            fecha: match?.fixture?.date || null,
+            estadio: match?.fixture?.venue?.name || null,
+            ciudad: match?.fixture?.venue?.city || null,
+            arbitro: match?.fixture?.referee || null,
+            clima: match?.fixture?.weather || null
+          };
+        }
+      } else if (res) {
+        console.warn(`[evt:${partido?.id}] AF fixtures por liga falló:`, res.status, await safeText(res));
+      }
     }
 
+    // 2) Fallback: búsqueda textual (lo que ya tenías)
+    const q = `${partido.home} ${partido.away}`;
+    const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}`;
+    const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
+    if (!res?.ok) {
+      console.warn(`[evt:${partido?.id}] AF search error:`, res?.status, await safeText(res));
+      return {};
+    }
     const data = await safeJson(res);
-    if (!data?.response || !Array.isArray(data.response) || data.response.length === 0) {
+    if (!data?.response || data.response.length === 0) {
       console.warn(`[evt:${partido.id}] Sin coincidencias en API-Football`);
       return {};
     }
+    const arr = data.response;
 
-    // Extraer primer fixture encontrado
-    const fixture = data.response[0];
+    // Filtra por fecha cercana al kickoff y mejor nombre
+    const hN = norm(partido.home), aN = norm(partido.away);
+    const kickoffMs = Date.parse(partido.commence_time || "") || Date.now();
+    const candidates = arr
+      .filter(x => {
+        const dt2 = Date.parse(x?.fixture?.date || "");
+        if (!Number.isFinite(dt2)) return true;
+        const diffH = Math.abs((dt2 - kickoffMs)/3600000);
+        return diffH <= 36; // ±36h
+      })
+      .map(x => {
+        const th = norm(x?.teams?.home?.name);
+        const ta = norm(x?.teams?.away?.name);
+        const nameScore = ((th===hN && ta===aN) || (th===aN && ta===hN)) ? 2 : (th.includes(hN)||ta.includes(aN)||th.includes(aN)||ta.includes(hN) ? 1 : 0);
+        return { x, nameScore };
+      })
+      .sort((a,b)=> b.nameScore - a.nameScore);
+
+    const best = candidates[0]?.x || arr[0];
     return {
-      fixtures_count: data.response.length,
-      fixture_id: fixture?.fixture?.id || null,
-      fecha: fixture?.fixture?.date || null,
-      estadio: fixture?.fixture?.venue?.name || null,
-      ciudad: fixture?.fixture?.venue?.city || null,
-      arbitro: fixture?.fixture?.referee || null,
-      clima: fixture?.fixture?.weather || null
+      liga: best?.league?.name || sportTitle || null,
+      pais: best?.league?.country || null,
+      fixture_id: best?.fixture?.id || null,
+      fecha: best?.fixture?.date || null,
+      estadio: best?.fixture?.venue?.name || null,
+      ciudad: best?.fixture?.venue?.city || null,
+      arbitro: best?.fixture?.referee || null,
+      clima: best?.fixture?.weather || null
     };
   } catch (e) {
     console.error(`[evt:${partido?.id}] Error enriquecerPartidoConAPIFootball:`, e?.message || e);
