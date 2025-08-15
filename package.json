@@ -5,7 +5,10 @@
     "build": "echo 'Build step (dummy)'",
     "dev": "netlify dev",
     "smoke:functions": "node ./scripts/smoke-functions.js",
-    "dev:smoke": "SMOKE_BASE_URL=http://localhost:8888 node ./scripts/smoke-functions.js"
+    "dev:smoke": "SMOKE_BASE_URL=http://localhost:8888 node ./scripts/smoke-functions.js",
+    "pre": "node netlify/functions/autopick-vip-nuevo.cjs",
+    "out": "node netlify/functions/autopick-outrights.cjs",
+    "live": "node netlify/functions/autopick-live.cjs --loop"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.54.0",
@@ -14,12 +17,4 @@
     "node-fetch": "^2.7.0",
     "openai": "^5.12.0"
   }
-
-
-  "scripts": {
-    "pre": "node netlify/functions/autopick-vip-nuevo.cjs",
-    "out": "node netlify/functions/autopick-outrights.cjs",
-    "live": "node netlify/functions/autopick-live.cjs --loop"
-  }
-  
 }
