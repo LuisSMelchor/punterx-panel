@@ -1,38 +1,6 @@
 // netlify/functions/autopick-vip-nuevo.cjs
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–60 (fallback 35–70), backpressure,
-// modelo OpenAI 5 con fallback y reintento, guardrails anti-inconsistencias, prefiltro que prioriza sin descartar,
-// Telegram con rate-limit handling, Supabase idempotente.
-
-// --- BLINDAJE RUNTIME: fetch + trampas globales (añadir al inicio del archivo) ---
-try {
-  if (typeof fetch === 'undefined') {
-    // Polyfill para runtimes/lambdas donde fetch aún no está disponible
-    global.fetch = require('node-fetch');
-  }
-} catch (_) { /* no-op */ }
-
-try {
-  // Evita “Internal Error” si algo revienta antes del handler
-  process.on('uncaughtException', (e) => {
-    try { console.error('[UNCAUGHT]', e && (e.stack || e.message || e)); } catch {}
-  });
-  process.on('unhandledRejection', (e) => {
-    try { console.error('[UNHANDLED]', e && (e.stack || e.message || e)); } catch {}
-  });
-} catch (_) { /* no-op */ }
-// --- FIN BLINDAJE RUNTIME ---
-
-console.log("[TEST][AUTODEPLOY] " + new Date().toISOString());
-
-// =============== IMPORTS ===============
-const fetch = require('node-fetch');
-const { createClient } = require('@supabase/supabase-js');
-const OpenAI = require('openai');
-// [PX-CHANGE] Soporte lectura de template MD
-const fs = require('fs');            // [PX-CHANGE]
-const path = require('path');        // [PX-CHANGE]
-
-// =============== ENV & ASSERT ===============
+// modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
 const {
   SUPABASE_URL,
   SUPABASE_KEY,
@@ -50,14 +18,14 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
 const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5';
 const WINDOW_MAIN_MIN = Number(process.env.WINDOW_MAIN_MIN || 40);
 const WINDOW_MAIN_MAX = Number(process.env.WINDOW_MAIN_MAX || 55);
-const WINDOW_FB_MIN = Number(process.env.WINDOW_FB_MIN || 35);
-const WINDOW_FB_MAX = Number(process.env.WINDOW_FB_MAX || 70);
+const WINDOW_FB_MIN   = Number(process.env.WINDOW_FB_MIN   || 35);
+const WINDOW_FB_MAX   = Number(process.env.WINDOW_FB_MAX   || 70);
 const PREFILTER_MIN_BOOKIES = Number(process.env.PREFILTER_MIN_BOOKIES || 2);
 const MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY || 6);
 const MAX_PER_CYCLE = Number(process.env.MAX_PER_CYCLE || 50);
 const SOFT_BUDGET_MS = Number(process.env.SOFT_BUDGET_MS || 70000);
 const MAX_OAI_CALLS_PER_CYCLE = Number(process.env.MAX_OAI_CALLS_PER_CYCLE || 40);
-const COUNTRY_FLAG = process.env.COUNTRY_FLAG || '🌍';
+const COUNTRY_FLAG = process.env.COUNTRY_FLAG || '🇲🇽'; // [PX-CHANGE: Default flag changed to Mexico]
 
 function assertEnv() {
   const required = [
@@ -188,7 +156,7 @@ function emojiNivel(nivel) {                    // [PX-CHANGE]
 function formatApuestasExtra(s) {               // [PX-CHANGE]
   const raw = String(s || '').trim();
   if (!raw) return '—';
-  const parts = raw.split(/\r?\n|;|\,/).map(x => x.trim()).filter(Boolean);
+  const parts = raw.split(/\r?\n|;|,/).map(x => x.trim()).filter(Boolean);
   return parts.map(x => (x.startsWith('-') ? x : `- ${x}`)).join('\n');
 }                                               // [PX-CHANGE]
 
@@ -200,7 +168,7 @@ exports.handler = async (event, context) => {
   try { await upsertDiagnosticoEstado('running', null); } catch(_) {}
   console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
 
-  // Lock simple en memoria por invocación isolada (Netlify)
+  // Lock simple en memoria por invocación aislada (Netlify)
   if (global.__punterx_lock) {
     console.warn('LOCK activo → salto ciclo');
     return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true }) };
@@ -223,15 +191,24 @@ exports.handler = async (event, context) => {
     }
     const eventos = await safeJson(res) || [];
     resumen.recibidos = Array.isArray(eventos) ? eventos.length : 0;
+    // Filtrar eventos ya iniciados (minutosFaltantes negativos)
+    const eventosUpcoming = (eventos || []).filter(ev => {
+       const t = Date.parse(ev.commence_time);
+       return Number.isFinite(t) && t > Date.now();
+    }); // Sólo eventos por comenzar
+    const filteredCount = resumen.recibidos - (Array.isArray(eventosUpcoming) ? eventosUpcoming.length : 0);
+    if (filteredCount > 0) {
+       console.log(`Filtrados ${filteredCount} eventos ya comenzados (omitidos)`);
+    }
 
     // 2) Normalizar eventos
-    const partidos = (eventos || []).map(normalizeOddsEvent).filter(Boolean);
+    const partidos = eventosUpcoming.map(normalizeOddsEvent).filter(Boolean);
     const inWindow = partidos.filter(p => {
       const mins = Math.round(p.minutosFaltantes);
       const dbg = `DBG commence_time= ${p.commence_time} mins= ${mins}`;
       console.log(dbg);
       const principal = mins >= WINDOW_MAIN_MIN && mins <= WINDOW_MAIN_MAX;
-      const fallback = !principal && mins >= WINDOW_FB_MIN && mins <= WINDOW_FB_MAX;
+      const fallback  = !principal && mins >= WINDOW_FB_MIN && mins <= WINDOW_FB_MAX;
       return principal || fallback;
     });
     resumen.enVentana = inWindow.length;
@@ -270,173 +247,86 @@ exports.handler = async (event, context) => {
         // D) OpenAI (fallback + 1 reintento en cada modelo)
         let pick, modeloUsado = MODEL;
         try {
-          const r = await obtenerPickConFallback(prompt, resumen);
+          const r = await obtenerPickConFallback(prompt);
           pick = r.pick; modeloUsado = r.modeloUsado;
           console.log(traceId, '🔎 Modelo usado:', modeloUsado);
-          if (esNoPick(pick)) { console.log(traceId, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d'); return; }
-          if (!pickCompleto(pick)) { console.warn(traceId, 'Pick incompleto tras fallback'); return; }
+          if (esNoPick(pick)) { console.log(traceId, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d'); continue; }
+          if (!pickCompleto(pick)) { console.warn(traceId, 'Pick incompleto tras fallback'); continue; }
         } catch (e) {
-          console.error(traceId, 'Error GPT:', e?.message || e); return;
+          console.error(traceId, 'Error GPT:', e?.message || e); continue;
         }
 
         // Selección de cuota EXACTA del mercado pedido
         const cuotaSel = seleccionarCuotaSegunApuesta(P, pick.apuesta);
-        if (!cuotaSel || !cuotaSel.valor) { console.warn(traceId, '❌ No se encontró cuota del mercado solicitado → descartando'); return; }
+        if (!cuotaSel || !cuotaSel.valor) { console.warn(traceId, '❌ No se encontró cuota del mercado solicitado → descartando'); continue; }
         const cuota = Number(cuotaSel.valor);
 
         // Coherencia apuesta/outcome
         const outcomeTxt = String(cuotaSel.label || P?.marketsBest?.h2h?.label || '');
         if (!apuestaCoincideConOutcome(pick.apuesta, outcomeTxt, P.home, P.away)) {
-          console.warn(traceId, '❌ Inconsistencia apuesta/outcome → descartando'); return;
+          console.warn(traceId, '❌ Inconsistencia apuesta/outcome → descartando'); continue;
         }
 
         // Probabilidad (no inventar) + coherencia con implícita
         const probPct = estimarlaProbabilidadPct(pick);
-        if (probPct == null) { console.warn(traceId, '❌ Probabilidad ausente → descartando pick'); return; }
+        if (probPct == null) { console.warn(traceId, '❌ Probabilidad ausente → descartando pick'); continue; }
         const imp = impliedProbPct(cuota);
         if (imp != null && Math.abs(probPct - imp) > 15) {
           console.warn(traceId, `❌ Probabilidad inconsistente (model=${probPct}%, implícita=${imp}%) → descartando`);
-          return;
+          continue;
         }
 
         const ev = calcularEV(probPct, cuota);
-        if (ev == null) { console.warn(traceId, 'EV nulo'); return; }
+        if (ev == null) { console.warn(traceId, 'EV nulo'); continue; }
         resumen.procesados++;
 
-        if (ev < 10) { resumen.descartados_ev++; console.log(traceId, `EV ${ev}% < 10% → descartado`); return; }
+        if (ev < 10) { resumen.descartados_ev++; console.log(traceId, `EV ${ev}% < 10% → descartado`); continue; }
 
         // Nivel y destino
         const nivel = clasificarPickPorEV(ev);
         const cuotaInfo = { ...cuotaSel, top3: top3ForSelectedMarket(P, pick.apuesta) };
         const destinoVIP = (ev >= 15);
 
-        // Mensajes
         if (destinoVIP) {
           resumen.intentos_vip++;
-          // [PX-CHANGE] Pasamos info de API-Football para enriquecer “Datos a considerar”
           const msg = construirMensajeVIP(P, pick, probPct, ev, nivel, cuotaInfo, info); // [PX-CHANGE]
           const ok = await enviarVIP(msg);
-          if (ok) { resumen.enviados_vip++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuota, 'VIP'); }
+          if (ok) { resumen.enviados_vip++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuota, "VIP"); }
+          console.log(ok ? traceId + ' ✅ Enviado VIP' : traceId + ' ⚠️ Falló envío VIP');
         } else {
           resumen.intentos_free++;
-          const msg = construirMensajeFREE(P, pick, probPct, ev, nivel); // FREE con frase motivacional
+          const msg = construirMensajeFREE(P, pick, probPct, ev, nivel);        // [PX-CHANGE]
           const ok = await enviarFREE(msg);
-          if (ok) { resumen.enviados_free++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuota, 'FREE'); }
+          if (ok) { resumen.enviados_free++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuota, "FREE"); }
+          console.log(ok ? traceId + ' ✅ Enviado FREE' : traceId + ' ⚠️ Falló envío FREE');
         }
 
       } catch (e) {
-        console.error('Procesamiento partido error:', e?.message || e);
+        console.error(traceId, 'Error en loop de procesamiento:', e?.message || e);
       }
     }
 
-    // fin
-    return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
+    return { statusCode: 200, body: JSON.stringify({ ok: true, resumen }) };
 
   } catch (e) {
-    console.error('Error ciclo principal:', e?.message || e);
-    try {
-      await upsertDiagnosticoEstado('error', e?.message || String(e));
-      await registrarEjecucion({
-        started_at: new Date(started).toISOString(),
-        ended_at: new Date().toISOString(),
-        duration_ms: Date.now() - started,
-        ok: false,
-        error_message: e?.message || String(e)
-      });
-    } catch(_) {}
-    return { statusCode: 200, body: JSON.stringify({ ok:false, error: e?.message || String(e) }) };
+    console.error('❌ Excepción en ciclo principal:', e?.message || e);
+    return { statusCode: 200, body: JSON.stringify({ ok: false, error: e?.message || 'exception' }) };
   } finally {
     global.__punterx_lock = false;
-        resumen.oai_calls = global.__px_oai_calls || 0;
-    console.log('Resumen ciclo:', JSON.stringify(resumen));
+    try { await upsertDiagnosticoEstado('idle', null); } catch(_) {}
+    console.log(`🏁 Resumen ciclo: ${JSON.stringify(resumen)}`);
     console.log(`Duration: ${(Date.now()-started).toFixed(2)} ms\tMemory Usage: ${Math.round(process.memoryUsage().rss/1e6)} MB`);
   }
 };
 
-// =============== NORMALIZACIÓN ODDSAPI ===============
-function normalizeOddsEvent(evento) {
-  try {
-    const id = evento?.id || evento?.event_id || `${evento?.commence_time}-${evento?.home_team}-${evento?.away_team}`;
-    const commence_time = evento?.commence_time;
-    const mins = minutesUntilISO(commence_time);
-
-    // outcomes / markets crudos (agrupados)
-    const offers = Array.isArray(evento?.bookmakers) ? evento.bookmakers : [];
-    const marketsOutcomes = { h2h: [], totals_over: [], totals_under: [], spreads: [] };
-    for (const b of offers) {
-      const bookie = b?.title || b?.key || '';
-      for (const mk of (b?.markets || [])) {
-        const mkey = String(mk?.key || '').toLowerCase();
-        const outcomes = Array.isArray(mk?.outcomes) ? mk.outcomes : [];
-        if (mkey === 'h2h') {
-          for (const o of outcomes) {
-            marketsOutcomes.h2h.push({ bookie, name: o.name, price: Number(o.price) });
-          }
-        } else if (mkey === 'totals') {
-          // split over/under por point
-          for (const o of outcomes) {
-            const side = (o?.name || '').toLowerCase().includes('over') ? 'over' : 'under';
-            const point = Number(o?.point);
-            if (side === 'over') marketsOutcomes.totals_over.push({ bookie, price: Number(o.price), point });
-            else marketsOutcomes.totals_under.push({ bookie, price: Number(o.price), point });
-          }
-        } else if (mkey === 'spreads') {
-          for (const o of outcomes) {
-            marketsOutcomes.spreads.push({ bookie, price: Number(o.price), point: Number(o?.point), name: o.name });
-          }
-        }
-      }
-    }
-
-    const bestH2H = arrBest(marketsOutcomes.h2h);
-    const bestTotOver = arrBest(marketsOutcomes.totals_over);
-    const bestTotUnder = arrBest(marketsOutcomes.totals_under);
-    const bestSpread = arrBest(marketsOutcomes.spreads);
-
-    const anyRecentMin = mins;
-    return {
-      id,
-      commence_time,
-      minutosFaltantes: mins,
-      home: evento?.home_team || '',
-      away: evento?.away_team || '',
-      liga: evento?.league || evento?.sport_title || '(por confirmar)',
-      marketsBest: {
-        h2h: bestH2H ?   { valor: bestH2H.price, label: bestH2H.name } : null,
-        totals:{ over: bestTotOver ? { valor: bestTotOver.price, point: bestTotOver.point } : null,
-                 under: bestTotUnder ? { valor: bestTotUnder.price, point: bestTotUnder.point } : null },
-        spreads: bestSpread ? { valor: bestSpread.price, label: bestSpread.name, point: bestSpread.point } : null
-      },
-      marketsOffers: {
-        h2h: marketsOutcomes.h2h,
-        totals_over: marketsOutcomes.totals_over,
-        totals_under: marketsOutcomes.totals_under,
-        spreads: marketsOutcomes.spreads
-      },
-      sport_title: evento?.sport_title || '',
-      recentMins: anyRecentMin // puede ser null
-    };
-  } catch (e) {
-    console.error('normalizeOddsEvent error:', e?.message || e);
-    return null;
-  }
-}
-
-function arrBest(arr) {
-  if (!Array.isArray(arr) || !arr.length) return null;
-  return arr.reduce((mx, o) => (o?.price > (mx?.price || -Infinity) ? o : mx), null);
-}
-
+// =============== PRE-FILTER & SCORING ===============
 function scorePreliminar(p) {
   let score = 0;
-
-  // Bookies activos
-  const bookiesSet = new Set([...(p.marketsOffers?.h2h||[]), ...(p.marketsOffers?.totals_over||[]),
+  const set = new Set([...(p.marketsOffers?.h2h||[]), ...(p.marketsOffers?.totals_over||[]),
     ...(p.marketsOffers?.totals_under||[]), ...(p.marketsOffers?.spreads||[])]
-    .map(x => (x?.bookie||'').toLowerCase()).filter(Boolean));
-  if (bookiesSet.size >= PREFILTER_MIN_BOOKIES) score += 20;
+    .map(x => (x?.bookie||"").toLowerCase()).filter(Boolean));
+  if (set.size >= PREFILTER_MIN_BOOKIES) score += 20;
 
-  // Markets clave presentes
   const hasH2H = (p.marketsOffers?.h2h||[]).length > 0;
   const hasTotals = (p.marketsOffers?.totals_over||[]).length > 0 && (p.marketsOffers?.totals_under||[]).length > 0;
   const hasSpread = (p.marketsOffers?.spreads||[]).length > 0;
@@ -444,33 +334,14 @@ function scorePreliminar(p) {
   if (hasTotals) score += 10;
   if (hasSpread) score += 5;
 
-  // Recencia (ventana)
+  // Bonus si está en ventana principal (más relevante)
   if (Number.isFinite(p.minutosFaltantes) && p.minutosFaltantes >= WINDOW_MAIN_MIN && p.minutosFaltantes <= WINDOW_MAIN_MAX) {
     score += 10;
   }
-
-  // Últimos minutos presentes (por seguridad)
-  if (Number.isFinite(p.recentMins) && p.recentMins <= WINDOW_FB_MAX && p.recentMins >= -5) score += 15;
-
   return score;
 }
 
-// ---- Mapa rápido: sport_title OddsAPI → API-FOOTBALL league_id (ampliable) ----
-const AF_LEAGUE_ID_BY_TITLE = {
-  "Spain - LaLiga": 140,
-  "England - Premier League": 39,
-  "Italy - Serie A": 135,
-  "Germany - Bundesliga": 78,
-  "France - Ligue 1": 61,
-  "Netherlands - Eredivisie": 88,
-  "Portugal - Primeira Liga": 94,
-  "USA - MLS": 253,
-  "UEFA - Champions League": 2,
-  "UEFA - Europa League": 3
-};
-
-// =============== API-FOOTBALL ENRIQUECIMIENTO ===============
-
+// =============== API-FOOTBALL (Info extra) ===============
 async function enriquecerPartidoConAPIFootball(partido) {
   try {
     if (!partido?.home || !partido?.away) {
@@ -479,7 +350,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
     }
 
     // 1) Intento por liga + fecha (mejor precisión que search por texto)
-    const sportTitle = String(partido?.sport_title || partido?.league || "").trim();
+    const sportTitle = String(partido?.sport_title || partido?.liga || "").trim();
     const afLeagueId = AF_LEAGUE_ID_BY_TITLE[sportTitle] || null;
     const dt = partido?.commence_time ? new Date(partido.commence_time) : null;
     const dateStr = dt && !isNaN(dt) ? dt.toISOString().slice(0,10) : new Date().toISOString().slice(0,10);
@@ -517,7 +388,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
       }
     }
 
-    // 2) Fallback: búsqueda textual (lo que ya tenías)
+    // 2) Fallback: búsqueda textual (menos preciso)
     const q = `${partido.home} ${partido.away}`;
     const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}`;
     const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
@@ -543,7 +414,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
       if (!extra) {
         return {};
       }
-      data = { response: extra };
+      data.response = extra;
     }
     const arr = data.response;
 
@@ -603,100 +474,96 @@ async function obtenerMemoriaSimilar(partido) {
       const lg = (r?.liga || '').toLowerCase();
       const eq = (r?.equipos || '').toLowerCase();
       const okLiga = liga && lg && (lg.includes(liga.split('—')[0].trim()) || lg.includes(liga.split('-')[0].trim()));
-      const okEquipo = (home && eq.includes(home)) || (away && eq.includes(away));
-      if (okLiga && okEquipo) out.push(r);
+      const okHome = home && eq && eq.includes(home);
+      const okAway = away && eq && eq.includes(away);
+      if (!okLiga) continue;
+      if (okHome || okAway) {
+        out.push({
+          analisis: r.analisis,
+          apuesta: r.apuesta,
+          liga: r.liga,
+          equipos: r.equipos,
+          ev: Number(r.ev),
+          probabilidad: Number(r.probabilidad),
+          nivel: r.nivel
+        });
+      }
       if (out.length >= 5) break;
     }
     return out;
   } catch (e) {
-    console.error('Supabase memoria excepción:', e?.message || e);
+    console.error('Supabase memoria exception:', e?.message || e);
     return [];
   }
 }
 
-// =============== OPENAI ===============
-
-// Helper para chat.completions (v4/v5): usa max_completion_tokens en modelos modernos
-function buildOpenAIPayload(model, prompt, maxOut=450, systemMsg) {
-  const m = String(model || '').toLowerCase();
-  // Modelos “modernos” que requieren max_completion_tokens
-  const modern = /gpt-5|gpt-4\.1|4o|o3|mini/.test(m);
-
-  const base = {
-    model,
-    response_format: { type: 'json_object' },
-    messages: [
-      ...(systemMsg ? [{ role: "system", content: systemMsg }] : []),
-      { role: "user", content: prompt }
-    ],
-  };
-
-  // Clave crítica del fix:
-  if (modern) base.max_completion_tokens = maxOut;   // ✅ GPT‑5 / 4o / o3
-  else base.max_tokens = maxOut;                     // ✅ Modelos anteriores
-
-  // Coherente con el resto del código: temperatura baja en no‑“5/o3”
-  if (!/gpt-5|o3/.test(m)) base.temperature = 0.2;
-
-  return base;
+// =============== OAI PROB & UTILS ===============
+function estimarlaProbabilidadPct(pick) {
+  if (typeof pick.probabilidad === 'undefined') return null;
+  const v = Number(pick.probabilidad);
+  if (Number.isNaN(v)) return null;
+  // La probabilidad puede venir [0,1] o [0,100]
+  return (v > 0 && v < 1) ? +(v*100).toFixed(2) : +v.toFixed(2);
 }
 
-// === Helpers: extraer y reparar JSON del modelo ===
+function impliedProbPct(odd) {
+  const o = Number(odd);
+  if (!Number.isFinite(o) || o <= 1) return null;
+  return +(100/o).toFixed(2);
+}
+
+function calcularEV(probPct, cuota) {
+  if (probPct == null) return null;
+  const p = probPct / 100;
+  const o = Number(cuota);
+  if (!o || o <= 1) return null;
+  const ev = (p * (o - 1) - (1 - p)) * 100;
+  return +ev.toFixed(2);
+}
+
+function clasificarPickPorEV(ev) {
+  return ev >= 40 ? 'Ultra Élite'
+       : ev >= 30 ? 'Élite Mundial'
+       : ev >= 20 ? 'Avanzado'
+       : ev >= 15 ? 'Competitivo'
+       : 'Informativo';
+}
+
+// =============== OAI JSON PARSING ===============
 function extractFirstJsonBlock(text) {
   if (!text) return null;
-  // limpia fences tipo ```json ... ```
-  const t = String(text).replace(/```json|```/gi, '').trim();
-  const start = t.indexOf('{');
-  const end = t.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) return null;
-  const candidate = t.slice(start, end + 1);
-  try { return JSON.parse(candidate); } catch { return null; }
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
 }
 
-function ensurePickShape(p) {
-  if (!p || typeof p !== 'object') p = {};
-  return {
-    analisis_gratuito: p.analisis_gratuito ?? 's/d',
-    analisis_vip: p.analisis_vip ?? 's/d',
-    apuesta: p.apuesta ?? '',
-    apuestas_extra: p.apuestas_extra ?? '',
-    frase_motivacional: p.frase_motivacional ?? 's/d',
-    probabilidad: Number.isFinite(p.probabilidad) ? Number(p.probabilidad) : 0,
-    no_pick: p.no_pick === true,
-    motivo_no_pick: p.motivo_no_pick ?? ''
+function ensurePickShape(obj) {
+  const base = {
+    analisis_gratuito: '',
+    analisis_vip: '',
+    apuesta: '',
+    apuestas_extra: '',
+    frase_motivacional: '',
+    probabilidad: 0.0,
+    no_pick: false,
+    motivo_no_pick: ''
   };
+  // Combina propiedades existentes con base
+  return Object.assign(base, obj || {});
 }
 
-async function repairPickJSON(modelo, rawText) {
-  const prompt = `Reescribe el contenido en un JSON válido con estas claves EXACTAS:
-{
-  "analisis_gratuito": "",
-  "analisis_vip": "",
-  "apuesta": "",
-  "apuestas_extra": "",
-  "frase_motivacional": "",
-  "probabilidad": 0.0,
-  "no_pick": false,
-  "motivo_no_pick": ""
-}
-Si algún dato no aparece, coloca "s/d" y para "probabilidad" usa 0.0. Responde SOLO el JSON sin comentarios ni texto adicional.
-Contenido:
-${rawText || ''}`;
-
-  const completion = await openai.chat.completions.create(
-    buildOpenAIPayload(modelo, prompt, 250)
-  );
-  const content = completion?.choices?.[0]?.message?.content || '';
-  return extractFirstJsonBlock(content);
-}
-
-// Valida si el pick está completo para VIP (y también sirve para decidir fallback)
+// =============== PREDICADOS DE PICK ===============
 function esNoPick(p) { return !!p && p.no_pick === true; }
 
 function pickCompleto(p) {
   return !!(p && p.analisis_vip && p.analisis_gratuito && p.apuesta && typeof p.probabilidad === 'number');
 }
 
+// =============== OpenAI (ChatCompletion) ===============
 async function pedirPickConModelo(modelo, prompt) {
   const systemHint = "Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {\"no_pick\":true,\"motivo_no_pick\":\"sin señal\"}.";
   const req = buildOpenAIPayload(modelo, prompt, 450, systemHint);
@@ -737,7 +604,7 @@ async function obtenerPickConFallback(prompt) {
     console.info("♻️ Fallback de modelo →", MODEL_FALLBACK);
     pick = await pedirPickConModelo(MODEL_FALLBACK, prompt);
   }
-  // Último recurso: no_pick para no romper el ciclo
+  // Último recurso: si sigue mal, marcar no_pick para no romper el ciclo
   if (!pick) {
     pick = ensurePickShape({ no_pick: true, motivo_no_pick: "sin respuesta del modelo" });
   }
@@ -765,7 +632,7 @@ function getPromptTemplateFromMD() {    // [PX-CHANGE]
   if (!md) return null;
 
   // Acepta “Pre-match”, “Pre‑match” (con guion Unicode) y variantes de espacios
-  const rx = /^\s*(?:#+\s*)?1\)\s*Pre[ -‑]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
+  const rx = /^\s*(?:#+\s*)?1\)\s*Pre[ \-‑]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
   const m = md.match(rx);
   if (!m) return null;
   return m[0].trim();
@@ -782,7 +649,7 @@ function renderTemplateWithMarkers(tpl, { contexto, opcionesList }) {  // [PX-CH
   out = out.replace(/\{\{\s*CONTEXT_JSON\s*\}\}/g, ctxJson);
   out = out.replace(/\{\{\s*OPCIONES_APOSTABLES_LIST\s*\}\}/g, opciones);
 
-  // Si quedó algún marcador crítico sin resolver, invalida
+  // Si quedó algún marcador crítico sin resolver, invalida el template
   if (/\{\{\s*(CONTEXT_JSON|OPCIONES_APOSTABLES_LIST)\s*\}\}/.test(out)) {
     return null;
   }
@@ -826,25 +693,25 @@ function construirPrompt(partido, info, memoria) {
 
   const opciones_apostables = construirOpcionesApostables(mejores);
 
-  // Si existe el prompt MD, úsalo; si no, fallback embebido
+  // Si existe un prompt MD personalizado, úsalo; si no, fallback embebido
   const tpl = getPromptTemplateFromMD();
   if (tpl) {
     let rendered = renderTemplateWithMarkers(tpl, { contexto, opcionesList: opciones_apostables });
     if (rendered && rendered.length > 0) {
-      if (rendered.length > 8000) rendered = rendered.slice(0, 8000); // hard-cap
+      if (rendered.length > 8000) rendered = rendered.slice(0, 8000); // hard-cap por seguridad
       return rendered;
     }
   }
 
-  // Fallback seguro embebido (estructura estable y corta)
+  // Fallback seguro embebido (estructura estable y concisa)
   const prompt = [
     `Eres un analista de apuestas experto. Devuelve SOLO un JSON EXACTO con esta forma:`,
     `{`,
     `  "analisis_gratuito": ""`,
     `  "analisis_vip": ""`,
     `  "apuesta": "",`,
-    `  "apuestas_extra": "",`,
-    `  "frase_motivacional": "",`,
+    `  "apuestas_extra": ""`, 
+    `  "frase_motivacional": ""`,
     `  "probabilidad": 0.0,`,
     `  "no_pick": false,`,
     `  "motivo_no_pick": ""`,
@@ -865,118 +732,47 @@ function construirPrompt(partido, info, memoria) {
 }
 
 // =============== EV/PROB & CHEQUEOS ===============
-function estimarlaProbabilidadPct(pick) {
-  if (pick && typeof pick.probabilidad !== 'undefined') {
-    const v = Number(pick.probabilidad);
-    if (!Number.isNaN(v)) {
-      // Aceptamos dos formatos: decimal (0.05–0.85) o porcentaje (5–85)
-      if (v > 0 && v < 1) {
-        const pct = v * 100;
-        if (pct >= 5 && pct <= 85) return +pct.toFixed(2);
-        return null;
-      } else {
-        if (v >= 5 && v <= 85) return +v.toFixed(2);
-        return null;
-      }
-    }
+function seleccionarCuotaSegunApuesta(partido, apuestaStr) {
+  try {
+    const apuesta = normalizeStr(apuestaStr);
+    const odds = partido?.marketsOffers;
+    if (!odds) return null;
+    const all = [
+      ...(odds.h2h||[]).map(o => ({ ...o, key:'h2h', label:o.name })),
+      ...(odds.totals_over||[]).map(o => ({ ...o, key:'total_over', label:`Más de ${o.point}` })),
+      ...(odds.totals_under||[]).map(o => ({ ...o, key:'total_under', label:`Menos de ${o.point}` })),
+      ...(odds.spreads||[]).map(o => ({ ...o, key:'spread', label:o.name }))
+    ];
+    // Busca coincidencia directa por etiqueta normalizada
+    const pick = all.find(o => normalizeStr(o.label) === apuesta);
+    if (!pick) return null;
+    // Top3 odds for that market/outcome (for context)
+    const top3 = (pick.key === 'h2h')      ? partido.marketsBest.h2h && [partido.marketsBest.h2h] 
+                : (pick.key === 'total_over') ? partido.marketsOffers.totals_over.slice().sort((a,b)=> b.price - a.price).slice(0,3)
+                : (pick.key === 'total_under')? partido.marketsOffers.totals_under.slice().sort((a,b)=> b.price - a.price).slice(0,3)
+                : (pick.key === 'spread')    ? partido.marketsOffers.spreads.filter(x => x.name === pick.name).sort((a,b)=> b.price - a.price).slice(0,3)
+                : [];
+    return { valor: pick.price, point: pick.point, label: pick.label, top3: top3 || [] };
+  } catch {
+    return null;
   }
-  return null; // no inventar
-}
-function impliedProbPct(cuota) {
-  const c = Number(cuota);
-  if (!Number.isFinite(c) || c <= 1.0) return null;
-  return +((100 / c).toFixed(2));
-}
-function calcularEV(probPct, cuota) {
-  const p = Number(probPct) / 100;
-  const c = Number(cuota);
-  if (!Number.isFinite(p) || !Number.isFinite(c)) return null;
-  return +(((p * c) - 1) * 100).toFixed(2);
-}
-function clasificarPickPorEV(ev) {
-  if (ev >= 40) return 'Ultra Elite';
-  if (ev >= 30) return 'Élite Mundial';
-  if (ev >= 20) return 'Avanzado';
-  if (ev >= 15) return 'Competitivo';
-  return 'Informativo';
 }
 
-function inferMarketFromApuesta(apuestaText) {
-  const t = String(apuestaText || '').toLowerCase();
-  if (t.includes('más de') || t.includes('over')) return { market: 'totals', side: 'over' };
-  if (t.includes('menos de') || t.includes('under')) return { market: 'totals', side: 'under' };
-  if (t.includes('hándicap') || t.includes('handicap') || t.includes('spread')) return { market: 'spreads', side: null };
-  return { market: 'h2h', side: null };
-}
+function apuestaCoincideConOutcome(apuestaStr, outcomeStr, homeTeam, awayTeam) {
+  const a = normalizeStr(apuestaStr);
+  const o = normalizeStr(outcomeStr);
+  const home = normalizeStr(homeTeam || "");
+  const away = normalizeStr(awayTeam || "");
 
-function top3ForSelectedMarket(partido, apuestaText) {
-  const info = inferMarketFromApuesta(apuestaText);
-  let arr = [];
-  const offers = partido?.marketsOffers || {};
-  if (info.market === 'totals') {
-    arr = info.side === 'over' ? (offers.totals_over || []) : (offers.totals_under || []);
-  } else if (info.market === 'spreads') {
-    arr = offers.spreads || [];
-  } else {
-    arr = offers.h2h || [];
-  }
-  const seen = new Set();
-  return arr.filter(o => Number.isFinite(o?.price))
-    .sort((a,b) => b.price - a.price)
-    .filter(o => {
-      const key = (o?.bookie || '').toLowerCase().trim();
-      if (!key || seen.has(key)) return false;
-      seen.add(key); return true;
-    })
-    .slice(0,3)
-    .map(o => ({ bookie: o.bookie, price: Number(o.price), point: (typeof o.point !== 'undefined' ? o.point : null) }));
-}
-
-function seleccionarCuotaSegunApuesta(partido, apuesta) {
-  const t = String(apuesta || '').toLowerCase();
-  const m = partido?.marketsBest || {};
-  let selected = null;
-
-  if (t.includes('más de') || t.includes('over') || t.includes('total')) {
-    if (m.totals && m.totals.over) selected = { valor: m.totals.over.valor, label: 'over', point: m.totals.over.point };
-    else return null; // no cruzar a under
-  } else if (t.includes('menos de') || t.includes('under')) {
-    if (m.totals && m.totals.under) selected = { valor: m.totals.under.valor, label: 'under', point: m.totals.under.point };
-    else return null;
-  } else if (t.includes('hándicap') || t.includes('handicap') || t.includes('spread')) {
-    if (m.spreads) selected = { valor: m.spreads.valor, label: m.spreads.label, point: m.spreads.point };
-    else return null;
-  } else {
-    if (m.h2h) selected = { valor: m.h2h.valor, label: m.h2h.label };
-    else return null;
-  }
-
-  const top3 = top3ForSelectedMarket(partido, apuesta);
-  return { ...selected, top3 };
-}
-
-function apuestaCoincideConOutcome(apuestaTxt, outcomeTxt, homeTeam, awayTeam) {
-  const a = normalizeStr(apuestaTxt || '');
-  const o = normalizeStr(outcomeTxt || '');
-  const home = normalizeStr(homeTeam || '');
-  const away = normalizeStr(awayTeam || '');
-
-  const esHome = a.includes('1x2: local') || a.includes('local') || a.includes(home);
-  const esVisit = a.includes('1x2: visitante') || a.includes('visitante') || a.includes(away);
-  if (o.includes('draw') || o.includes('empate')) {
-    // empate
-    return a.includes('empate') || a.includes('draw');
-  }
-  if (esHome && (o.includes(away) || o.includes('away'))) return false;
-  if (esVisit && (o.includes(home) || o.includes('home'))) return false;
-
+  const esHome  = a.includes("1x2: local") || a.includes("local") || a.includes(home);
+  const esVisit = a.includes("1x2: visitante") || a.includes("visitante") || a.includes(away);
+  if (o.includes("draw") || o.includes("empate")) return a.includes("empate") || a.includes("draw");
+  if (esHome && (o.includes(away) || o.includes("away"))) return false;
+  if (esVisit && (o.includes(home) || o.includes("home"))) return false;
   return true;
 }
 
-// =============== MENSAJES ===============
-const TAGLINE = '🛰️ IA avanzada monitorea el mercado global 24/7 para detectar valor escondido en el momento justo.';
-
-// [PX-CHANGE] VIP sin frase motivacional + formato enriquecido (EV | Prob | Momio + Top3 + Datos)
+// =============== MENSAJES (formatos) ===============
 function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoExtra) { // [PX-CHANGE]
   const mins = Math.max(0, Math.round(partido.minutosFaltantes));
   const top3Arr = Array.isArray(cuotaInfo?.top3) ? cuotaInfo.top3 : [];
@@ -993,7 +789,7 @@ function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoE
     : '';
 
   const datos = [];
-  if (infoExtra?.clima) datos.push(`- Clima: ${typeof infoExtra.clima === 'string' ? infoExtra.clima : 'disponible'}`);
+  if (infoExtra?.clima)   datos.push(`- Clima: ${typeof infoExtra.clima === 'string' ? infoExtra.clima : 'disponible'}`);
   if (infoExtra?.arbitro) datos.push(`- Árbitro: ${infoExtra.arbitro}`);
   if (infoExtra?.estadio) datos.push(`- Estadio: ${infoExtra.estadio}${infoExtra?.ciudad ? ` (${infoExtra.ciudad})` : ''}`);
   // Campos avanzados que podrían no estar disponibles:
@@ -1029,7 +825,7 @@ function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoE
   ].filter(Boolean).join('\n');
 }
 
-// [PX-CHANGE] FREE con frase motivacional (💬 “...”) y CTA actualizado
+// [PX-CHANGE] FREE con frase motivacional y CTA actualizado
 function construirMensajeFREE(partido, pick, probPct, ev, nivel) {        // [PX-CHANGE]
   const mins = Math.max(0, Math.round(partido.minutosFaltantes));
   const motiv = String(pick.frase_motivacional || '').trim();
@@ -1088,12 +884,74 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuota, tip
       nivel: nivel,
       timestamp: nowISO()
     };
-
-    const { data, error } = await supabase.from(PICK_TABLE).insert([entrada]);
-    if (error) { console.error('Supabase insert error:', error.message); return false; }
-    return true;
+    if (tipo === 'LIVE') {
+      entrada.is_live = true;
+      entrada.kickoff_at = partido.commence_time || null;
+      entrada.minute_at_pick = partido.minute || null;
+      entrada.phase = partido.phase || null;
+      entrada.score_at_pick = partido.score || null;
+      entrada.market_point = (partido.pickPoint != null) ? String(partido.pickPoint) : null;
+      entrada.vigencia_text = partido.vigenciaText || null;
+      entrada.top3_json = (Array.isArray(cuota?.top3) ? cuota.top3 : null);
+      // No consenso en PRE ni OUT, solo LIVE
+    }
+    const { error } = await supabase.from(PICK_TABLE).insert([ entrada ]);
+    if (error) {
+      console.error('Supabase insert error:', error.message);
+      resumen.guardados_fail++;
+    } else {
+      resumen.guardados_ok++;
+    }
   } catch (e) {
-    console.error('Supabase insert excepción:', e?.message || e);
-    return false;
+    console.error('Supabase insert exception:', e?.message || e);
+    resumen.guardados_fail++;
   }
 }
+
+// =============== OpenAI PAYLOAD HELPER ===============
+function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
+  const messages = [];
+  if (systemMsg) messages.push({ role:'system', content: systemMsg });
+  messages.push({ role:'user', content: prompt });
+  const cfg = (model||'').toLowerCase().includes('gpt-5') ? 1.2 : 1.0;  // a bit more creative for GPT-5
+  return {
+    model,
+    messages,
+    temperature: 0.15,
+    top_p: 1,
+    max_tokens: maxTokens,
+    presence_penalty: 0,
+    frequency_penalty: 0,
+    stop: null
+  };
+}
+
+// =============== JSON Repair (if needed) ===============
+async function repairPickJSON(model, rawText) {
+  // Intenta corregir texto malformado intentando parsear con GPT-3.5
+  const prompt = `El siguiente mensaje debería ser solo un JSON válido pero puede estar malformado:\n<<<\n${rawText}\n>>>\nReescríbelo corrigiendo llaves, comillas o comas para que sea un JSON válido con la misma información.`;
+  const fixReq = {
+    model: (model||'').toLowerCase().includes('gpt-5') ? 'gpt-5-mini' : model,
+    messages: [{ role:'user', content: prompt }],
+    temperature: 0.2,
+    top_p: 1,
+    max_tokens: 300,
+    presence_penalty: 0,
+    frequency_penalty: 0
+  };
+  const res = await openai.chat.completions.create(fixReq);
+  const raw = res?.choices?.[0]?.message?.content || "";
+  return extractFirstJsonBlock(raw);
+}
+
+// Aux: obtener mejor cuota de un array
+function arrBest(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  return arr.reduce((acc, x) => (x.price && (!acc || x.price > acc.price) ? x : acc), null);
+}
+
+// AF league mapping (if available)
+const AF_LEAGUE_ID_BY_TITLE = {
+  // (Mapping of sport_title to API-Football league IDs, if provided elsewhere)
+};
+const TAGLINE = "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.";
