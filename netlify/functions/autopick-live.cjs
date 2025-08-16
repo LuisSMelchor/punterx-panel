@@ -249,7 +249,6 @@ async function oddsapiLiveEventsByKeys(sportKeys){
   }
   return out;
 }
-}
 
 // Top‑3 + consenso desde estructura de OddsAPI
 function consensusAndTop3FromOddsapiEvent(oddsEvent){
