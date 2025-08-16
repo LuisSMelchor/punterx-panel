@@ -122,6 +122,73 @@ const LIGA_TO_SPORTKEY = {
   "South America - Copa Sudamericana": "soccer_conmebol_sudamericana"
 };
 
+
+/* ============ OddsAPI Sports Map & Fallback (404) ============ */
+const ODDS_HOST = 'https://api.the-odds-api.com';
+
+const __norm = (s) => String(s||'')
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .replace(/\s+/g,' ')
+  .trim().toLowerCase();
+
+let __sportsCache = null;
+async function loadOddsSportsMap(){
+  if (__sportsCache) return __sportsCache;
+  const url = `${ODDS_HOST}/v4/sports?all=true&apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
+  const res = await fetch(url);
+  if (!res?.ok) {
+    console.warn('[OddsAPI] /v4/sports fallo:', res?.status, await safeText(res));
+    __sportsCache = { byKey:{}, byTitle:{} };
+    return __sportsCache;
+  }
+  const arr = await res.json().catch(()=>[]);
+  const byKey = {}; const byTitle = {};
+  for (const s of arr) {
+    if (!s?.key) continue;
+    byKey[s.key] = s;
+    if (s?.title) byTitle[__norm(s.title)] = s;
+    if (s?.description) byTitle[__norm(s.description)] = s;
+  }
+  __sportsCache = { byKey, byTitle };
+  return __sportsCache;
+}
+
+async function resolveSportKeyFallback(originalKey){
+  try {
+    const cache = await loadOddsSportsMap();
+    // si no existe, intenta por títulos conocidos
+    const candidates = ['libertadores','sudamericana','conmebol'];
+    for (const [tNorm, obj] of Object.entries(cache.byTitle)) {
+      if (candidates.some(c=> tNorm.includes(c))) return obj.key;
+    }
+  } catch(e){
+    console.warn('[OddsAPI] resolveSportKeyFallback error:', e?.message||e);
+  }
+  return null;
+}
+
+async function fetchOddsWithFallback(sportKey, regions, markets){
+  const u = `${ODDS_HOST}/v4/sports/${encodeURIComponent(sportKey)}/odds?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=${encodeURIComponent(regions)}&markets=${encodeURIComponent(markets)}&oddsFormat=decimal&dateFormat=unix`;
+  const r = await fetch(u);
+  if (r.ok) return r;
+  if (r.status === 404){
+    console.warn('[OddsAPI] odds err:', sportKey, 404, '→ fallback map');
+    const alt = await resolveSportKeyFallback(sportKey);
+    if (alt && alt !== sportKey){
+      const u2 = `${ODDS_HOST}/v4/sports/${encodeURIComponent(alt)}/odds?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=${encodeURIComponent(regions)}&markets=${encodeURIComponent(markets)}&oddsFormat=decimal&dateFormat=unix`;
+      const r2 = await fetch(u2);
+      if (r2.ok){
+        console.info('[OddsAPI] fallback OK:', sportKey, '→', alt);
+        return r2;
+      } else {
+        console.warn('[OddsAPI] fallback también falló:', alt, r2.status, await safeText(r2));
+      }
+    } else {
+      console.warn('[OddsAPI] sin alternativa para', sportKey);
+    }
+  }
+  return r;
+}
 /* ============ Fetchers ============ */
 
 // API‑FOOTBALL — fixtures en vivo (minuto, marcador, liga/país)
