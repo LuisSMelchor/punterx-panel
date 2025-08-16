@@ -2,8 +2,8 @@
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–60 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
 // [PX-FIX] Imports requeridos
+const OpenAI = require('openai');
 const { createClient } = require('@supabase/supabase-js');
-const { OpenAI } = require('openai');
 const fs = require('fs');
 const path = require('path');
 // [PX-FIX] Fin imports requeridos
@@ -419,7 +419,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
 
     const norm = s => String(s||"").toLowerCase()
       .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
-      .replace(/\b(fc|cf|sc|afc|c\.f\.|f\.c\.)\b/g,"")
+      .replace(/\b(fc|cf|sc|afc|c\.f\.|f\.c\.|club|deportivo)\b/g,"")
       .replace(/[^a-z0-9]+/g," ").trim();
 
     if (afLeagueId) {
@@ -627,10 +627,10 @@ function pickCompleto(p) {
 
 // =============== OpenAI (ChatCompletion) ===============
 async function pedirPickConModelo(modelo, prompt) {
-  const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido...';
-  let tokens = 650;
+  const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {"no_pick":true,"motivo_no_pick":"sin señal"}.';
+  let tokens = 750;
 
-  // 1er intento (con response_format si es GPT-5)
+  // 1er intento
   let req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
   try {
     const t0 = Date.now();
@@ -648,10 +648,9 @@ async function pedirPickConModelo(modelo, prompt) {
 
     if (meta.finish_reason === 'length') {
       // Abre margen y reintenta una vez
-      tokens += 300;
+      tokens += 200;
       req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
-      // quitar response_format si existiera
-      if (req.response_format) delete req.response_format;
+      if (req.response_format) delete req.response_format; // por si diera 400
       const c2 = await openai.chat.completions.create(req);
       global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
       const raw2 = c2?.choices?.[0]?.message?.content || "";
@@ -664,10 +663,9 @@ async function pedirPickConModelo(modelo, prompt) {
 
   } catch (e) {
     const msg = String(e?.message || '');
-    // Reintento ante 400 por parámetro no soportado (reasoning/response_format/etc.)
+    // Reintento ante 400 por parámetro no soportado (response_format, etc.)
     if (/unknown parameter|unsupported parameter|response_format/i.test(msg)) {
       try {
-        // reconstruye sin response_format ni extras
         const req2 = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
         if (req2.response_format) delete req2.response_format;
         const c2 = await openai.chat.completions.create(req2);
@@ -718,8 +716,8 @@ function getPromptTemplateFromMD() {    // [PX-CHANGE]
   }
   if (!md) return null;
 
-  // Acepta “Pre-match”, “Pre-match” (con guion Unicode) y variantes de espacios
-  const rx = /^\s*(?:#+\s*)?1\)\s*Pre[ \--]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
+  // Acepta “Pre-match”, “Pre-match” (guiones Unicode) y variantes
+  const rx = /^\s*(?:#+\s*)?1\)\s*Pre[\--– ]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
   const m = md.match(rx);
   if (!m) return null;
   return m[0].trim();
@@ -891,8 +889,8 @@ function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoE
     ? [
         '🏆 Mejores 3 casas de apuestas para este partido:',
         ...top3Arr.map((b,i) => {
-          const line = `${i+1}. ${b.bookie} — ${Number(b.price).toFixed(2)}`;
-          return (i === 0) ? `<b>${line}</b>` : line;
+          const line = `${b.bookie} — ${Number(b.price).toFixed(2)}`;
+          return i === 0 ? `<b>${line}</b>` : line;
         })
       ].join('\n')
     : '';
@@ -901,24 +899,17 @@ function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoE
   if (infoExtra?.clima)   datos.push(`- Clima: ${typeof infoExtra.clima === 'string' ? infoExtra.clima : 'disponible'}`);
   if (infoExtra?.arbitro) datos.push(`- Árbitro: ${infoExtra.arbitro}`);
   if (infoExtra?.estadio) datos.push(`- Estadio: ${infoExtra.estadio}${infoExtra?.ciudad ? ` (${infoExtra.ciudad})` : ''}`);
-  // Campos avanzados que podrían no estar disponibles:
-  // datos.push(`- Lesiones: n/d`);
-  // datos.push(`- Historial: n/d`);
-  // datos.push(`- xG promedio: n/d`);
-
   const datosBlock = datos.length ? `\n📊 Datos a considerar:\n${datos.join('\n')}` : '';
 
   const cuotaTxt = `${Number(cuotaInfo.valor).toFixed(2)}${cuotaInfo.point ? ` @ ${cuotaInfo.point}` : ''}`;
-
   const encabezadoNivel = `${emojiNivel(nivel)} ${nivel}`;
 
   return [
     `🎯 PICK NIVEL: ${encabezadoNivel}`,
-    `🏆 ${COUNTRY_FLAG} ${partido.liga}`,
+    `🏆 ${infoExtra?.pais || 'N/D'} - ${partido.liga}`,
     `⚔️ ${partido.home} vs ${partido.away}`,
     `⏱️ ${formatMinAprox(mins)}`,
     ``,
-    // Análisis VIP breve
     `🧠 ${pick.analisis_vip}`,
     ``,
     `EV: ${ev.toFixed(0)}% | Posibilidades de acierto: ${probPct.toFixed(0)}% | Momio: ${american}`,
@@ -942,7 +933,7 @@ function construirMensajeFREE(partido, pick, probPct, ev, nivel) {        // [PX
 
   return [
     `📡 RADAR DE VALOR`,
-    `🏆 ${COUNTRY_FLAG} ${partido.liga}`,
+    `🏆 ${infoFromPromptPais(partido) || 'N/D'} - ${partido.liga}`,
     `⚔️ ${partido.home} vs ${partido.away}`,
     `⏱️ ${formatMinAprox(mins)}`,
     ``,
@@ -954,6 +945,12 @@ function construirMensajeFREE(partido, pick, probPct, ev, nivel) {        // [PX
     ``,
     `Únete al VIP para recibir el pick completo con EV, probabilidad, apuestas extra y datos avanzados.`
   ].join('\n');
+}
+
+// Helper: si no tenemos info_extra aquí, usamos bandera por defecto para derivar país (muy básico)
+function infoFromPromptPais(partido) {
+  // Preferimos el país provisto en enriquecimiento (si ya se inyectó en construirPrompt, vendrá en el texto final VIP; en FREE usamos este helper)
+  return partido?.pais || null;
 }
 
 // =============== TELEGRAM ===============
@@ -1039,7 +1036,7 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
   if (isG5) {
     // GPT-5: usa max_completion_tokens; NO mandar temperature/top_p/penalties ni 'reasoning'
     payload.max_completion_tokens = Math.max(650, Number(maxTokens) || 650);
-    // Opcional: intenta JSON mode, pero se quitará si da 400 (ver retry abajo)
+    // Intento de JSON mode: si da 400, lo quitamos en retry
     payload.response_format = { type: "json_object" };
   } else {
     // Modelos clásicos
@@ -1067,8 +1064,7 @@ async function repairPickJSON(model, rawText) {
 
   if (isG5) {
     // [PX-FIX] GPT-5 → sólo max_completion_tokens
-    fixReq.max_completion_tokens = 300;          // :contentReference[oaicite:4]{index=4}
-    // (sin temperature/top_p/penalties)
+    fixReq.max_completion_tokens = 300;
   } else {
     fixReq.temperature = 0.2;
     fixReq.top_p = 1;
