@@ -213,21 +213,42 @@ async function afLiveFixtures(){
       score: `${g.home ?? 0} - ${g.away ?? 0}`
     };
   });
+
+// OddsAPI — eventos (SIN odds) para ping barato de actividad
+async function discoverEventsFromOddsAPI(sportKey){
+  try {
+    const url = `${ODDS_HOST}/v4/sports/${encodeURIComponent(sportKey)}/events?apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
+    const res = await fetch(url);
+    if (!res?.ok) return [];
+    const arr = await safeJson(res);
+    return Array.isArray(arr) ? arr : [];
+  } catch (e){
+    console.warn("[OddsAPI] events ping error:", sportKey, e?.message||e);
+    return [];
+  }
+}
 }
 
 // OddsAPI — eventos en vivo por lista de sport_keys (primario)
+
 async function oddsapiLiveEventsByKeys(sportKeys){
   if (!ODDS_API_KEY) return [];
   const out = [];
   for (const key of sportKeys) {
-    // Nota: v4 /odds devuelve también eventos live y próximos por sport_key
-    const url = `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(key)}/odds?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=${encodeURIComponent(LIVE_REGIONS)}&markets=${encodeURIComponent(LIVE_MARKETS)}&oddsFormat=decimal&dateFormat=unix`;
-    const res = await fetch(url);
-    if (!res.ok) { console.warn("[OddsAPI] odds err:", key, res.status); continue; }
+    // 0) Ping barato: si no hay eventos para este sport, no pedimos odds
+    const evs = await discoverEventsFromOddsAPI(key);
+    if (!Array.isArray(evs) || evs.length === 0) {
+      console.info("[LIVE] sin eventos para", key, "→ skip odds");
+      continue;
+    }
+    // 1) Pedir odds con fallback de sport key y mercados mínimos
+    const res = await fetchOddsWithFallback(key, LIVE_REGIONS, LIVE_MARKETS);
+    if (!res?.ok) { console.warn("[OddsAPI] odds err:", key, res?.status, await safeText(res)); continue; }
     const events = await safeJson(res);
     if (Array.isArray(events)) out.push(...events);
   }
   return out;
+}
 }
 
 // Top‑3 + consenso desde estructura de OddsAPI
@@ -528,7 +549,14 @@ async function runWindow(){
   for (const fx of fixtures) {
     const key = `${(fx.home||"").toLowerCase()}||${(fx.away||"").toLowerCase()}`;
     afIndex.set(key, fx);
+  
+  // 2b) Si no hay fixtures activos, saltar este tick para ahorrar cuota OddsAPI
+  if (!fixtures.length) {
+    console.info("[LIVE] sin fixtures activos → skip odds tick");
+    await sleep(Number(LIVE_POLL_MS)||25000);
+    return;
   }
+}
 
   while (Date.now() - t0 < Number(RUN_WINDOW_MS)) {
     // 3) Trae eventos LIVE desde OddsAPI (primario)
