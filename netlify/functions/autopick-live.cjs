@@ -118,8 +118,8 @@ const LIGA_TO_SPORTKEY = {
   "USA - MLS": "soccer_usa_mls",
   "UEFA - Champions League": "soccer_uefa_champs_league",
   "UEFA - Europa League": "soccer_uefa_europa_league",
-  "South America - Copa Libertadores": "soccer_conmebol_libertadores",
-  "South America - Copa Sudamericana": "soccer_conmebol_sudamericana"
+  "South America - Copa Libertadores": "soccer_conmebol_copa_libertadores",
+  "South America - Copa Sudamericana": "soccer_conmebol_copa_sudamericana"
 };
 
 
