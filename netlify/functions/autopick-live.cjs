@@ -1,8 +1,10 @@
 // netlify/functions/autopick-live.cjs
-// PunterX · Live Picks (In‑Play) — OddsAPI-first (V1)
-// - Prefiltro con OddsAPI (qué es apostable, mejores precios, top‑3).
-// - Enriquecimiento con API‑FOOTBALL (minuto, marcador, fase).
-// - IA sólo si pasa el prefiltro. EV + validaciones. Clasificación (FREE/VIP).
+// PunterX · Live Picks (In-Play) — OddsAPI-first (V1.1)
+// - Prefiltro con OddsAPI (/events) para no quemar cuota cuando no hay fixtures.
+// - Validación de sport keys contra /v4/sports?all=true (blinda 404 por claves inválidas).
+// - Alias para claves antiguas CONMEBOL → claves correctas v4.
+// - Enriquecimiento con API-FOOTBALL (minuto, marcador, fase).
+// - IA sólo si pasa el prefiltro (top-3 bookies, gap consenso vs mejor, etc.). EV + validaciones.
 // - Telegram (mensajes LIVE ya definidos en send.js). Supabase (histórico).
 // - CommonJS, Node 20, sin top-level await.
 
@@ -30,12 +32,12 @@ const {
 
   // Live tunables (con defaults seguros)
   LIVE_MIN_BOOKIES = "3",
-  LIVE_POLL_MS = "25000",
+  LIVE_POLL_MS = "40000",              // 40s in-play (recomendado para featured) :contentReference[oaicite:1]{index=1}
   LIVE_COOLDOWN_MIN = "8",
   LIVE_MARKETS = "h2h,totals,spreads",
-  LIVE_REGIONS = "eu,uk,us",
-  LIVE_PREFILTER_GAP_PP = "5",     // gap consenso vs mejor (p.p.)
-  RUN_WINDOW_MS = "60000"          // ventana interna (Netlify background)
+  LIVE_REGIONS = "uk",                 // regiones soportadas: us, uk, eu, au
+  LIVE_PREFILTER_GAP_PP = "5",         // gap consenso vs mejor (p.p.)
+  RUN_WINDOW_MS = "60000"              // ventana interna (Netlify background)
 } = process.env;
 
 function assertEnv() {
@@ -58,14 +60,17 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 // Helpers de envío (debes tener netlify/functions/send.js con LIVE FREE/VIP)
 let send = null;
 try { send = require("./send"); }
-catch { try { send = require("../send"); } catch (e) { throw new Error("No se pudo cargar send.js (helpers LIVE)"); } }
+catch {
+  try { send = require("../send"); }
+  catch (e) { throw new Error("No se pudo cargar send.js (helpers LIVE)"); }
+}
 
 /* ============ Utils ============ */
-const PROB_MIN = 5;   // %
-const PROB_MAX = 85;  // %
+const PROB_MIN = 5;   // % mínimo IA
+const PROB_MAX = 85;  // % máximo IA
 const GAP_MAX  = 15;  // p.p. IA vs implícita
-const EV_VIP   = 15;  // %
-const EV_FREE0 = 10;  // %
+const EV_VIP   = 15;  // % umbral VIP
+const EV_FREE0 = 10;  // % umbral FREE informativo
 
 function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 async function safeJson(res){ try { return await res.json(); } catch { return null; } }
@@ -105,8 +110,8 @@ function normalizeProbPct(x){
   return +n.toFixed(2);                   // ya venía en %
 }
 
-/* ============ Mapa de ligas → sport_key (OddsAPI) ============ */
-// Amplía libremente esta lista; así arrancamos cubriendo ligas top.
+/* ============ Mapas y normalización de sport keys ============ */
+// Map base (tu proyecto) liga → sport_key OddsAPI
 const LIGA_TO_SPORTKEY = {
   "Spain - LaLiga": "soccer_spain_la_liga",
   "England - Premier League": "soccer_epl",
@@ -122,14 +127,19 @@ const LIGA_TO_SPORTKEY = {
   "South America - Copa Sudamericana": "soccer_conmebol_copa_sudamericana"
 };
 
+// Alias para claves antiguas CONMEBOL (compatibilidad hacia atrás)
+const SPORT_KEY_ALIASES = {
+  "soccer_conmebol_libertadores":  "soccer_conmebol_copa_libertadores",
+  "soccer_conmebol_sudamericana":  "soccer_conmebol_copa_sudamericana",
+};
+const normalizeSportKey = (k) => SPORT_KEY_ALIASES[k] || k;
 
-/* ============ OddsAPI Sports Map & Fallback (404) ============ */
-const ODDS_HOST = 'https://api.the-odds-api.com';
-
-const __norm = (s) => String(s||'')
-  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-  .replace(/\s+/g,' ')
-  .trim().toLowerCase();
+/* ============ OddsAPI Sports Catalog & helpers ============ */
+// Catálogo oficial (no consume cuota) — /v4/sports?all=true (OddsAPI docs) :contentReference[oaicite:2]{index=2}
+const ODDS_HOST = "https://api.the-odds-api.com";
+const __norm = (s) => String(s||"")
+  .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+  .replace(/\s+/g," ").trim().toLowerCase();
 
 let __sportsCache = null;
 async function loadOddsSportsMap(){
@@ -137,7 +147,7 @@ async function loadOddsSportsMap(){
   const url = `${ODDS_HOST}/v4/sports?all=true&apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
   const res = await fetch(url);
   if (!res?.ok) {
-    console.warn('[OddsAPI] /v4/sports fallo:', res?.status, await safeText(res));
+    console.warn("[OddsAPI] /v4/sports fallo:", res?.status, await safeText(res));
     __sportsCache = { byKey:{}, byTitle:{} };
     return __sportsCache;
   }
@@ -146,113 +156,96 @@ async function loadOddsSportsMap(){
   for (const s of arr) {
     if (!s?.key) continue;
     byKey[s.key] = s;
-    if (s?.title) byTitle[__norm(s.title)] = s;
+    if (s?.title)       byTitle[__norm(s.title)] = s;
     if (s?.description) byTitle[__norm(s.description)] = s;
   }
   __sportsCache = { byKey, byTitle };
   return __sportsCache;
 }
-
+function isValidSportKey(k){
+  const key = normalizeSportKey(k);
+  return Boolean(__sportsCache?.byKey?.[key]);
+}
+function isActiveSportKey(k){
+  const key = normalizeSportKey(k);
+  const item = __sportsCache?.byKey?.[key];
+  return (typeof item?.active === "boolean") ? item.active : true;
+}
 async function resolveSportKeyFallback(originalKey){
   try {
     const cache = await loadOddsSportsMap();
-    // si no existe, intenta por títulos conocidos
-    const candidates = ['libertadores','sudamericana','conmebol'];
+    // Si no existe, intenta por títulos conocidos (heurística)
+    const candidates = ["libertadores","sudamericana","conmebol"];
     for (const [tNorm, obj] of Object.entries(cache.byTitle)) {
       if (candidates.some(c=> tNorm.includes(c))) return obj.key;
     }
   } catch(e){
-    console.warn('[OddsAPI] resolveSportKeyFallback error:', e?.message||e);
+    console.warn("[OddsAPI] resolveSportKeyFallback error:", e?.message||e);
   }
   return null;
 }
 
-async function fetchOddsWithFallback(sportKey, regions, markets){
-  const u = `${ODDS_HOST}/v4/sports/${encodeURIComponent(sportKey)}/odds?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=${encodeURIComponent(regions)}&markets=${encodeURIComponent(markets)}&oddsFormat=decimal&dateFormat=unix`;
-  const r = await fetch(u);
-  if (r.ok) return r;
-  if (r.status === 404){
-    console.warn('[OddsAPI] odds err:', sportKey, 404, '→ fallback map');
-    const alt = await resolveSportKeyFallback(sportKey);
-    if (alt && alt !== sportKey){
-      const u2 = `${ODDS_HOST}/v4/sports/${encodeURIComponent(alt)}/odds?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=${encodeURIComponent(regions)}&markets=${encodeURIComponent(markets)}&oddsFormat=decimal&dateFormat=unix`;
-      const r2 = await fetch(u2);
-      if (r2.ok){
-        console.info('[OddsAPI] fallback OK:', sportKey, '→', alt);
-        return r2;
-      } else {
-        console.warn('[OddsAPI] fallback también falló:', alt, r2.status, await safeText(r2));
+/* ============ Prefiltros: /events (barato) y odds featured ============ */
+// /v4/sports/:sport/events (prefiltro 200 + [] cuando no hay fixtures). :contentReference[oaicite:3]{index=3}
+async function fetchEvents(sportKey){
+  const key = normalizeSportKey(sportKey);
+  const url = `${ODDS_HOST}/v4/sports/${encodeURIComponent(key)}/events?apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
+  const r = await fetch(url);
+  const raw = await safeText(r);
+  if (r.status === 404) {
+    const err = new Error(`[LIVE] events 404 (sport no encontrado): ${key}`);
+    err.code = "UNKNOWN_SPORT";
+    err.status = r.status;
+    throw err; // 404 ≠ “sin eventos”, es “sport inválido” :contentReference[oaicite:4]{index=4}
+  }
+  if (!r.ok) {
+    const err = new Error(`[LIVE] events error ${r.status}: ${raw?.slice?.(0, 200)}`);
+    err.code = "EVENTS_ERROR";
+    err.status = r.status;
+    throw err;
+  }
+  let body = null;
+  try { body = raw ? JSON.parse(raw) : []; } catch { body = []; }
+  return Array.isArray(body) ? body : [];
+}
+
+// /v4/sports/:sport/odds (featured markets; 404 = sport inválido). :contentReference[oaicite:5]{index=5}
+async function fetchOddsFeatured(sportKey, regions, markets){
+  const key = normalizeSportKey(sportKey);
+  const url = `${ODDS_HOST}/v4/sports/${encodeURIComponent(key)}/odds?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=${encodeURIComponent(regions)}&markets=${encodeURIComponent(markets)}&oddsFormat=decimal&dateFormat=unix`;
+  const r = await fetch(url);
+  const raw = await safeText(r);
+  if (r.status === 404) {
+    // Intento de fallback vía catálogo (p.ej. claves antiguas)
+    console.warn("[OddsAPI] odds 404:", key, "→ fallback por catálogo");
+    const alt = await resolveSportKeyFallback(key);
+    if (alt && alt !== key) {
+      const url2 = `${ODDS_HOST}/v4/sports/${encodeURIComponent(alt)}/odds?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=${encodeURIComponent(regions)}&markets=${encodeURIComponent(markets)}&oddsFormat=decimal&dateFormat=unix`;
+      const r2 = await fetch(url2);
+      if (r2.ok) {
+        console.info("[OddsAPI] fallback OK:", key, "→", alt);
+        return r2.json();
       }
-    } else {
-      console.warn('[OddsAPI] sin alternativa para', sportKey);
+      console.warn("[OddsAPI] fallback también falló:", alt, r2.status, await safeText(r2));
     }
+    const err = new Error(`[LIVE] odds 404 (sport no encontrado): ${key}`);
+    err.code = "UNKNOWN_SPORT";
+    err.status = 404;
+    throw err;
   }
-  return r;
-}
-/* ============ Fetchers ============ */
-
-// API‑FOOTBALL — fixtures en vivo (minuto, marcador, liga/país)
-async function afLiveFixtures(){
-  const url = `https://v3.football.api-sports.io/fixtures?live=all`;
-  const res = await fetch(url, { headers: { "x-apisports-key": API_FOOTBALL_KEY }});
-  if (!res.ok) { console.warn("[AF] fixtures live error:", res.status, await safeText(res)); return []; }
-  const data = await safeJson(res);
-  const arr = Array.isArray(data?.response) ? data.response : [];
-  return arr.map(x => {
-    const f = x.fixture||{}, l = x.league||{}, t = x.teams||{}, g = x.goals||{};
-    const minute = Number(f.status?.elapsed)||0;
-    return {
-      fixture_id: f.id,
-      league: l.name || "",
-      country: l.country || "",
-      teams: `${t.home?.name||"Local"} vs ${t.away?.name||"Visitante"}`,
-      home: t.home?.name || "Local",
-      away: t.away?.name || "Visitante",
-      minute,
-      phase: phaseFromMinute(minute),
-      score: `${g.home ?? 0} - ${g.away ?? 0}`
-    };
-  });
-
-// OddsAPI — eventos (SIN odds) para ping barato de actividad
-async function discoverEventsFromOddsAPI(sportKey){
-  try {
-    const url = `${ODDS_HOST}/v4/sports/${encodeURIComponent(sportKey)}/events?apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
-    const res = await fetch(url);
-    if (!res?.ok) return [];
-    const arr = await safeJson(res);
-    return Array.isArray(arr) ? arr : [];
-  } catch (e){
-    console.warn("[OddsAPI] events ping error:", sportKey, e?.message||e);
-    return [];
+  if (!r.ok) {
+    const err = new Error(`[LIVE] odds error ${r.status}: ${raw?.slice?.(0, 240)}`);
+    err.code = "ODDS_ERROR";
+    err.status = r.status;
+    throw err;
   }
-}
-}
-
-// OddsAPI — eventos en vivo por lista de sport_keys (primario)
-
-async function oddsapiLiveEventsByKeys(sportKeys){
-  if (!ODDS_API_KEY) return [];
-  const out = [];
-  for (const key of sportKeys) {
-    // 0) Ping barato: si no hay eventos para este sport, no pedimos odds
-    const evs = await discoverEventsFromOddsAPI(key);
-    if (!Array.isArray(evs) || evs.length === 0) {
-      console.info("[LIVE] sin eventos para", key, "→ skip odds");
-      continue;
-    }
-    // 1) Pedir odds con fallback de sport key y mercados mínimos
-    const res = await fetchOddsWithFallback(key, LIVE_REGIONS, LIVE_MARKETS);
-    if (!res?.ok) { console.warn("[OddsAPI] odds err:", key, res?.status, await safeText(res)); continue; }
-    const events = await safeJson(res);
-    if (Array.isArray(events)) out.push(...events);
-  }
-  return out;
+  let body = null;
+  try { body = raw ? JSON.parse(raw) : []; } catch { body = []; }
+  return Array.isArray(body) ? body : [];
 }
 
-// Top‑3 + consenso desde estructura de OddsAPI
+/* ============ OddsAPI — extracción de consenso y top-3 ============ */
 function consensusAndTop3FromOddsapiEvent(oddsEvent){
-  // oddsEvent: { bookmakers: [{title, markets:[{key,outcomes:[{name,price,point?}] }]}], home_team, away_team, sport_key, ... }
   try {
     const offers = [];
     for (const bk of (oddsEvent?.bookmakers||[])) {
@@ -270,7 +263,6 @@ function consensusAndTop3FromOddsapiEvent(oddsEvent){
     }
     if (!offers.length) return null;
 
-    // agrupa por (market,label,point)
     const byKey = new Map();
     for (const o of offers) {
       const k = `${o.market}||${o.label}||${o.point ?? "-"}`.toLowerCase();
@@ -278,7 +270,6 @@ function consensusAndTop3FromOddsapiEvent(oddsEvent){
       byKey.get(k).push(o);
     }
 
-    // prioriza markets conocidos
     const order = ["h2h","totals","spreads"];
     const keys = Array.from(byKey.keys()).sort((a,b)=>{
       const ma = order.findIndex(m => a.startsWith(m));
@@ -289,12 +280,10 @@ function consensusAndTop3FromOddsapiEvent(oddsEvent){
     let best = null, consensus = null, top3 = null;
     for (const k of keys) {
       const arr = byKey.get(k);
-      // mediana
       const prices = arr.map(x=>x.price).sort((a,b)=>a-b);
       const mid = Math.floor(prices.length/2);
       const med = prices.length%2 ? prices[mid] : (prices[mid-1]+prices[mid])/2;
 
-      // top‑3 deduplicado por casa
       const seen = new Set();
       const uniq = arr.sort((a,b)=>b.price-a.price).filter(x => {
         const b = x.bookie.toLowerCase().trim();
@@ -306,7 +295,6 @@ function consensusAndTop3FromOddsapiEvent(oddsEvent){
       const candidate = uniq[0];
       if (!best || (candidate && candidate.price > best.price)) {
         best = candidate;
-        // Usa el primer arr para anclar market/label/point
         consensus = { market: arr[0].market, label: arr[0].label, price: med, point: arr[0].point ?? null };
         top3 = uniq.slice(0,3);
       }
@@ -314,7 +302,9 @@ function consensusAndTop3FromOddsapiEvent(oddsEvent){
     if (!best || !consensus) return null;
     const gap_pp = Math.max(0, (impliedProbPct(consensus.price)||0) - (impliedProbPct(best.price)||0));
     return { best, consensus, top3, gap_pp };
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 /* ============ IA ============ */
@@ -429,7 +419,31 @@ async function saveLivePick({ fixture_id, liga, pais, equipos, ev, probPct, nive
   return true;
 }
 
-/* ============ Core de evaluación (OddsAPI → AF) ============ */
+/* ============ API-FOOTBALL — fixtures en vivo (minuto, marcador, liga/país) ============ */
+async function afLiveFixtures(){
+  const url = `https://v3.football.api-sports.io/fixtures?live=all`;
+  const res = await fetch(url, { headers: { "x-apisports-key": API_FOOTBALL_KEY }});
+  if (!res.ok) { console.warn("[AF] fixtures live error:", res.status, await safeText(res)); return []; }
+  const data = await safeJson(res);
+  const arr = Array.isArray(data?.response) ? data.response : [];
+  return arr.map(x => {
+    const f = x.fixture||{}, l = x.league||{}, t = x.teams||{}, g = x.goals||{};
+    const minute = Number(f.status?.elapsed)||0;
+    return {
+      fixture_id: f.id,
+      league: l.name || "",
+      country: l.country || "",
+      teams: `${t.home?.name||"Local"} vs ${t.away?.name||"Visitante"}`,
+      home: t.home?.name || "Local",
+      away: t.away?.name || "Visitante",
+      minute,
+      phase: phaseFromMinute(minute),
+      score: `${g.home ?? 0} - ${g.away ?? 0}`
+    };
+  });
+}
+
+/* ============ Núcleo LIVE: evaluar evento OddsAPI con AF + IA ============ */
 async function evaluateOddsEvent(oddsEvent, afLiveIndex){
   // 1) Prefiltro (OddsAPI)
   const pref = consensusAndTop3FromOddsapiEvent(oddsEvent);
@@ -440,7 +454,7 @@ async function evaluateOddsEvent(oddsEvent, afLiveIndex){
 
   if ((pref.gap_pp||0) < Number(LIVE_PREFILTER_GAP_PP)) return;
 
-  // 2) Enriquecer con API‑FOOTBALL (match por nombres)
+  // 2) Enriquecer con API-FOOTBALL (match por nombres)
   const home = oddsEvent.home_team || "";
   const away = oddsEvent.away_team || "";
   const key = `${home}||${away}`.toLowerCase();
@@ -531,15 +545,64 @@ async function evaluateOddsEvent(oddsEvent, afLiveIndex){
     vigencia_text: isVIP ? payloadVIP.vigencia : "",
     isVIP
   });
+}
 
-  // (Opc) guarda sent.message_id en tu cola signals_live si vas a editar luego
+/* ============ Descubrimiento y evaluación por ciclo (ventana) ============ */
+async function oddsapiLiveEventsByKeys(sportKeys){
+  if (!ODDS_API_KEY) return [];
+  const out = [];
+  for (const raw of sportKeys) {
+    const key = normalizeSportKey(raw);
+
+    // Validación contra catálogo (evita 404; /sports es la fuente de verdad). :contentReference[oaicite:6]{index=6}
+    if (!isValidSportKey(key)) {
+      console.warn("[LIVE] sportKey inválida, skip:", raw, "→", key);
+      continue;
+    }
+    if (!isActiveSportKey(key)) {
+      console.log("[LIVE] sportKey inactiva (fuera de temporada), skip:", key);
+      continue;
+    }
+
+    // Prefiltro barato: si no hay eventos para este sport, no pidas odds
+    let evs = [];
+    try { evs = await fetchEvents(key); }
+    catch (err) {
+      if (err?.code === "UNKNOWN_SPORT") {
+        console.warn("[LIVE] events 404 (desconocido), skip:", key);
+        continue;
+      }
+      console.warn("[LIVE] events error:", key, err?.message||err);
+      continue;
+    }
+    if (!Array.isArray(evs) || evs.length === 0) {
+      console.info("[LIVE] sin eventos para", key, "→ skip odds");
+      continue;
+    }
+
+    // Odds featured una vez verificado que hay eventos
+    try {
+      const events = await fetchOddsFeatured(key, LIVE_REGIONS, LIVE_MARKETS);
+      if (Array.isArray(events)) out.push(...events);
+    } catch (err) {
+      if (err?.code === "UNKNOWN_SPORT") {
+        console.warn("[LIVE] odds 404 (desconocido), skip:", key);
+        continue;
+      }
+      console.warn("[LIVE] odds error:", key, err?.message||err);
+    }
+  }
+  return out;
 }
 
 /* ============ Ventana de ejecución (Netlify/Replit) ============ */
 async function runWindow(){
   const t0 = Date.now();
 
-  // 1) sport_keys a partir del pool de ligas objetivo
+  // 0) Cargar catálogo (para validación de sport keys)
+  await loadOddsSportsMap();
+
+  // 1) sport_keys a partir del pool de ligas objetivo (puedes extender si gustas)
   const sportKeys = Array.from(new Set(Object.values(LIGA_TO_SPORTKEY)));
 
   // 2) Index en vivo de AF para match de equipos → fixture (minuto/score/fase)
@@ -548,14 +611,14 @@ async function runWindow(){
   for (const fx of fixtures) {
     const key = `${(fx.home||"").toLowerCase()}||${(fx.away||"").toLowerCase()}`;
     afIndex.set(key, fx);
-  
+  }
+
   // 2b) Si no hay fixtures activos, saltar este tick para ahorrar cuota OddsAPI
   if (!fixtures.length) {
     console.info("[LIVE] sin fixtures activos → skip odds tick");
-    await sleep(Number(LIVE_POLL_MS)||25000);
+    await sleep(Number(LIVE_POLL_MS)||40000);
     return;
   }
-}
 
   while (Date.now() - t0 < Number(RUN_WINDOW_MS)) {
     // 3) Trae eventos LIVE desde OddsAPI (primario)
@@ -575,7 +638,7 @@ async function runWindow(){
       try { await evaluateOddsEvent(ev, afIndex); } catch (e) { console.error("[evaluateOddsEvent]", e?.message||e); }
     }
 
-    await sleep(Number(LIVE_POLL_MS)||25000);
+    await sleep(Number(LIVE_POLL_MS)||40000);
   }
 }
 
