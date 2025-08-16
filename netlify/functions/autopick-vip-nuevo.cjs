@@ -493,7 +493,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
       const url = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dateStr)}&league=${encodeURIComponent(afLeagueId)}`;
       const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
       if (res && res.ok) {
-        const data = await safeJson(res);
+        let data = await safeJson(res);
         const arr = Array.isArray(data?.response) ? data.response : [];
         const hN = norm(partido.home), aN = norm(partido.away);
         const match = arr.find(x => {
@@ -543,7 +543,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
       if (!extra) {
         return {};
       }
-      var data = { response: extra };
+      data = { response: extra };
     }
     const arr = data.response;
 
