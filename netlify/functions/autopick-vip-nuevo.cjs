@@ -627,37 +627,47 @@ function pickCompleto(p) {
 
 // =============== OpenAI (ChatCompletion) ===============
 async function pedirPickConModelo(modelo, prompt) {
-  const systemHint = "Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {\"no_pick\":true,\"motivo_no_pick\":\"sin señal\"}.";
-  const req = buildOpenAIPayload(modelo, prompt, 450, systemHint);
-  const t0 = Date.now();
-  const completion = await openai.chat.completions.create(req);
-  global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
-  const choice = completion?.choices?.[0];
-  const raw = choice?.message?.content || "";
-  const meta = {
-    model: modelo,
-    ms: Date.now() - t0,
-    finish_reason: choice?.finish_reason || completion?.choices?.[0]?.finish_reason || "n/d",
-    usage: completion?.usage || null
-  };
-  try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
-  let obj = extractFirstJsonBlock(raw);
-  if (!obj && raw) {
-    try { obj = await repairPickJSON(modelo, raw); }
-    catch(e){ console.warn("[REPAIR] fallo:", e?.message || e); }
-  }
-  // Retry corto si vacío o no parseable
-  if (!obj) {
-    const mini = `Devuelve SOLO este JSON si tienes cualquier duda o falta de datos:
-    {"analisis_gratuito":"s/d","analisis_vip":"s/d","apuesta":"","apuestas_extra":"","frase_motivacional":"s/d","probabilidad":0.0,"no_pick":true,"motivo_no_pick":"respuesta vacía o no parseable"}`;
-    const req2 = buildOpenAIPayload(modelo, mini, 120, systemHint);
-    const c2 = await openai.chat.completions.create(req2);
+  const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido...';
+  let tokens = 700; // subimos base para GPT-5
+  let intento = 0;
+
+  while (intento < 2) {
+    const req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
+    const t0 = Date.now();
+    const completion = await openai.chat.completions.create(req);
     global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
-    const raw2 = c2?.choices?.[0]?.message?.content || "";
-    obj = extractFirstJsonBlock(raw2);
+
+    const choice = completion?.choices?.[0];
+    const raw = choice?.message?.content || "";
+    const meta = {
+      model: modelo,
+      ms: Date.now() - t0,
+      finish_reason: choice?.finish_reason || completion?.choices?.[0]?.finish_reason || "n/d",
+      usage: completion?.usage || null
+    };
+    try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
+
+    // [PX-FIX] si cortó por longitud, subir margen y reintentar
+    if (meta.finish_reason === 'length') {
+      tokens += 300;         // abre más margen para que salga el JSON
+      intento++;
+      continue;
+    }
+
+    let obj = extractFirstJsonBlock(raw);
+    if (!obj && raw) {
+      try { obj = await repairPickJSON(modelo, raw); }
+      catch(e){ console.warn("[REPAIR] fallo:", e?.message || e); }
+    }
+    if (!obj) {
+      // si no hay JSON, probamos un “escape hatch” corto una vez
+      if (intento === 0) { tokens += 200; intento++; continue; }
+      return null;
+    }
+    return ensurePickShape(obj);
   }
-  if (!obj) return null;
-  return ensurePickShape(obj);
+
+  return null;
 }
 
 async function obtenerPickConFallback(prompt) {
@@ -1007,21 +1017,24 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
   if (systemMsg) messages.push({ role:'system', content: systemMsg });
   messages.push({ role:'user', content: prompt });
 
-  const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(model||''));  // [PX-FIX] detecta GPT-5*
+  const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(model||''));
 
   const payload = { model, messages };
 
   if (isG5) {
-    // [PX-FIX] Reglas GPT-5: sin temperature/top_p/penalties, y usar max_completion_tokens
-    payload.max_completion_tokens = maxTokens;    // :contentReference[oaicite:2]{index=2}
-    // (Opcional) si llegas a ver un 400 por top_p/penalties, NO los envíes.
+    // GPT-5 / reasoning: tokens y formato
+    payload.max_completion_tokens = Math.max(700, Number(maxTokens) || 700); // subir base
+    payload.response_format = { type: "json_object" };        // ← fuerza JSON
+    // Reducir gasto de reasoning tokens (evita length):
+    payload.reasoning = { effort: "low" };                    // o "minimal" si lo prefieres
+    // NO enviar temperature/top_p/penalties en GPT-5
   } else {
-    // Modelos "clásicos": se permiten estos controles
+    // Modelos clásicos
+    payload.max_tokens = maxTokens;
     payload.temperature = 0.15;
     payload.top_p = 1;
     payload.presence_penalty = 0;
     payload.frequency_penalty = 0;
-    payload.max_tokens = maxTokens;
   }
 
   return payload;
