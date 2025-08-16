@@ -266,8 +266,8 @@ exports.handler = async (event, context) => {
     const partidos = eventosUpcoming.map(normalizeOddsEvent).filter(Boolean);
     const inWindow = partidos.filter(p => {
       const mins = Math.round(p.minutosFaltantes);
-      const dbg = `DBG commence_time= ${p.commence_time} mins= ${mins}`;
-      console.log(dbg);
+      if (process.env.DEBUG === '1') {
+        console.log(`DBG commence_time= ${p.commence_time} mins= ${mins}`);}
       const principal = mins >= WINDOW_MAIN_MIN && mins <= WINDOW_MAIN_MAX;
       const fallback  = !principal && mins >= WINDOW_FB_MIN && mins <= WINDOW_FB_MAX;
       return principal || fallback;
@@ -422,11 +422,13 @@ async function enriquecerPartidoConAPIFootball(partido) {
     const afLeagueId = AF_LEAGUE_ID_BY_TITLE[sportTitle] || null;
     const dt = partido?.commence_time ? new Date(partido.commence_time) : null;
     const dateStr = dt && !isNaN(dt) ? dt.toISOString().slice(0,10) : new Date().toISOString().slice(0,10);
-
+    
     const norm = s => String(s||"").toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
-      .replace(/\b(fc|cf|sc|afc|c\.f\.|f\.c\.|club|deportivo)\b/g,"")
-      .replace(/[^a-z0-9]+/g," ").trim();
+  .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+  // quita prefijos comunes con y sin puntos: fc, f.c., cf, c.f., sc, s.c., afc, etc.
+  .replace(/\b(f\.?c\.?|c\.?f\.?|s\.?c\.?|afc|club|deportivo)\b/g,"")
+  .replace(/[^a-z0-9]+/g," ")
+  .trim();
 
     if (afLeagueId) {
       const url = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dateStr)}&league=${encodeURIComponent(afLeagueId)}`;
@@ -641,7 +643,7 @@ async function pedirPickConModelo(modelo, prompt) {
   }
 
   const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {"no_pick":true,"motivo_no_pick":"sin señal"}.';
-  let tokens = 750;
+  let tokens = 600;
 
   // 1er intento
   let req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
@@ -660,8 +662,9 @@ async function pedirPickConModelo(modelo, prompt) {
     try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
 
     if (meta.finish_reason === 'length') {
-      // Abre margen y reintenta una vez
-      tokens += 200;
+      // abre margen pero con tope
+      tokens = Math.min(tokens + 200, 800);
+
       req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
       if (req.response_format) delete req.response_format; // por si diera 400
       const c2 = await openai.chat.completions.create(req);
@@ -860,36 +863,38 @@ function seleccionarCuotaSegunApuesta(partido, apuestaStr) {
 function top3ForSelectedMarket(partido, apuestaStr) {
   try {
     const apuesta = normalizeStr(apuestaStr);
-    const odds = partido?.marketsOffers; if (!odds) return [];
+    const odds = partido?.marketsOffers; 
+    if (!odds) return [];
+
+    // Reconstruimos el "pick" tal y como se generó en seleccionarCuotaSegunApuesta
     const all = [
       ...(odds.h2h||[]).map(o => ({ ...o, key:'h2h', label:o.name })),
       ...(odds.totals_over||[]).map(o => ({ ...o, key:'total_over', label:`Más de ${o.point}` })),
       ...(odds.totals_under||[]).map(o => ({ ...o, key:'total_under', label:`Menos de ${o.point}` })),
-      ...(odds.spreads||[]).map(o => ({ ...o, key:'spread', label:o.name }))
+      ...(odds.spreads||[]).map(o => ({ ...o, key:'spread', label:o.name, }))
     ];
+
     const pick = all.find(o => normalizeStr(o.label) === apuesta);
     if (!pick) return [];
+
     let pool = [];
-    if (pick.key === 'h2h') pool = odds.h2h.slice();
-    else if (pick.key === 'total_over') pool = odds.totals_over.slice();
-    else if (pick.key === 'total_under') pool = odds.totals_under.slice();
-    else if (pick.key === 'spread') pool = odds.spreads.filter(x=>x.name===pick.name);
-    return pool.sort((a,b)=> b.price - a.price).slice(0,3);
-  } catch { return []; }
-}
+    if (pick.key === 'h2h') {
+      // misma selección (mismo nombre)
+      pool = (odds.h2h||[]).filter(x => normalizeStr(x.name) === normalizeStr(pick.label));
+    } else if (pick.key === 'total_over') {
+      // mismo "point" (misma línea de total)
+      pool = (odds.totals_over||[]).filter(x => Number(x.point) === Number(pick.point));
+    } else if (pick.key === 'total_under') {
+      pool = (odds.totals_under||[]).filter(x => Number(x.point) === Number(pick.point));
+    } else if (pick.key === 'spread') {
+      // mismo hándicap (misma etiqueta)
+      pool = (odds.spreads||[]).filter(x => normalizeStr(x.name) === normalizeStr(pick.label));
+    }
 
-function apuestaCoincideConOutcome(apuestaStr, outcomeStr, homeTeam, awayTeam) {
-  const a = normalizeStr(apuestaStr);
-  const o = normalizeStr(outcomeStr);
-  const home = normalizeStr(homeTeam || "");
-  const away = normalizeStr(awayTeam || "");
-
-  const esHome  = a.includes("1x2: local") || a.includes("local") || a.includes(home);
-  const esVisit = a.includes("1x2: visitante") || a.includes("visitante") || a.includes(away);
-  if (o.includes("draw") || o.includes("empate")) return a.includes("empate") || a.includes("draw");
-  if (esHome && (o.includes(away) || o.includes("away"))) return false;
-  if (esVisit && (o.includes(home) || o.includes("home"))) return false;
-  return true;
+    return (pool || []).slice().sort((a,b)=> Number(b.price) - Number(a.price)).slice(0,3);
+  } catch {
+    return [];
+  }
 }
 
 // =============== MENSAJES (formatos) ===============
@@ -1099,6 +1104,14 @@ function arrBest(arr) {
 
 // AF league mapping (if available)
 const AF_LEAGUE_ID_BY_TITLE = {
+  "England - Premier League": 39,
+  "Spain - La Liga": 140,
+  "Italy - Serie A": 135,
+  "Germany - Bundesliga": 78,
+  "France - Ligue 1": 61,
+  "UEFA - Champions League": 2
+  // Agrega aquí las que más uses (MLS, Liga MX, etc.) usando /leagues?search=
+};
   // (Mapping of sport_title to API-Football league IDs, if provided elsewhere)
 };
 const TAGLINE = "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.";
