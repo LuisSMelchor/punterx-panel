@@ -1,6 +1,7 @@
 // netlify/functions/autopick-vip-nuevo.cjs
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–60 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
+
 // [PX-FIX] Imports requeridos
 const OpenAI = require('openai');
 const { createClient } = require('@supabase/supabase-js');
@@ -297,6 +298,11 @@ exports.handler = async (event, context) => {
 
         // A) Enriquecimiento API-FOOTBALL (con backoff mínimo)
         const info = await enriquecerPartidoConAPIFootball(P) || {};
+        // [PX-FIX] Propagar país/liga detectados al objeto del partido para uso en FREE y logs
+        if (info && typeof info === 'object') {
+          if (info.pais) P.pais = info.pais;
+          if (info.liga) P.liga = info.liga;
+        }
 
         // B) Memoria relevante (máx 5 en client-side)
         const memoria = await obtenerMemoriaSimilar(P);
@@ -627,6 +633,13 @@ function pickCompleto(p) {
 
 // =============== OpenAI (ChatCompletion) ===============
 async function pedirPickConModelo(modelo, prompt) {
+  // [PX-FIX] Límite de llamadas por ciclo para evitar 429 y costos
+  global.__px_oai_calls = global.__px_oai_calls || 0;
+  if (global.__px_oai_calls >= MAX_OAI_CALLS_PER_CYCLE) {
+    console.warn('[OAI] Límite de llamadas alcanzado en este ciclo');
+    return ensurePickShape({ no_pick: true, motivo_no_pick: 'budget de IA agotado' });
+  }
+
   const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {"no_pick":true,"motivo_no_pick":"sin señal"}.';
   let tokens = 750;
 
@@ -717,7 +730,7 @@ function getPromptTemplateFromMD() {    // [PX-CHANGE]
   if (!md) return null;
 
   // Acepta “Pre-match”, “Pre-match” (guiones Unicode) y variantes
-  const rx = /^\s*(?:#+\s*)?1\)\s*Pre[\--– ]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
+  const rx = /^\s*(?:#+\s*)?1\)\s*Pre[\-– ]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
   const m = md.match(rx);
   if (!m) return null;
   return m[0].trim();
@@ -906,7 +919,7 @@ function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoE
 
   return [
     `🎯 PICK NIVEL: ${encabezadoNivel}`,
-    `🏆 ${infoExtra?.pais || 'N/D'} - ${partido.liga}`,
+    `🏆 ${infoExtra?.pais || partido?.pais || 'N/D'} - ${partido.liga}`,
     `⚔️ ${partido.home} vs ${partido.away}`,
     `⏱️ ${formatMinAprox(mins)}`,
     ``,
