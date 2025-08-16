@@ -396,3 +396,51 @@ Documentar cualquier cambio en prompts, variables o lógica también aquí.
 Evitar spam en LIVE: máx. 3 intervenciones/partido y cooldown activo.
 
 Continuar ampliando mapas de ligas (AF_LEAGUE_ID_BY_*) según cobertura necesaria.
+
+---
+
+## Cambios recientes (Agosto 2025)
+
+- **Integración de OddsAPI como fuente principal de partidos** cada 15 minutos, con validación cruzada en API-FOOTBALL.  
+- **Enriquecimiento de datos en IA**: se sumaron alineaciones, clima, árbitro, historial, forma y ausencias para el análisis GPT-5.  
+- **Clasificación de picks por EV**: se mantienen niveles (Ultra Élite, Élite Mundial, Avanzado, Competitivo, Informativo).  
+- **Canal gratuito activado con picks informativos (10–14% EV)** incluyendo análisis básico y frase motivacional de IA.  
+- **Top 3 casas de apuestas** ahora se muestran en los mensajes VIP, ordenadas por cuota.  
+- **Frase de responsabilidad** confirmada en picks gratuitos y VIP.  
+- **Apuestas extra** ampliadas: más de 2.5 goles, ambos anotan, doble oportunidad, goleador probable, marcador exacto, HT result y hándicap asiático.  
+- **Automatización en zona horaria America/Mexico_City**: detección de partidos que comienzan entre 45 y 55 minutos.  
+- **Live picks experimentales** iniciados en UK para fase de pruebas (archivo `autopick-live.cjs`).  
+- **Supabase**: sigue almacenando picks en `picks_historicos`, sin guardar picks con EV < 14% o datos incompletos.  
+- **Corrección en `package.json`**: se arregló un error de coma sobrante que impedía correr `npm ci`.  
+- **Manejo de errores**: se añadieron `try/catch` extra para prevenir que `data.find` rompa el flujo cuando API responde inesperadamente.  
+
+---
+
+## Notas de Errores y Soluciones Pendientes (Actualización 16 de agosto 2025)
+
+### Errores detectados en producción
+- **"Sin coincidencias en API-FOOTBALL"**: aparece en los logs cuando OddsAPI devuelve partidos que no logran empatarse con un fixture válido en API-FOOTBALL.  
+  - Impacto: se pierden posibles picks, incluso cuando hay cuotas disponibles.
+- **EJSONPARSE en `package.json`**: error por coma sobrante o malformación de JSON.  
+  - Impacto: bloqueó despliegue en GitHub Actions hasta ser corregido.
+- **Logs no resueltos**: todavía vemos errores genéricos como `data.find is not a function` en algunos puntos del script maestro.  
+  - Impacto: puede frenar ejecución de ciertos picks cuando la respuesta de API no tiene el formato esperado.
+
+### Soluciones implementadas (en espera de verificación)
+- Se reforzó el **match entre OddsAPI y API-FOOTBALL** usando normalización de nombres de equipos y fallback por `id` y `date`.  
+  - Estado: implementado, pendiente de comprobar si elimina todos los “Sin coincidencias”.
+- Se corrigió el **`package.json`** para que sea JSON válido.  
+  - Estado: corregido, pendiente de nueva corrida completa de `npm ci` en el pipeline.
+- Se agregó un **try/catch adicional en el flujo de partidos** para evitar que `data.find` rompa la ejecución.  
+  - Estado: implementado, falta validar en logs de Netlify.
+- Se mantuvo el **enfoque inicial en UK para live picks** (archivo `autopick-live.cjs`), como fase experimental antes de expandir regiones.  
+  - Estado: activo, esperando feedback de resultados en vivo.
+
+### Pendientes de validación
+- Confirmar que la normalización de equipos elimina por completo los errores de emparejamiento OddsAPI ↔ API-FOOTBALL.  
+- Verificar si los nuevos try/catch realmente capturan todos los casos donde `data.find` recibe datos inesperados.  
+- Testear en ambiente real que el `package.json` corregido despliega sin errores en GitHub Actions y Netlify.  
+- Ajustar configuración regional para LATAM en el live cuando se confirme el flujo en UK.
+
+---
+
