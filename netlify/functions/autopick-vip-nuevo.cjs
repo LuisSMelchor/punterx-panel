@@ -628,15 +628,14 @@ function pickCompleto(p) {
 // =============== OpenAI (ChatCompletion) ===============
 async function pedirPickConModelo(modelo, prompt) {
   const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido...';
-  let tokens = 700; // subimos base para GPT-5
-  let intento = 0;
+  let tokens = 650;
 
-  while (intento < 2) {
-    const req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
+  // 1er intento (con response_format si es GPT-5)
+  let req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
+  try {
     const t0 = Date.now();
     const completion = await openai.chat.completions.create(req);
     global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
-
     const choice = completion?.choices?.[0];
     const raw = choice?.message?.content || "";
     const meta = {
@@ -647,27 +646,43 @@ async function pedirPickConModelo(modelo, prompt) {
     };
     try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
 
-    // [PX-FIX] si cortó por longitud, subir margen y reintentar
     if (meta.finish_reason === 'length') {
-      tokens += 300;         // abre más margen para que salga el JSON
-      intento++;
-      continue;
+      // Abre margen y reintenta una vez
+      tokens += 300;
+      req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
+      // quitar response_format si existiera
+      if (req.response_format) delete req.response_format;
+      const c2 = await openai.chat.completions.create(req);
+      global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
+      const raw2 = c2?.choices?.[0]?.message?.content || "";
+      const obj2 = extractFirstJsonBlock(raw2) || await repairPickJSON(modelo, raw2);
+      return obj2 ? ensurePickShape(obj2) : null;
     }
 
-    let obj = extractFirstJsonBlock(raw);
-    if (!obj && raw) {
-      try { obj = await repairPickJSON(modelo, raw); }
-      catch(e){ console.warn("[REPAIR] fallo:", e?.message || e); }
+    const obj = extractFirstJsonBlock(raw) || await repairPickJSON(modelo, raw);
+    return obj ? ensurePickShape(obj) : null;
+
+  } catch (e) {
+    const msg = String(e?.message || '');
+    // Reintento ante 400 por parámetro no soportado (reasoning/response_format/etc.)
+    if (/unknown parameter|unsupported parameter|response_format/i.test(msg)) {
+      try {
+        // reconstruye sin response_format ni extras
+        const req2 = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
+        if (req2.response_format) delete req2.response_format;
+        const c2 = await openai.chat.completions.create(req2);
+        global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
+        const raw2 = c2?.choices?.[0]?.message?.content || "";
+        const obj2 = extractFirstJsonBlock(raw2) || await repairPickJSON(modelo, raw2);
+        return obj2 ? ensurePickShape(obj2) : null;
+      } catch (e2) {
+        console.error('[OAI][retry] fallo:', e2?.message || e2);
+        return null;
+      }
     }
-    if (!obj) {
-      // si no hay JSON, probamos un “escape hatch” corto una vez
-      if (intento === 0) { tokens += 200; intento++; continue; }
-      return null;
-    }
-    return ensurePickShape(obj);
+    console.error('[OAI] fallo:', msg);
+    return null;
   }
-
-  return null;
 }
 
 async function obtenerPickConFallback(prompt) {
@@ -1022,12 +1037,10 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
   const payload = { model, messages };
 
   if (isG5) {
-    // GPT-5 / reasoning: tokens y formato
-    payload.max_completion_tokens = Math.max(700, Number(maxTokens) || 700); // subir base
-    payload.response_format = { type: "json_object" };        // ← fuerza JSON
-    // Reducir gasto de reasoning tokens (evita length):
-    payload.reasoning = { effort: "low" };                    // o "minimal" si lo prefieres
-    // NO enviar temperature/top_p/penalties en GPT-5
+    // GPT-5: usa max_completion_tokens; NO mandar temperature/top_p/penalties ni 'reasoning'
+    payload.max_completion_tokens = Math.max(650, Number(maxTokens) || 650);
+    // Opcional: intenta JSON mode, pero se quitará si da 400 (ver retry abajo)
+    payload.response_format = { type: "json_object" };
   } else {
     // Modelos clásicos
     payload.max_tokens = maxTokens;
