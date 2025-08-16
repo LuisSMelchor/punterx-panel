@@ -347,6 +347,7 @@ exports.handler = async (event, context) => {
     return { statusCode: 200, body: JSON.stringify({ ok:false, error: e?.message || String(e) }) };
   } finally {
     global.__punterx_lock = false;
+        resumen.oai_calls = global.__px_oai_calls || 0;
     console.log('Resumen ciclo:', JSON.stringify(resumen));
     console.log(`Duration: ${(Date.now()-started).toFixed(2)} ms\tMemory Usage: ${Math.round(process.memoryUsage().rss/1e6)} MB`);
   }
@@ -527,7 +528,22 @@ async function enriquecerPartidoConAPIFootball(partido) {
     const data = await safeJson(res);
     if (!data?.response || data.response.length === 0) {
       console.warn(`[evt:${partido.id}] Sin coincidencias en API-Football`);
-      return {};
+      // Fallback adicional: intentar búsqueda por cada equipo (home/away)
+      const tryOne = async (q) => {
+        const u = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}`;
+        const r = await fetchWithRetry(u, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
+        if (!r?.ok) return null;
+        const j = await safeJson(r);
+        if (!j?.response || j.response.length === 0) return null;
+        return j.response;
+      };
+      const arrH = await tryOne(partido.home);
+      const arrA = !arrH ? await tryOne(partido.away) : null;
+      const extra = arrH || arrA;
+      if (!extra) {
+        return {};
+      }
+      var data = { response: extra };
     }
     const arr = data.response;
 
@@ -686,6 +702,7 @@ async function pedirPickConModelo(modelo, prompt) {
   const req = buildOpenAIPayload(modelo, prompt, 450, systemHint);
   const t0 = Date.now();
   const completion = await openai.chat.completions.create(req);
+  global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
   const choice = completion?.choices?.[0];
   const raw = choice?.message?.content || "";
   const meta = {
@@ -706,6 +723,7 @@ async function pedirPickConModelo(modelo, prompt) {
     {"analisis_gratuito":"s/d","analisis_vip":"s/d","apuesta":"","apuestas_extra":"","frase_motivacional":"s/d","probabilidad":0.0,"no_pick":true,"motivo_no_pick":"respuesta vacía o no parseable"}`;
     const req2 = buildOpenAIPayload(modelo, mini, 120, systemHint);
     const c2 = await openai.chat.completions.create(req2);
+    global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
     const raw2 = c2?.choices?.[0]?.message?.content || "";
     obj = extractFirstJsonBlock(raw2);
   }
