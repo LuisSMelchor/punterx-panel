@@ -1,6 +1,13 @@
 // netlify/functions/autopick-vip-nuevo.cjs
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–60 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
+// [PX-FIX] Imports requeridos
+const { createClient } = require('@supabase/supabase-js');
+const { OpenAI } = require('openai');
+const fs = require('fs');
+const path = require('path');
+// [PX-FIX] Fin imports requeridos
+
 const {
   SUPABASE_URL,
   SUPABASE_KEY,
@@ -160,6 +167,59 @@ function formatApuestasExtra(s) {               // [PX-CHANGE]
   return parts.map(x => (x.startsWith('-') ? x : `- ${x}`)).join('\n');
 }                                               // [PX-CHANGE]
 
+// [PX-FIX] Normalizador de evento OddsAPI v4 → shape interno
+function normalizeOddsEvent(ev) {
+  try {
+    const id = ev?.id || `${ev?.commence_time}-${ev?.home_team}-${ev?.away_team}`;
+    const home = ev?.home_team || ev?.teams?.home || ev?.home || '';
+    const away = ev?.away_team || ev?.teams?.away || ev?.away || '';
+    const sport_title = ev?.sport_title || ev?.league?.name || ev?.league || 'Fútbol';
+    const commence_time = ev?.commence_time;
+    const minutosFaltantes = minutesUntilISO(commence_time);
+
+    const bookmakers = Array.isArray(ev?.bookmakers) ? ev.bookmakers : [];
+    const h2h = [], totals_over = [], totals_under = [], spreads = [];
+
+    for (const bk of bookmakers) {
+      const bookie = bk?.key || bk?.title || bk?.name || 'bookie';
+      const markets = Array.isArray(bk?.markets) ? bk.markets : [];
+      for (const m of markets) {
+        const key = (m?.key || m?.market || '').toLowerCase();
+        const outcomes = Array.isArray(m?.outcomes) ? m.outcomes : [];
+        if (key === 'h2h') {
+          for (const o of outcomes) {
+            h2h.push({ bookie, name: String(o?.name||'').trim(), price: Number(o?.price) });
+          }
+        } else if (key === 'totals') {
+          const point = Number(m?.points ?? m?.point ?? m?.line ?? m?.total);
+          for (const o of outcomes) {
+            const nm = String(o?.name||'').toLowerCase();
+            if (nm.includes('over')) totals_over.push({ bookie, point, price: Number(o?.price) });
+            else if (nm.includes('under')) totals_under.push({ bookie, point, price: Number(o?.price) });
+          }
+        } else if (key === 'spreads') {
+          for (const o of outcomes) {
+            const pt = Number(o?.point);
+            const nm = o?.name || (Number.isFinite(pt) ? (pt>0?`+${pt}`:`${pt}`) : '');
+            spreads.push({ bookie, name: String(nm).trim(), price: Number(o?.price), point: pt });
+          }
+        }
+      }
+    }
+    const bestH2H = arrBest(h2h);
+    return {
+      id, home, away,
+      liga: sport_title, sport_title,
+      commence_time, minutosFaltantes,
+      marketsOffers: { h2h, totals_over, totals_under, spreads },
+      marketsBest: { h2h: bestH2H }
+    };
+  } catch (e) {
+    console.warn('normalizeOddsEvent error:', e?.message || e);
+    return null;
+  }
+}
+
 // =============== NETLIFY HANDLER ===============
 exports.handler = async (event, context) => {
   assertEnv();
@@ -270,6 +330,8 @@ exports.handler = async (event, context) => {
         // Probabilidad (no inventar) + coherencia con implícita
         const probPct = estimarlaProbabilidadPct(pick);
         if (probPct == null) { console.warn(traceId, '❌ Probabilidad ausente → descartando pick'); continue; }
+        // [PX-FIX] Validación estricta de rango
+        if (probPct < 5 || probPct > 85) { console.warn(traceId, '❌ Probabilidad fuera de rango [5–85] → descartando pick'); continue; }
         const imp = impliedProbPct(cuota);
         if (imp != null && Math.abs(probPct - imp) > 15) {
           console.warn(traceId, `❌ Probabilidad inconsistente (model=${probPct}%, implícita=${imp}%) → descartando`);
@@ -613,7 +675,7 @@ async function obtenerPickConFallback(prompt) {
 
 // =============== PROMPT ===============
 
-// [PX-CHANGE] Lee `prompts_punterx.md` y extrae la sección “1) Pre‑match”
+// [PX-CHANGE] Lee `prompts_punterx.md` y extrae la sección “1) Pre-match”
 function readFileIfExists(p) {          // [PX-CHANGE]
   try { return fs.readFileSync(p, 'utf8'); } catch(_) { return null; }
 }                                       // [PX-CHANGE]
@@ -631,8 +693,8 @@ function getPromptTemplateFromMD() {    // [PX-CHANGE]
   }
   if (!md) return null;
 
-  // Acepta “Pre-match”, “Pre‑match” (con guion Unicode) y variantes de espacios
-  const rx = /^\s*(?:#+\s*)?1\)\s*Pre[ \-‑]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
+  // Acepta “Pre-match”, “Pre-match” (con guion Unicode) y variantes de espacios
+  const rx = /^\s*(?:#+\s*)?1\)\s*Pre[ \--]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
   const m = md.match(rx);
   if (!m) return null;
   return m[0].trim();
@@ -756,6 +818,28 @@ function seleccionarCuotaSegunApuesta(partido, apuestaStr) {
   } catch {
     return null;
   }
+}
+
+// [PX-FIX] Top 3 bookies para el mercado/outcome seleccionado
+function top3ForSelectedMarket(partido, apuestaStr) {
+  try {
+    const apuesta = normalizeStr(apuestaStr);
+    const odds = partido?.marketsOffers; if (!odds) return [];
+    const all = [
+      ...(odds.h2h||[]).map(o => ({ ...o, key:'h2h', label:o.name })),
+      ...(odds.totals_over||[]).map(o => ({ ...o, key:'total_over', label:`Más de ${o.point}` })),
+      ...(odds.totals_under||[]).map(o => ({ ...o, key:'total_under', label:`Menos de ${o.point}` })),
+      ...(odds.spreads||[]).map(o => ({ ...o, key:'spread', label:o.name }))
+    ];
+    const pick = all.find(o => normalizeStr(o.label) === apuesta);
+    if (!pick) return [];
+    let pool = [];
+    if (pick.key === 'h2h') pool = odds.h2h.slice();
+    else if (pick.key === 'total_over') pool = odds.totals_over.slice();
+    else if (pick.key === 'total_under') pool = odds.totals_under.slice();
+    else if (pick.key === 'spread') pool = odds.spreads.filter(x=>x.name===pick.name);
+    return pool.sort((a,b)=> b.price - a.price).slice(0,3);
+  } catch { return []; }
 }
 
 function apuestaCoincideConOutcome(apuestaStr, outcomeStr, homeTeam, awayTeam) {
@@ -895,12 +979,21 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuota, tip
       entrada.top3_json = (Array.isArray(cuota?.top3) ? cuota.top3 : null);
       // No consenso en PRE ni OUT, solo LIVE
     }
-    const { error } = await supabase.from(PICK_TABLE).insert([ entrada ]);
-    if (error) {
-      console.error('Supabase insert error:', error.message);
-      resumen.guardados_fail++;
+
+    // [PX-FIX] Anti-duplicado por evento en PRE/OUT
+    const { data: dupRow, error: dupErr } = await supabase
+      .from(PICK_TABLE).select('id').eq('evento', evento).limit(1).maybeSingle();
+    if (dupErr) { console.warn('Supabase dup check error:', dupErr?.message); }
+    if (!dupRow) {
+      const { error } = await supabase.from(PICK_TABLE).insert([ entrada ]);
+      if (error) {
+        console.error('Supabase insert error:', error.message);
+        resumen.guardados_fail++;
+      } else {
+        resumen.guardados_ok++;
+      }
     } else {
-      resumen.guardados_ok++;
+      console.log('Pick duplicado, no guardado');
     }
   } catch (e) {
     console.error('Supabase insert exception:', e?.message || e);
