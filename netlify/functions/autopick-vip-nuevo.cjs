@@ -1007,23 +1007,20 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
   if (systemMsg) messages.push({ role:'system', content: systemMsg });
   messages.push({ role:'user', content: prompt });
 
-  const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(model||''));
+  const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(model||''));  // [PX-FIX] detecta GPT-5*
 
-  const payload = {
-    model,
-    messages,
-    // OJO: algunos GPT-5 pueden ignorar temperature/top_p; si ves errores,
-    // elimina estos campos para GPT-5.
-    temperature: 0.15,
-    top_p: 1,
-    presence_penalty: 0,
-    frequency_penalty: 0
-  };
+  const payload = { model, messages };
 
-  // [PX-FIX] GPT-5/5-mini exigen max_completion_tokens; otros modelos siguen con max_tokens
   if (isG5) {
-    payload.max_completion_tokens = maxTokens;
+    // [PX-FIX] Reglas GPT-5: sin temperature/top_p/penalties, y usar max_completion_tokens
+    payload.max_completion_tokens = maxTokens;    // :contentReference[oaicite:2]{index=2}
+    // (Opcional) si llegas a ver un 400 por top_p/penalties, NO los envíes.
   } else {
+    // Modelos "clásicos": se permiten estos controles
+    payload.temperature = 0.15;
+    payload.top_p = 1;
+    payload.presence_penalty = 0;
+    payload.frequency_penalty = 0;
     payload.max_tokens = maxTokens;
   }
 
@@ -1032,25 +1029,25 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
 
 // =============== JSON Repair (if needed) ===============
 async function repairPickJSON(model, rawText) {
-  const prompt = `El siguiente mensaje debería ser solo un JSON válido pero puede estar malformado:\n<<<\n${rawText}\n>>>\nReescríbelo corrigiendo llaves, comillas o comas para que sea un JSON válido con la misma información.`;
+  const prompt = `El siguiente mensaje debería ser solo un JSON válido pero puede estar malformado:\n<<<\n${rawText}\n>>>\nReescríbelo corrigiendo llaves, comas y comillas para que sea un JSON válido con la misma información.`;
 
-  // Si nos llamaron con un GPT-5, usamos gpt-5-mini como "fixer"; de todos modos también requiere max_completion_tokens
   const fixerModel = (String(model||'').toLowerCase().includes('gpt-5')) ? 'gpt-5-mini' : model;
   const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(fixerModel||''));
 
   const fixReq = {
     model: fixerModel,
-    messages: [{ role:'user', content: prompt }],
-    temperature: 0.2,
-    top_p: 1,
-    presence_penalty: 0,
-    frequency_penalty: 0
+    messages: [{ role:'user', content: prompt }]
   };
 
-  // [PX-FIX] tokens field por tipo de modelo
   if (isG5) {
-    fixReq.max_completion_tokens = 300;
+    // [PX-FIX] GPT-5 → sólo max_completion_tokens
+    fixReq.max_completion_tokens = 300;          // :contentReference[oaicite:4]{index=4}
+    // (sin temperature/top_p/penalties)
   } else {
+    fixReq.temperature = 0.2;
+    fixReq.top_p = 1;
+    fixReq.presence_penalty = 0;
+    fixReq.frequency_penalty = 0;
     fixReq.max_tokens = 300;
   }
 
