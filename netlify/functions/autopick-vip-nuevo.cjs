@@ -1006,32 +1006,54 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
   const messages = [];
   if (systemMsg) messages.push({ role:'system', content: systemMsg });
   messages.push({ role:'user', content: prompt });
-  const cfg = (model||'').toLowerCase().includes('gpt-5') ? 1.2 : 1.0;  // a bit more creative for GPT-5
-  return {
+
+  const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(model||''));
+
+  const payload = {
     model,
     messages,
+    // OJO: algunos GPT-5 pueden ignorar temperature/top_p; si ves errores,
+    // elimina estos campos para GPT-5.
     temperature: 0.15,
     top_p: 1,
-    max_tokens: maxTokens,
     presence_penalty: 0,
-    frequency_penalty: 0,
-    stop: null
+    frequency_penalty: 0
   };
+
+  // [PX-FIX] GPT-5/5-mini exigen max_completion_tokens; otros modelos siguen con max_tokens
+  if (isG5) {
+    payload.max_completion_tokens = maxTokens;
+  } else {
+    payload.max_tokens = maxTokens;
+  }
+
+  return payload;
 }
 
 // =============== JSON Repair (if needed) ===============
 async function repairPickJSON(model, rawText) {
-  // Intenta corregir texto malformado intentando parsear con GPT-3.5
   const prompt = `El siguiente mensaje debería ser solo un JSON válido pero puede estar malformado:\n<<<\n${rawText}\n>>>\nReescríbelo corrigiendo llaves, comillas o comas para que sea un JSON válido con la misma información.`;
+
+  // Si nos llamaron con un GPT-5, usamos gpt-5-mini como "fixer"; de todos modos también requiere max_completion_tokens
+  const fixerModel = (String(model||'').toLowerCase().includes('gpt-5')) ? 'gpt-5-mini' : model;
+  const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(fixerModel||''));
+
   const fixReq = {
-    model: (model||'').toLowerCase().includes('gpt-5') ? 'gpt-5-mini' : model,
+    model: fixerModel,
     messages: [{ role:'user', content: prompt }],
     temperature: 0.2,
     top_p: 1,
-    max_tokens: 300,
     presence_penalty: 0,
     frequency_penalty: 0
   };
+
+  // [PX-FIX] tokens field por tipo de modelo
+  if (isG5) {
+    fixReq.max_completion_tokens = 300;
+  } else {
+    fixReq.max_tokens = 300;
+  }
+
   const res = await openai.chat.completions.create(fixReq);
   const raw = res?.choices?.[0]?.message?.content || "";
   return extractFirstJsonBlock(raw);
