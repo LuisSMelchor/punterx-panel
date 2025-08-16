@@ -10,7 +10,7 @@
 
 [build.environment]
   NODE_VERSION = "20"
-  TZ = "America/Toronto" # Ajusta si prefieres MX: America/Mexico_City
+  TZ = "America/Mexico_City"
 
 # Defaults para TODAS las funciones
 [functions]
