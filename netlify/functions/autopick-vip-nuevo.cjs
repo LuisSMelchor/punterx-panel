@@ -64,6 +64,9 @@ const SOFT_BUDGET_MS = Number(process.env.SOFT_BUDGET_MS || 70000);
 const MAX_OAI_CALLS_PER_CYCLE = Number(process.env.MAX_OAI_CALLS_PER_CYCLE || 40);
 const COUNTRY_FLAG = process.env.COUNTRY_FLAG || '🇲🇽'; // [PX-CHANGE: Default flag changed to Mexico]
 
+const LOCK_TABLE = 'px_locks';
+const LOCK_KEY_FN = 'autopick_vip_nuevo';
+
 function assertEnv() {
   const required = [
     'SUPABASE_URL','SUPABASE_KEY','OPENAI_API_KEY','TELEGRAM_BOT_TOKEN',
@@ -112,6 +115,55 @@ async function registrarEjecucion(data) {
     console.warn('[DIAG] registrarEjecucion(ex):', e?.message || e);
   }
 }
+
+async function acquireDistributedLock(ttlSeconds = 120) {
+  try {
+    const now = Date.now();
+    const expiresAt = new Date(now + ttlSeconds * 1000).toISOString();
+
+    // 1) Intento de insert (si existe → 23505)
+    const { error: insErr } = await supabase
+      .from(LOCK_TABLE)
+      .insert([{ lock_key: LOCK_KEY_FN, expires_at: expiresAt }]);
+
+    if (!insErr) return true;
+
+    // 2) Si hay conflicto, consulta el lock actual
+    if (String(insErr.code) === '23505') {
+      const { data: row, error: selErr } = await supabase
+        .from(LOCK_TABLE)
+        .select('expires_at')
+        .eq('lock_key', LOCK_KEY_FN)
+        .maybeSingle();
+
+      if (selErr) return false;
+
+      const exp = Date.parse(row?.expires_at || 0);
+      if (!Number.isFinite(exp) || exp <= now) {
+        // 3) Si expiró, reemplaza (upsert)
+        const { error: upErr } = await supabase
+          .from(LOCK_TABLE)
+          .upsert({ lock_key: LOCK_KEY_FN, expires_at: expiresAt }, { onConflict: 'lock_key' });
+        return !upErr;
+      }
+      return false; // lock vigente por otro proceso
+    }
+
+    return false;
+  } catch (e) {
+    console.warn('[LOCK] acquire error:', e?.message || e);
+    return false;
+  }
+}
+
+async function releaseDistributedLock() {
+  try {
+    await supabase.from(LOCK_TABLE).delete().eq('lock_key', LOCK_KEY_FN);
+  } catch (e) {
+    console.warn('[LOCK] release error:', e?.message || e);
+  }
+}
+
 // === Fin helpers diagnóstico ===
 
 const MODEL = (process.env.OPENAI_MODEL || OPENAI_MODEL || 'gpt-5-mini');
@@ -271,6 +323,14 @@ exports.handler = async (event, context) => {
     return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true }) };
   }
   global.__punterx_lock = true;
+  
+  // Lock distribuido (evita solapamiento entre contenedores cuando Netlify reintenta)
+  const gotLock = await acquireDistributedLock(120);
+  if (!gotLock) {
+    console.warn('LOCK distribuido activo → salto ciclo');
+    return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'lock' }) };
+  }
+  
   const resumen = {
     recibidos: 0, enVentana: 0, candidatos: 0, procesados: 0, descartados_ev: 0,
     enviados_vip: 0, enviados_free: 0, intentos_vip: 0, intentos_free: 0,
@@ -514,6 +574,7 @@ console.log(
     console.error('❌ Excepción en ciclo principal:', e?.message || e);
     return { statusCode: 200, body: JSON.stringify({ ok: false, error: e?.message || 'exception' }) };
   } finally {
+    try { await releaseDistributedLock(); } catch(_) {}
     global.__punterx_lock = false;
     try { await upsertDiagnosticoEstado('idle', null); } catch(_) {}
     console.log(`🏁 Resumen ciclo: ${JSON.stringify(resumen)}`);
