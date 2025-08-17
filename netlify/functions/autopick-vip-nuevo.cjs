@@ -1,5 +1,5 @@
 // netlify/functions/autopick-vip-nuevo.cjs
-// PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–60 (fallback 35–70), backpressure,
+// PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–55 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
 
 // [PX-FIX] Imports requeridos
@@ -30,10 +30,17 @@ const {
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
 const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5';
-const WINDOW_MAIN_MIN = Number(process.env.WINDOW_MAIN_MIN || 40);
+
+// [PX-ADD] Flags de auditoría/estricto (inertes si no se configuran en ENV)
+const STRICT_MATCH = process.env.STRICT_MATCH === '1';  // exige match AF para seguir con IA/Telegram
+const DEBUG_TRACE  = process.env.DEBUG_TRACE === '1';   // trazas detalladas por evento
+
+// [PX-CHANGE] Ventanas por defecto corregidas: 45–55 (antes 40–55)
+const WINDOW_MAIN_MIN = Number(process.env.WINDOW_MAIN_MIN || 45);
 const WINDOW_MAIN_MAX = Number(process.env.WINDOW_MAIN_MAX || 55);
 const WINDOW_FB_MIN   = Number(process.env.WINDOW_FB_MIN   || 35);
 const WINDOW_FB_MAX   = Number(process.env.WINDOW_FB_MAX   || 70);
+
 const PREFILTER_MIN_BOOKIES = Number(process.env.PREFILTER_MIN_BOOKIES || 2);
 const MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY || 6);
 const MAX_PER_CYCLE = Number(process.env.MAX_PER_CYCLE || 50);
@@ -234,6 +241,10 @@ function normalizeOddsEvent(ev) {
 exports.handler = async (event, context) => {
   assertEnv();
 
+  // [PX-ADD] Heartbeat de ciclo (ayuda a auditar scheduler/UTC)
+  const CICLO_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
+  console.log(`▶️ CICLO ${CICLO_ID} start; now(UTC)= ${new Date().toISOString()}`);
+
   const started = Date.now();
   try { await upsertDiagnosticoEstado('running', null); } catch(_) {}
   console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
@@ -247,20 +258,25 @@ exports.handler = async (event, context) => {
   const resumen = {
     recibidos: 0, enVentana: 0, candidatos: 0, procesados: 0, descartados_ev: 0,
     enviados_vip: 0, enviados_free: 0, intentos_vip: 0, intentos_free: 0,
-    guardados_ok: 0, guardados_fail: 0, oai_calls: 0
+    guardados_ok: 0, guardados_fail: 0, oai_calls: 0,
+    principal: 0, fallback: 0, af_hits: 0, af_fails: 0
   };
 
   try {
     // 1) Obtener partidos OddsAPI (prefiltro cuotas activas + ventana)
     const base = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu,us,uk&oddsFormat=decimal&markets=h2h,totals,spreads`;
     const url = `${base}&apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
+    const tOdds = Date.now();
     const res = await fetchWithRetry(url, { method:'GET' }, { retries: 1, base: 400 });
+    const tOddsMs = Date.now() - tOdds;
     if (!res || !res.ok) {
       console.error('OddsAPI error:', res?.status, await safeText(res));
       return { statusCode: 200, body: JSON.stringify({ ok: false, reason:'oddsapi' }) };
     }
     const eventos = await safeJson(res) || [];
     resumen.recibidos = Array.isArray(eventos) ? eventos.length : 0;
+    console.log(`ODDSAPI ok=true count=${resumen.recibidos} ms=${tOddsMs}`);
+
     // Filtrar eventos ya iniciados (minutosFaltantes negativos)
     const eventosUpcoming = (eventos || []).filter(ev => {
        const t = Date.parse(ev.commence_time);
@@ -280,10 +296,26 @@ exports.handler = async (event, context) => {
       const fallback  = !principal && mins >= WINDOW_FB_MIN && mins <= WINDOW_FB_MAX;
       return principal || fallback;
     });
+
+    // Conteos por ventana y log claro (EN VENTANA vs RECIBIDOS)
+    const principalCount = inWindow.filter(p => {
+      const m = Math.round(p.minutosFaltantes);
+      return m >= WINDOW_MAIN_MIN && m <= WINDOW_MAIN_MAX;
+    }).length;
+    const fallbackCount = inWindow.filter(p => {
+      const m = Math.round(p.minutosFaltantes);
+      return !(m >= WINDOW_MAIN_MIN && m <= WINDOW_MAIN_MAX) && (m >= WINDOW_FB_MIN && m <= WINDOW_FB_MAX);
+    }).length;
+
     resumen.enVentana = inWindow.length;
-    console.log(`📊 Filtrado (OddsAPI): Principal=${inWindow.filter(p=>{
-      const m = Math.round(p.minutosFaltantes); return m>=WINDOW_MAIN_MIN && m<=WINDOW_MAIN_MAX;}).length} | Fallback=${inWindow.filter(p=>{
-      const m = Math.round(p.minutosFaltantes); return !(m>=WINDOW_MAIN_MIN && m<=WINDOW_MAIN_MAX) && m>=WINDOW_FB_MIN && m<=WINDOW_FB_MAX;}).length} | Total recibidos=${inWindow.length}`);
+    resumen.principal = principalCount;
+    resumen.fallback  = fallbackCount;
+
+    console.log(
+      `📊 Filtrado (OddsAPI): Principal=${principalCount} | Fallback=${fallbackCount}` +
+      ` | Total EN VENTANA=${inWindow.length} | Eventos RECIBIDOS=${resumen.recibidos}`
+    );
+
     if (!inWindow.length) {
       console.log('OddsAPI: sin partidos en ventana');
       return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
@@ -295,6 +327,9 @@ exports.handler = async (event, context) => {
     console.log(`OddsAPI: recibidos=${resumen.recibidos}, en_ventana=${resumen.enVentana} (${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX}m)`);
 
     // 4) Procesar candidatos con enriquecimiento + OpenAI
+    let afHits = 0, afFails = 0;
+    const tAF = Date.now();
+
     for (const P of candidatos) {
       const traceId = `[evt:${P.id}]`;
       const abortIfOverBudget = () => {
@@ -324,9 +359,31 @@ exports.handler = async (event, context) => {
         } catch (er) {
           console.warn(`[evt:${P.id}] ResolverTeams warning:`, er?.message || er);
         }
-        
+
         // A) Enriquecimiento API-FOOTBALL (con backoff mínimo)
         const info = await enriquecerPartidoConAPIFootball(P) || {};
+        // Auditoría de match AF (fixture_id presente o no)
+        if (info && info.fixture_id) {
+          afHits++;
+          if (DEBUG_TRACE) {
+            console.log('TRACE_MATCH', JSON.stringify({
+              ciclo: CICLO_ID, odds_event_id: P.id, fixture_id: info.fixture_id,
+              liga: info.liga || P.liga || null, pais: info.pais || P.pais || null
+            }));
+          }
+        } else {
+          afFails++;
+          if (DEBUG_TRACE) {
+            console.log('TRACE_MATCH', JSON.stringify({
+              ciclo: CICLO_ID, odds_event_id: P.id, _skip: 'af_no_match',
+              home: P.home, away: P.away, liga: P.liga || null
+            }));
+          }
+          if (STRICT_MATCH) {
+            console.log(traceId, 'STRICT_MATCH activo → sin AF.fixture_id, descartado antes de IA');
+            continue;
+          }
+        }
         // Propagar país/liga detectados al objeto del partido
         if (info && typeof info === 'object') {
           if (info.pais) P.pais = info.pais;
@@ -345,6 +402,7 @@ exports.handler = async (event, context) => {
           const r = await obtenerPickConFallback(prompt);
           pick = r.pick; modeloUsado = r.modeloUsado;
           console.log(traceId, '🔎 Modelo usado:', modeloUsado);
+          resumen.oai_calls = (global.__px_oai_calls || 0);
           if (esNoPick(pick)) { console.log(traceId, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d'); continue; }
           if (!pickCompleto(pick)) { console.warn(traceId, 'Pick incompleto tras fallback'); continue; }
         } catch (e) {
@@ -387,20 +445,30 @@ exports.handler = async (event, context) => {
           resumen.intentos_vip++;
           const msg = construirMensajeVIP(P, pick, probPct, ev, nivel, cuotaInfo, info);
           const ok = await enviarVIP(msg);
-          if (ok) { resumen.enviados_vip++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuotaInfo, "VIP"); }
-          console.log(ok ? traceId + ' ✅ Enviado VIP' : traceId + ' ⚠️ Falló envío VIP');
+          if (ok) {
+            resumen.enviados_vip++;
+            await guardarPickSupabase(P, pick, probPct, ev, nivel, cuotaInfo, "VIP");
+          }
+          const topBookie = (cuotaInfo.top3 && cuotaInfo.top3[0]?.bookie) ? `${cuotaInfo.top3[0].bookie}@${cuotaInfo.top3[0].price}` : `cuota=${cuotaSel.valor}`;
+          console.log(ok ? `${traceId} ✅ Enviado VIP | fixture=${info?.fixture_id || 'N/D'} | ${topBookie}` : `${traceId} ⚠️ Falló envío VIP`);
         } else {
           resumen.intentos_free++;
           const msg = construirMensajeFREE(P, pick, probPct, ev, nivel);
           const ok = await enviarFREE(msg);
-          if (ok) { resumen.enviados_free++; await guardarPickSupabase(P, pick, probPct, ev, nivel, null, "FREE"); }
-          console.log(ok ? traceId + ' ✅ Enviado FREE' : traceId + ' ⚠️ Falló envío FREE');
+          if (ok) {
+            resumen.enviados_free++;
+            await guardarPickSupabase(P, pick, probPct, ev, nivel, null, "FREE");
+          }
+          console.log(ok ? `${traceId} ✅ Enviado FREE | fixture=${info?.fixture_id || 'N/D'} | cuota=${cuotaSel.valor}` : `${traceId} ⚠️ Falló envío FREE`);
         }
 
       } catch (e) {
         console.error(traceId, 'Error en loop de procesamiento:', e?.message || e);
       }
     }
+
+    console.log(`AF enrich: hits=${afHits} fails=${afFails} ms=${Date.now()-tAF}`);
+    resumen.af_hits = afHits; resumen.af_fails = afFails;
 
     return { statusCode: 200, body: JSON.stringify({ ok: true, resumen }) };
 
@@ -1189,13 +1257,9 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
       entrada.minute_at_pick = partido.minute || null;
       entrada.phase = partido.phase || null;
       entrada.score_at_pick = partido.score || null;
-      entrada.market_point = (partido.pickPoint != null) ? String(party.pickPoint) : null; // NOTE: corrected below
+      // [PX-FIX] corregido: usar "partido" y no variable inexistente "party"
+      entrada.market_point = (partido.pickPoint != null) ? String(partido.pickPoint) : null;
       entrada.vigencia_text = partido.vigenciaText || null;
-    }
-
-    // Fix typo: party → partido for market_point value
-    if (tipo === 'LIVE') {
-      entrada.market_point = (partido.pickPoint != null) ? String(partido.pickPoint) : entrada.market_point;
     }
 
     const { data: dupRow, error: dupErr } = await supabase
