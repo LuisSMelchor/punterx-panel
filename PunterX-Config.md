@@ -1,399 +1,569 @@
-📄 PunterX — Configuración y Estado Actual (Actualizado)
+📄 PunterX — Configuración y Estado Actual (actualizado al 17-ago-2025)
 
-Fecha: 17 de agosto de 2025
-Estado: ✅ Deploy completado, logs instrumentados. ⏳ En espera de próximos ciclos para validar reducción total de “Sin coincidencias en API-FOOTBALL” y calidad de picks.
+Propósito: mantener continuidad total del proyecto y servir como fuente de verdad para arquitectura, flujos, ventanas, EV, niveles, APIs, crons, plantillas de Telegram, Supabase y memoria IA.
+Regla: cualquier cambio en código, variables o lógica debe reflejarse aquí y en prompts_punterx.md.
 
 0) Resumen ejecutivo
 
-PunterX es un sistema automatizado que detecta y publica picks de alto EV usando OddsAPI (cuotas), API-FOOTBALL PRO (datos de partido), OpenAI GPT-5 (análisis en JSON), Supabase (histórico/memoria) y Telegram (FREE/VIP).
-El sistema ahora incluye:
+Runtime: Netlify Functions · Node 20 · CommonJS (sin ESM ni top-level await).
 
-Match Resolver propio (OddsAPI ↔ API-FOOTBALL) con normalización avanzada y scoring (Jaccard + boosts) para emparejar equipos/liga/fecha sin depender solo de search=.
+Flujos:
+PRE-MATCH (principal 40–55 min; fallback 35–70 min), LIVE (in-play) y OUTRIGHTS.
+Orden PRE: OddsAPI → API-FOOTBALL → OpenAI → EV → Clasificación FREE/VIP → Telegram → Supabase → Memoria IA.
 
-Estrategia league_id+date como intento primario, con fallbacks robustos (search, teams, h2h ±2d).
+EV: EV% = (p · (o − 1) − (1 − p)) · 100.
+Cortes: FREE 10–14.9%, VIP ≥15% con subniveles: 🥉 15–19.9%, 🥈 20–29.9%, 🎯 30–39.9%, 🟣 ≥40%.
 
-Logs de trazabilidad en puntos críticos (ventana, resolver, enriquecimiento, OpenAI, guardado) para auditoría rápida.
+Validaciones IA: no_pick, probabilidad ∈ [5%, 85%], coherencia con probabilidad implícita ≤ 15 p.p., apuesta ∈ opciones válidas, Top-3 bookies correcto.
 
-Bandera y país en PRE y VIP, Top-3 ordenado (mejor en negritas), anti-duplicado LIVE por minute_bucket.
+Mensajería Telegram: formatos aprobados FREE y VIP, país antes de liga, mejor cuota en negritas.
 
-Presupuesto de IA por ciclo y retry ajustado cuando hay finish_reason: length.
+Supabase: tabla picks_historicos con anti-duplicado (evento en PRE; torneo en OUTRIGHTS; bucket 5’ en LIVE); no guardar EV < 10% o datos incompletos.
 
-1) Arquitectura (alto nivel)
+Diagnóstico y logs: instrumentación de ventana, contadores, soft budget, y meta de OpenAI (finish_reason/usage).
 
-Runtime: Netlify Functions (Node 20, CommonJS, esbuild)
+Cambios recientes claves:
 
-Fuentes:
+Ventana mantenida en 40–55 min (principal) por criterio operativo de alineaciones confirmadas; fallback 35–70.
 
-OddsAPI → cuotas pre/live (mercados h2h/totals/spreads)
+Bug LIVE corregido (party.pickPoint → partido.pickPoint).
 
-API-FOOTBALL PRO → fixtures, minuto/estado, marcador, árbitro, clima
+OpenAI: manejo de finish_reason="length" con reintento y ajuste de tokens; fallback de modelo.
 
-IA: OpenAI GPT-5 (primario) con GPT-5-mini (fallback) → JSON estructurado
+Resolver AF por liga+fecha + fallbacks (search, teams→IDs, h2h±2d) y normalizador avanzado.
 
-Persistencia: Supabase (picks_historicos + tablas de diagnóstico opcionales)
+Logs: métricas principal, fallback, af_hits, af_fails en resumen.
 
-Distribución: Telegram Bot API (FREE channel, VIP group)
+netlify.toml: unificación de bloques [functions] (evita error “Can’t redefine existing key”).
 
-Operación: Netlify Cron; loop local opcional para LIVE
+1) Arquitectura
+1.1 Componentes
 
-Coherencia: CommonJS sin top-level await; formatos y reglas de EV consistentes
+OddsAPI (v4): cuotas en tiempo real (mercados h2h, totals, spreads), regiones eu,us,uk, formato decimal.
 
-2) Archivos clave y módulos nuevos
+API-FOOTBALL PRO (v3): fixtures, árbitro, venue/ciudad, clima (si aplica), forma/h2h, lesiones (si se consulta).
 
-netlify/functions/autopick-vip-nuevo.cjs — PRE-match (ventana principal 40–55; fallback 35–70)
+OpenAI (GPT-5): análisis JSON por evento según plantilla en prompts_punterx.md (sección Pre-match).
 
-✅ NUEVO: Logs finos (ventanas, contadores, modelo IA, EV, guardado, errores Telegram).
+Supabase: picks_historicos, diagnostico_estado, diagnostico_ejecuciones.
 
-✅ NUEVO: Match Resolver previo al enriquecimiento con AF.
+Telegram: canal FREE y grupo VIP (enviar con parse_mode: HTML y disable_web_page_preview: true).
 
-✅ NUEVO: Enriquecimiento por league_id+date y fallbacks (search, teams + fixtures?h2h).
+Memoria IA: recuperación de últimos picks relevantes por liga/equipos para contexto del prompt.
 
-✅ NUEVO: País + bandera en mensajes; Top-3 con #1 en negritas.
+1.2 Repos y despliegue
 
-✅ NUEVO: Presupuesto de IA por ciclo y retry con max_completion_tokens adaptativo.
+Netlify: crons para PRE/OUTRIGHTS; Node 20; bundling con esbuild; included_files para _lib/** y prompts_punterx.md.
 
-netlify/functions/autopick-live.cjs — EN VIVO (in-play)
-OddsAPI-first (prefiltro valor), AF para minuto/fase/score, IA/EV/validaciones, FREE/VIP (VIP pin+edit), anti-duplicado por minute_bucket.
+Replit (opcional): soporte a LIVE si se usa flujo separado.
 
-netlify/functions/autopick-outrights.cjs — A futuro (teaser 6–8d; final 22–26h)
-League map y resolución por /leagues?id= con fallback a search.
+CommonJS en todo: require(...) y module.exports = { ... }.
 
-netlify/functions/send.js — helpers de envío a Telegram (PRE/LIVE/OUTRIGHT)
+2) Flujos
+2.1 PRE-MATCH
 
-Módulos nuevos en _lib/
+Ventanas:
 
-_lib/match-helper.js — Normalización de cadenas, Jaccard score con boosts, resolveTeamsAndLeague (umbral configurable con MATCH_RESOLVE_CONFIDENCE).
+Principal: 40–55 min antes del kickoff (criterio operativo: captar alineaciones confirmadas o inminentes).
 
-_lib/af-resolver.cjs — resolveFixtureFromList: elige fixture mejor puntuado desde una lista AF (usa nameScore, Boost temporal ±36–60h).
+Fallback: 35–70 min (solo si no cae en principal).
 
-prompts_punterx.md — prompts IA consolidados (sección 1) con placeholders ({{CONTEXT_JSON}}, {{OPCIONES_APOSTABLES_LIST}})
+Exclusión: eventos ya iniciados (mins < 0).
 
-PunterX-Config.md — este documento
+Pipeline:
 
-3) Flujo actualizado de PRE-match
+OddsAPI → filtra no iniciados y por ventana; normaliza evento.
 
-OddsAPI recupera eventos ⇒ se filtran ya iniciados ⇒ se valida ventana
+Resolver de nombres/ligas (normalizador, alias, match score).
 
-Principal: 40–55 min, Fallback: 35–70 min
+API-FOOTBALL (estrategia en cascada):
 
-Logs: DBG commence_time=... mins=... y totales por bucket
+fixtures?date=YYYY-MM-DD&league={id}&timezone=UTC (mapa AF_LEAGUE_ID_BY_TITLE),
 
-Match Resolver (nuevo)
+luego fixtures?league={id}&from=...&to=...,
 
-match-helper.resolveTeamsAndLeague({ home, away, sport_title })
+luego fixtures?search=HOME AWAY (y por equipo),
 
-Normalización (acentos, stopwords “fc/cf/sc/afc/club/deportivo/the/el/la/los/las/de/do/da/unam”…), Jaccard + boosts por igualdad e inclusión (p.ej. “pumas” ↔ “pumas unam”)
+y por último teams?search= → IDs → fixtures?h2h=th-ta&from&to.
 
-Aplica umbral MATCH_RESOLVE_CONFIDENCE (default sugerido: 0.75)
+Prompt (plantilla MD cacheada; CONTEXT_JSON + OPCIONES_APOSTABLES_LIST).
 
-Log: RESOLVE > home="Toluca"→"Deportivo Toluca" | away="Pumas"→"Pumas UNAM" | liga="N/D"→"Liga MX"
+OpenAI: un disparo + manejo de length (reintento con más tokens) + fallback de modelo.
 
-Enriquecimiento con API-FOOTBALL (mejorado)
+Validaciones (apuesta ∈ opciones, prob. ∈ [5,85], coherencia ≤ 15 p.p., mercado/label correcto).
 
-Intento 1: fixtures?date=YYYY-MM-DD&league={id} (vía AF_LEAGUE_ID_BY_TITLE)
+EV y clasificación FREE/VIP; formato Telegram y envío.
 
-Intento 2: fixtures?league={id}&from=YYYY-MM-DD&to=YYYY-MM-DD (±2d)
+Supabase: guardar si EV ≥ 10% y datos completos (anti-duplicado por evento).
 
-Intento 3: fixtures?search=HOME AWAY (y luego por cada equipo)
+Memoria: alimentar/consultar últimos picks relevantes.
 
-Intento 4: teams?search= → IDs → fixtures?h2h=homeId-awayId&from=...&to=... (±2d)
+Contadores de resumen: recibidos, enVentana, principal, fallback, candidatos, procesados, descartados_ev, enviados_vip, enviados_free, intentos_vip, intentos_free, guardados_ok, guardados_fail, oai_calls, af_hits, af_fails.
 
-Selección por score: nombres (home/away directo o swapped) + boost temporal (±36–60h)
+2.2 LIVE (in-play)
 
-Logs: “Resolver AF: asignado fixture_id=…”, “Puntaje bajo (…) para mejor candidato” y “Sin coincidencias …” con debug normalizado
+Prefiltro por mercados activos y min/max de juego (si aplica).
 
-Construcción de prompt con opciones apostables reales (Top mercados y mejor cuota por mercado)
+Bucket 5’ para anti-duplicado por fixture + bucket.
 
-OpenAI GPT-5 → JSON
+Mensajería con edición/pinned opcional (VIP).
 
-Solo JSON; si length, retry con max_completion_tokens ↑
+Guardado con campos LIVE (ver esquema).
 
-Presupuesto por ciclo: MAX_OAI_CALLS_PER_CYCLE
+2.3 OUTRIGHTS
 
-Validaciones: probabilidad ∈ [5%, 85%], coherencia con implícita ≤15 p.p.
+Mismo marco de validación y EV; anti-duplicado por torneo.
 
-EV y guardado
+Manejo de finish_reason="length" aún pendiente de endurecer (ver “Errores y fixes en curso”).
 
-EV ≥10% requerido
+3) Reglas de guardado
 
-FREE: 10–14.9%, VIP: ≥15%
+No guardar picks con EV < 10% o con datos incompletos.
 
-Guardar en Supabase (PRE/LIVE/OUTRIGHT), Top-3 en top3_json, país y liga, sin duplicar (clave evento)
+Anti-duplicado:
 
-Envío a Telegram
+PRE por evento (“HOME vs AWAY (LIGA)”),
 
-FREE y/o VIP (VIP con bandera, país y Top-3 #1 en negritas)
+OUTRIGHTS por torneo,
 
-4) Formatos de mensaje (consolidado)
-4.1 PRE — FREE
-📡 RADAR DE VALOR
-🏆 {bandera} {pais} - {liga}
-⚔️ {home} vs {away}
-⏱️ {inicio_relativo}
+LIVE por fixture_id + bucket 5’.
 
-{analisis_gratuito}
+Validar:
 
-⏳ Quedan menos de {mins} minutos para este encuentro.
+apuesta pertenece a opciones apostables mostradas,
 
-🔎 IA Avanzada, monitoreando el mercado global 24/7.
-⚠️ Este contenido es informativo. Apostar conlleva riesgo.
+probabilidad ∈ [5%, 85%],
 
-4.2 PRE — VIP
-🎯 PICK NIVEL: {emoji} {nivel}
-🏆 {bandera} {pais} - {liga}
-⚔️ {home} vs {away}
-⏱️ {inicio_relativo}
+|prob_modelo − prob_implícita| ≤ 15 p.p.,
 
-🧠 {analisis_vip}
+Top-3 bookies bien calculado y mejor cuota en negritas en el mensaje VIP.
 
-EV: {ev}% | Posibilidades de acierto: {prob}% | Momio: {momio_americano}
-💡 Apuesta sugerida: {apuesta}
-💰 Cuota usada: {cuota} {[@ point opcional]}
+Campos mínimos para guardar: evento, analisis, apuesta, tipo_pick (FREE|VIP|LIVE|OUTRIGHT), liga, equipos, ev, probabilidad, nivel, timestamp.
 
-📋 Apuestas extra:
-{apuestas_extra}
+Campos extra (si se tienen): pais, top3_json, y LIVE: is_live, kickoff_at, minute_at_pick, phase, score_at_pick, market_point, vigencia_text.
 
-🏆 Mejores 3 casas:
-<b>{bookie1 — cuota1}</b>
-{bookie2 — cuota2}
-{bookie3 — cuota3}
+4) Telegram — formatos
+4.1 FREE (canal)
 
-{datos_opcionales}
+Encabezado: 📡 RADAR DE VALOR
 
-🔎 {TAGLINE}
-⚠️ Este contenido es informativo. Apostar conlleva riesgo.
+Liga con país: 🏆 {🇲🇽/flag} {PAÍS} - {LIGA}
 
-4.3 LIVE — FREE y 4.4 LIVE — VIP
+Match: ⚔️ HOME vs AWAY
 
-(Se conservan como en la versión previa; incluyen minuto, marcador, fase, vigencia, snapshot, pin/edit en VIP).
+Tiempo: ⏱️ Comienza en X min aprox
 
-5) Validaciones y niveles
+Análisis breve IA + frase motivacional
 
-Reglas IA:
+CTA: “Únete al VIP…”
 
-apuesta ∈ opciones apostables vigentes
+Disclaimer: responsabilidad.
 
-probabilidad ∈ [5, 85]
+4.2 VIP (grupo)
 
-|prob(model) − prob(implícita)| ≤ 15 p.p.
+Encabezado con nivel: 🎯 PICK NIVEL: {🟣/🎯/🥈/🥉} {Nivel}
 
-Corte de EV: ≥10% (FREE 10–14.9, VIP ≥15)
+Liga con país; hora relativa
 
-Niveles VIP: 🟣 Ultra (≥40), 🎯 Élite (30–39.9), 🥈 Avanzado (20–29.9), 🥉 Competitivo (15–19.9)
+Análisis VIP
 
-6) Anti-duplicado LIVE
+EV y probabilidad + momio americano + cuota usada
 
-Clave: (fixture_id, minute_bucket) (bucket de 5 min) durante 90 min
+Apuesta sugerida + Apuestas extra (bullets)
 
-Nuevo campo minute_bucket en picks_historicos
+Top-3 bookies (mejor en negritas)
 
-Envío/edit controlado con cooldown LIVE_COOLDOWN_MIN
+Datos avanzados: clima/árbitro/estadio/ciudad
 
-7) Variables de entorno (nuevas y existentes)
+Tagline + Disclaimer
 
-Añadir/ajustar en Netlify → Site settings → Environment variables:
+5) Ventanas y tiempo
 
-# === Ventanas PRE ===
-WINDOW_MAIN_MIN=40
-WINDOW_MAIN_MAX=55
-WINDOW_FB_MIN=35
-WINDOW_FB_MAX=70
+Netlify corre en UTC. Todos los cálculos de tiempo usan ISO/UTC.
 
-# === IA / OpenAI ===
-OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-5
-OPENAI_MODEL_FALLBACK=gpt-5-mini
-MAX_OAI_CALLS_PER_CYCLE=40
-SOFT_BUDGET_MS=70000
+mins = round(commence_time − nowUTC) / 60.
 
-# === Resolver / Matching ===
-MATCH_RESOLVE_CONFIDENCE=0.75       # Umbral global del Match Helper (0–1)
-COUNTRY_FLAG=🇲🇽                    # Bandera por defecto si no se resuelve país
+Filtros exactos:
 
-# === OddsAPI ===
-ODDS_API_KEY=...
-# Pre:
-PREFILTER_MIN_BOOKIES=2
-# Live:
-LIVE_MIN_BOOKIES=3
-LIVE_POLL_MS=25000
-LIVE_COOLDOWN_MIN=8
-LIVE_MARKETS=h2h,totals,spreads
-LIVE_REGIONS=eu,uk,us
-LIVE_PREFILTER_GAP_PP=5
-RUN_WINDOW_MS=60000
+Principal: mins ∈ [40, 55]
 
-# === API-FOOTBALL ===
-API_FOOTBALL_KEY=...
+Fallback: mins ∈ [35, 70] y no principal.
 
-# === Supabase ===
-SUPABASE_URL=...
-SUPABASE_KEY=...
+Mensajes en display: Comienza en X min aprox.
 
-# === Telegram ===
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_CHANNEL_ID=...   # FREE
-TELEGRAM_GROUP_ID=...     # VIP
+Nota: Elegimos 40–55 min como principal para equilibrar confirmación de alineaciones y oportunidad de mercado. El fallback cubre desfasajes. Si en el futuro se ajusta a 45–60, actualizar aquí y en envs.
 
-8) netlify.toml (extracto)
-[functions]
-  node_bundler = "esbuild"
+6) Matching OddsAPI ↔ API-FOOTBALL
 
-[functions."autopick-vip-nuevo"]
-  included_files = ["prompts_punterx.md", "netlify/functions/send.js", "netlify/_lib/*"]
-  external_node_modules = ["@supabase/supabase-js", "openai"]
+Normalización fuerte (sin tildes; remueve “fc/cf/sc/afc/club/deportivo/the/los/las/el/la/de/do/da/unam”, espacios, etc.).
 
-[functions."autopick-live"]
-  timeout = 60
-  included_files = ["prompts_punterx.md", "netlify/functions/send.js", "netlify/_lib/*"]
-  external_node_modules = ["@supabase/supabase-js", "openai"]
+Resolver con match score (Jaccard + boosts por igualdad/inclusión).
 
+Estrategia de AF (cascada):
 
-(Ajusta crons/headers/redirects según tu setup.)
+league_id + date (mapeo AF_LEAGUE_ID_BY_TITLE)
 
-9) Supabase — SQL idempotente
--- Tabla base
-CREATE TABLE IF NOT EXISTS public.picks_historicos (
-  id               bigserial PRIMARY KEY,
-  evento           text,
-  analisis         text,
-  apuesta          text,
-  tipo_pick        text,               -- 'PRE' | 'LIVE' | 'OUTRIGHT'
-  liga             text,
-  equipos          text,
-  ev               numeric,
-  probabilidad     numeric,
-  nivel            text,
-  timestamp        timestamptz DEFAULT now(),
-  is_live          boolean DEFAULT false,
-  kickoff_at       timestamptz,
-  minute_at_pick   int,
-  phase            text,
-  score_at_pick    text,
-  market_point     text,
-  vigencia_text    text,
-  top3_json        jsonb,
-  consenso_json    jsonb,
-  pais             text
+league + window ±2d
+
+search=HOME AWAY y luego por cada equipo
+
+teams?search= → fixtures?h2h=th-ta&from&to (±2d)
+
+Log:
+
+RESOLVE > home="X"→"X’" | away="Y"→"Y’" | liga="N/D"→"Liga"
+
+Aviso si score bajo.
+
+7) OpenAI — prompts y robustez
+
+Plantilla: prompts_punterx.md (sección 1) Pre-match). Cacheada en memoria para el ciclo.
+
+Payload:
+
+Modelo primario: OPENAI_MODEL (por defecto gpt-5-mini).
+
+Fallback: OPENAI_MODEL_FALLBACK (por defecto gpt-5).
+
+Intento 1: max_completion_tokens ≈ 500–550.
+
+Si finish_reason === "length" ⇒ reintento elevando tokens (actual: 650, recomendado 680) y retirando response_format si el provider lo exige.
+
+Si sigue vacío ⇒ probar modelo fallback.
+
+Respuesta: solo JSON; si malformado ⇒ reparador JSON con mini-prompt.
+
+Límites por ciclo: MAX_OAI_CALLS_PER_CYCLE (actual 40).
+Budget temporal: SOFT_BUDGET_MS (70s) para cortar el ciclo si se prolonga.
+
+8) EV y niveles
+
+Probabilidad del modelo (probabilidad) validada y convertida a % si viene en [0–1].
+
+Prob. implícita: 100 / cuota (decimal).
+
+Coherencia: |prob_modelo − prob_implícita| ≤ 15 p.p.
+
+EV% = (p · (o − 1) − (1 − p)) · 100 (dos decimales).
+
+Clasificación:
+
+🟣 Ultra Élite ≥ 40
+
+🎯 Élite Mundial 30–39.9
+
+🥈 Avanzado 20–29.9
+
+🥉 Competitivo 15–19.9
+
+Informativo < 15 (no se envía VIP)
+
+9) Supabase — tablas y anti-duplicado
+9.1 picks_historicos (campos clave)
+
+id (pk), evento, analisis, apuesta, tipo_pick (FREE|VIP|LIVE|OUTRIGHT),
+
+liga, pais (opcional), equipos,
+
+ev (num), probabilidad (num), nivel (texto),
+
+timestamp (ISO),
+
+top3_json (jsonb opcional),
+
+LIVE extra: is_live (bool), kickoff_at (ISO), minute_at_pick (num), phase (text), score_at_pick (text), market_point (text), vigencia_text (text).
+
+Reglas:
+
+Anti-duplicado PRE por evento.
+
+Anti-duplicado OUTRIGHTS por torneo (si aplica).
+
+Anti-duplicado LIVE por fixture_id + bucket 5’.
+
+No insertar si EV < 10 o faltan campos obligatorios.
+
+Bug corregido: en LIVE party.pickPoint → partido.pickPoint.
+
+10) Logs y diagnóstico
+
+Inicio de ciclo: id corto + now(UTC)=....
+
+Config de ventana: “40–55 | 35–70”.
+
+OddsAPI: ok=true count=N ms=T.
+
+Filtrado: “Filtrados X eventos ya comenzados (omitidos)”.
+
+DBG por evento: commence_time= ... mins= ....
+
+Filtrado ventana: Principal=K | Fallback=M | Total EN VENTANA=V | Eventos RECIBIDOS=R.
+
+Resumen ciclo:
+JSON con recibidos, enVentana, principal, fallback, candidatos, procesados, descartados_ev, enviados_vip, enviados_free, intentos_vip, intentos_free, guardados_ok, guardados_fail, oai_calls, af_hits, af_fails.
+
+OpenAI meta: { model, ms, finish_reason, usage }.
+
+Soft budget: corta el bucle si excede SOFT_BUDGET_MS.
+
+11) Configuración (envs)
+
+Obligatorias:
+
+SUPABASE_URL, SUPABASE_KEY
+
+OPENAI_API_KEY, OPENAI_MODEL, OPENAI_MODEL_FALLBACK
+
+ODDS_API_KEY, API_FOOTBALL_KEY
+
+TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, TELEGRAM_GROUP_ID
+
+Operativas:
+
+WINDOW_MAIN_MIN (40), WINDOW_MAIN_MAX (55)
+
+WINDOW_FB_MIN (35), WINDOW_FB_MAX (70)
+
+PREFILTER_MIN_BOOKIES (2)
+
+MAX_CONCURRENCY (6) (no forzamos concurrencia alta en Netlify)
+
+MAX_PER_CYCLE (50)
+
+SOFT_BUDGET_MS (70000)
+
+MAX_OAI_CALLS_PER_CYCLE (40)
+
+COUNTRY_FLAG (por defecto 🇲🇽)
+
+12) netlify.toml
+
+Bloques únicos para evitar el error “Can’t redefine existing key at [functions]”.
+
+node_bundler = "esbuild"; incluir _lib/** y prompts_punterx.md en included_files.
+
+Crons cada 15 minutos (o el ritmo configurado) para PRE/OUTRIGHTS.
+
+Timeouts definidos acorde a tiempo de llamadas a APIs y OpenAI.
+
+Estado: consolidado a un solo [functions] y un solo [functions."*"]. Validado que compile.
+
+13) Archivos clave
+
+netlify/functions/autopick-vip-nuevo.cjs (PRE)
+
+netlify/functions/autopick-outrights.cjs (Outrights)
+
+netlify/functions/autopick-live.cjs (Live)
+
+netlify/functions/send.js (plantillas Telegram — hoy embebidas en PRE)
+
+_lib/af-resolver.cjs (resolver fixture)
+
+_lib/match-helper.cjs (exporta resolveTeamsAndLeague)
+
+_supabase-client.cjs (si se usa)
+
+_diag-core-*.cjs (si existen)
+
+diagnostico-total.js, memoria-inteligente.js, verificador-aciertos.js, analisis-semanal.js, check-status.js
+
+prompts_punterx.md, PunterX-Config.md, netlify.toml, package.json, telegram_formatos.md, picks_historicos_schema.sql, secrets.env.example
+
+14) Cambios recientes en código (resumen)
+
+autopick-vip-nuevo.cjs
+
+Ventana 40–55 (principal) y 35–70 (fallback) mantenida; logs separados principal/fallback.
+
+Resolver previo a AF; AF en cascada (league+date → window±2d → search → teams→h2h).
+
+OpenAI con reintento por length y fallback de modelo; reparador JSON.
+
+LIVE bug corregido (market_point ahora usa partido.pickPoint).
+
+Resumen con af_hits/af_fails y oai_calls.
+
+Tagline y flag configurables, momio americano derivado de decimal.
+
+netlify.toml
+
+Unificación de [functions]; included_files completos; sin duplicados.
+
+prompts_punterx.md
+
+Se usa sección 1) Pre-match. Render con {{CONTEXT_JSON}} y {{OPCIONES_APOSTABLES_LIST}}.
+
+Cache en memoria por ciclo.
+
+15) Errores y fixes en curso
+
+matchHelper.resolveTeamsAndLeague is not a function
+Causa: exportación no coincide con el require.
+Fix: garantizar en _lib/match-helper.cjs:
+
+function resolveTeamsAndLeague(args) { /* ... */ }
+module.exports = { resolveTeamsAndLeague };
+
+
+y en el import usar const { resolveTeamsAndLeague } = require('./_lib/match-helper.cjs');
+Estado: en proceso de verificación en logs.
+
+OpenAI finish_reason="length" en PRE (se ve en logs)
+Fix aplicado: reintento +150 tokens (actual 650) y retiro de response_format si falla.
+Mejora sugerida: elevar techo a 680 en reintento para reducir truncados observados; mantener MAX_OAI_CALLS_PER_CYCLE=40 y SOFT_BUDGET_MS=70s para no disparar costos.
+Estado: ajuste recomendado pendiente de commit si se aprueba.
+
+Outrights/Live sin endurecimiento completo de length
+Fix sugerido: portar el mismo patrón de PRE a autopick-outrights.cjs y autopick-live.cjs.
+Estado: pendiente después de validar PRE estable.
+
+Concurrencia / locks
+Riesgo: múltiples invocaciones simultáneas en ventanas muy pobladas.
+Mitigación actual: lock in-memory por invocación (global.__punterx_lock).
+Mejora sugerida: lock en Supabase con TTL corto (fila locks con expires_at) para impedir solapes entre lambdas independientes.
+
+16) Checklist de conformidad
+
+Ventanas PRE 40–55 / 35–70: Sí
+
+Excluir eventos iniciados (mins < 0): Sí
+
+Matching AF con normalización + cascada: Sí
+
+OpenAI una llamada + reintento por length + fallback: Sí (mejorar techo a 680)
+
+Parser/repair JSON, no_pick, prob. ∈ [5–85], coherencia ≤ 15 p.p.: Sí
+
+EV y niveles VIP: Sí
+
+Telegram FREE/VIP con país, top-3 y mejor cuota en negritas: Sí
+
+Supabase guardado, anti-duplicado, LIVE campos extra: Sí
+
+Logs/diagnóstico, contadores y meta OAI: Sí
+
+CommonJS (sin ESM; sin top-level await): Sí
+
+netlify.toml sin duplicados [functions]: Sí
+
+package.json scripts CJS: Sí
+
+Envs completas y documentadas: Sí
+
+17) Operación y pruebas
+17.1 Casos estáticos A–E (UTC)
+
+now = 2025-08-16T11:45:00Z
+
+A: kick=12:25 → mins=40 ✓ principal
+
+B: kick=12:40 → mins=55 ✓ principal
+
+C: kick=12:20 → mins=35 ✓ fallback
+
+D: kick=12:55 → mins=70 ✓ fallback
+
+E: kick=11:30 → mins=-15 ✗ excluido
+
+17.2 Métricas objetivo
+
+Respuestas OAI truncadas: <5% tras elevar reintento a 680 tokens.
+
+“Sin coincidencias AF”: ↓ ≥80% con resolver + cascada AF.
+
+Eventos PRE fuera de ventana: <1% (logs de control).
+
+18) Variables y secretos — secrets.env.example (ejemplo)
+# Claves
+SUPABASE_URL=""
+SUPABASE_KEY=""
+OPENAI_API_KEY=""
+ODDS_API_KEY=""
+API_FOOTBALL_KEY=""
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_CHANNEL_ID=""
+TELEGRAM_GROUP_ID=""
+
+# Modelos
+OPENAI_MODEL="gpt-5-mini"
+OPENAI_MODEL_FALLBACK="gpt-5"
+
+# Ventanas
+WINDOW_MAIN_MIN="40"
+WINDOW_MAIN_MAX="55"
+WINDOW_FB_MIN="35"
+WINDOW_FB_MAX="70"
+
+# Operativas
+PREFILTER_MIN_BOOKIES="2"
+MAX_CONCURRENCY="6"
+MAX_PER_CYCLE="50"
+SOFT_BUDGET_MS="70000"
+MAX_OAI_CALLS_PER_CYCLE="40"
+COUNTRY_FLAG="🇲🇽"
+
+19) Consideraciones de “corazonada” (futuro)
+
+No operativo aún. Idea: índice heurístico (Heuristic Confidence Index) con señales blandas (momentum de cuotas, patrones históricos cortos, dispersión de bookies, late line moves).
+
+Integración propuesta: sumar +1/+2 puntos al score preliminar de candidatos; nunca sobrepasar validaciones IA/EV.
+
+Medición: A/B por ventana temporal, comparar lift de EV y tasa de acierto; registrar hci_score en Supabase.
+
+Requisito: no alterar guardrails (5–85%, ≤15 p.p., EV ≥ 10%).
+
+20) Procedimiento de despliegue (resumen)
+
+Actualiza .env/variables en Netlify.
+
+Verifica netlify.toml (bloques únicos; included_files).
+
+npm ci local; netlify deploy --build (o pipeline CI).
+
+Revisa logs:
+
+inicio de ciclo, ventana, filtrados, contadores, meta OAI, resumen.
+
+si aparecen length frecuentes ⇒ subir techo de reintento a 680.
+
+si aparece resolveTeamsAndLeague is not a function ⇒ corregir export en _lib/match-helper.cjs.
+
+21) Apéndice SQL (idempotente)
+-- picks_historicos (campos clave y LIVE extra)
+create table if not exists picks_historicos (
+  id bigserial primary key,
+  evento text not null,
+  analisis text not null,
+  apuesta text not null,
+  tipo_pick text not null check (tipo_pick in ('FREE','VIP','LIVE','OUTRIGHT')),
+  liga text,
+  pais text,
+  equipos text,
+  ev numeric,
+  probabilidad numeric,
+  nivel text,
+  timestamp timestamptz default now(),
+  top3_json jsonb,
+  -- LIVE
+  is_live boolean default false,
+  kickoff_at timestamptz,
+  minute_at_pick int,
+  phase text,
+  score_at_pick text,
+  market_point text,
+  vigencia_text text
 );
 
--- Campos nuevos/compatibilidad
-ALTER TABLE public.picks_historicos
-  ADD COLUMN IF NOT EXISTS minute_bucket int;
+-- índices útiles
+create index if not exists idx_picks_evento on picks_historicos (evento);
+create index if not exists idx_picks_tipo_timestamp on picks_historicos (tipo_pick, timestamp desc);
+create index if not exists idx_picks_is_live on picks_historicos (is_live);
 
--- Normalizaciones
-UPDATE public.picks_historicos
-SET is_live = COALESCE(is_live, false)
-WHERE is_live IS DISTINCT FROM false;
+22) Fuente de verdad
 
--- Índices
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_picks_tipo') THEN
-    CREATE INDEX idx_picks_tipo ON public.picks_historicos (tipo_pick);
-  END IF;
+Este documento y prompts_punterx.md son la referencia obligatoria para cualquier ajuste.
 
-  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_picks_evento') THEN
-    CREATE INDEX idx_picks_evento ON public.picks_historicos (evento);
-  END IF;
+Si código y docs divergen, actualiza ambos inmediatamente y registra el cambio aquí.
 
-  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_picks_timestamp') THEN
-    CREATE INDEX idx_picks_timestamp ON public.picks_historicos (timestamp DESC);
-  END IF;
-
-  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_picks_is_live') THEN
-    CREATE INDEX idx_picks_is_live ON public.picks_historicos (is_live);
-  END IF;
-
-  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_picks_minute_bucket') THEN
-    CREATE INDEX idx_picks_minute_bucket ON public.picks_historicos (minute_bucket);
-  END IF;
-END $$;
-
-10) package.json (scripts útiles)
-{
-  "scripts": {
-    "pre": "node netlify/functions/autopick-vip-nuevo.cjs",
-    "out": "node netlify/functions/autopick-outrights.cjs",
-    "live": "node netlify/functions/autopick-live.cjs --loop"
-  }
-}
-
-
-Nota: En monorepo, asegura working-directory correcto en CI y un único objeto JSON raíz válido.
-
-11) Observabilidad y puntos de log añadidos
-
-Ventanas / filtrado:
-Filtrados X eventos ya comenzados (omitidos)
-DBG commence_time=… mins=…
-📊 Filtrado (OddsAPI): Principal=… | Fallback=… | Total recibidos=…
-
-Match Resolver / AF:
-RESOLVE > home="…"→"…" | away="…"→"…" | liga="…"→"…"
-Resolver AF: asignado fixture_id=… league="…"
-Puntaje bajo (…) para mejor candidato ( … )
-Sin coincidencias en API-Football (search="…", homeN="…", awayN="…")
-
-OpenAI:
-[OAI] meta= {"model":"…","ms":…,"finish_reason":"…","usage":{…}}
-♻️ Fallback de modelo → gpt-5-mini
-🔎 Modelo usado: …
-🛑 no_pick=true → …
-
-EV / guardado / envíos:
-EV XX% < 10% → descartado
-✅ Enviado VIP | ⚠️ Falló envío VIP
-✅ Enviado FREE | ⚠️ Falló envío FREE
-Pick duplicado, no guardado
-🏁 Resumen ciclo: {...} y Duration: … ms | Memory Usage: … MB
-
-12) Checklist de QA
-
- Ventanas PRE cumplen 40–55 (principal) / 35–70 (fallback)
-
- Resolver de equipos/liga activo y con MATCH_RESOLVE_CONFIDENCE aplicado
-
- Enriquecimiento AF via league_id+date y fallbacks funcionando
-
- Mensajes PRE/VIP con bandera/país y Top-3 correcto (#1 en negritas)
-
- Presupuesto IA respeta MAX_OAI_CALLS_PER_CYCLE; retry ante length
-
- Supabase guarda PRE/LIVE/OUTRIGHT con top3_json, pais y minute_bucket (LIVE)
-
- Anti-duplicado LIVE por bucket 5’ sin bloquear el fixture completo
-
- Telegram FREE/VIP OK; VIP con pin/edit en LIVE
-
-13) Cambios recientes (agosto 2025)
-
-Match Resolver (OddsAPI ↔ AF) con normalización, Jaccard y boosts; umbral MATCH_RESOLVE_CONFIDENCE.
-
-AF por league_id+date como camino primario; fallbacks: search, teams+fixtures?h2h.
-
-Logs de trazabilidad en PRE (ventanas, resolver, AF, IA, EV, guardado).
-
-OpenAI: retry solo si length, max_completion_tokens adaptativo, límite por ciclo.
-
-Bandera/país en mensajes; Top-3 reorganizado (#1 en negritas); frases de responsabilidad.
-
-Supabase: minute_bucket para anti-duplicado LIVE + índices extra.
-
-Outrights: mapas de liga por sportkey y resolución precisa por /leagues?id=.
-
-14) Notas finales y próximos pasos
-
-Estamos a la espera de los próximos logs para confirmar la caída sustancial de “Sin coincidencias en API-FOOTBALL” y la estabilidad del flujo completo.
-
-Si persiste algún “no match”, ampliar stopwords del normalizador y/o el mapa AF_LEAGUE_ID_BY_TITLE.
-
-Mantener cortes de EV y restricciones de probabilidad/implícita.
-
-Evitar spam LIVE: máx. 3 ediciones por partido, con LIVE_COOLDOWN_MIN activo.
-
-Documentar cualquier ajuste en prompts o variables aquí mismo.
-
-TAGLINE
-
-🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.
+Fin de PunterX-Config ✅
