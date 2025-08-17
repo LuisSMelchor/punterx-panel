@@ -153,6 +153,11 @@
   ]
   timeout = 60
 
+[functions]
+# El bundler debe empacar la carpeta _lib con los helpers usados por las funciones
+included_files = ["netlify/functions/_lib/**"]
+# (Si ya tienes 'timeout' u otras opciones aquí, déjalas; esta línea solo añade los helpers)
+
 # ----------------
 # Redirects útiles
 # ----------------
