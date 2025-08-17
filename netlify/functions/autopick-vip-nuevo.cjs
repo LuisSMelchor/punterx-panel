@@ -2,18 +2,13 @@
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–55 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
 
-// [PX-FIX] Imports requeridos
 const OpenAI = require('openai');
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
-// debajo de otros requires en autopick-vip-nuevo.cjs
 const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
 
-// [PX-FIX] Fin imports requeridos
-
-// [PX-ADD] Resolver de equipos/liga (coincidencias OddsAPI ↔ API-FOOTBALL)
-// Carga segura: soporta export default y export nombrado
+// Resolver de equipos/liga (coincidencias OddsAPI ↔ API-FOOTBALL) — carga segura
 let resolveTeamsAndLeague = null;
 try {
   const mh = require('./_lib/match-helper.cjs');
@@ -43,11 +38,11 @@ const {
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
 const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5';
 
-// [PX-ADD] Flags de auditoría/estricto (inertes si no se configuran en ENV)
+// Flags de auditoría/estricto (inertes si no se configuran en ENV)
 const STRICT_MATCH = process.env.STRICT_MATCH === '1';  // exige match AF para seguir con IA/Telegram
 const DEBUG_TRACE  = process.env.DEBUG_TRACE === '1';   // trazas detalladas por evento
 
-// [PX-CHANGE] Ventanas por defecto corregidas: 45–55 (antes 40–55)
+// Ventanas por defecto: 45–55 (principal) y 35–70 (fallback)
 const WINDOW_MAIN_MIN = Number(process.env.WINDOW_MAIN_MIN || 45);
 const WINDOW_MAIN_MAX = Number(process.env.WINDOW_MAIN_MAX || 55);
 const WINDOW_FB_MIN   = Number(process.env.WINDOW_FB_MIN   || 35);
@@ -62,7 +57,7 @@ const MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY || 6);
 const MAX_PER_CYCLE = Number(process.env.MAX_PER_CYCLE || 50);
 const SOFT_BUDGET_MS = Number(process.env.SOFT_BUDGET_MS || 70000);
 const MAX_OAI_CALLS_PER_CYCLE = Number(process.env.MAX_OAI_CALLS_PER_CYCLE || 40);
-const COUNTRY_FLAG = process.env.COUNTRY_FLAG || '🇲🇽'; // [PX-CHANGE: Default flag changed to Mexico]
+const COUNTRY_FLAG = process.env.COUNTRY_FLAG || '🇲🇽';
 
 const LOCK_TABLE = 'px_locks';
 const LOCK_KEY_FN = 'autopick_vip_nuevo';
@@ -226,33 +221,33 @@ function median(numbers) {
   return arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
 }
 
-// [PX-CHANGE] Conversión decimal → momio americano (+125 / -150)
-function decimalToAmerican(d) {                 // [PX-CHANGE]
+// Conversión decimal → momio americano (+125 / -150)
+function decimalToAmerican(d) {
   const dec = Number(d);
   if (!Number.isFinite(dec) || dec <= 1) return 'n/d';
   if (dec >= 2) return `+${Math.round((dec - 1) * 100)}`;
   return `-${Math.round(100 / (dec - 1))}`;
-}                                               // [PX-CHANGE]
+}
 
-// [PX-CHANGE] Emoji por nivel de VIP (para el encabezado)
-function emojiNivel(nivel) {                    // [PX-CHANGE]
+// Emoji por nivel de VIP (para el encabezado)
+function emojiNivel(nivel) {
   const n = String(nivel || '').toLowerCase();
   if (n.includes('ultra')) return '🟣';
   if (n.includes('élite') || n.includes('elite')) return '🎯';
   if (n.includes('avanzado')) return '🥈';
   if (n.includes('competitivo')) return '🥉';
   return '⭐';
-}                                               // [PX-CHANGE]
+}
 
-// [PX-CHANGE] Normaliza “apuestas extra” en bullets si viene como texto plano
-function formatApuestasExtra(s) {               // [PX-CHANGE]
+// Normaliza “apuestas extra” en bullets si viene como texto plano
+function formatApuestasExtra(s) {
   const raw = String(s || '').trim();
   if (!raw) return '—';
   const parts = raw.split(/\r?\n|;|,/).map(x => x.trim()).filter(Boolean);
   return parts.map(x => (x.startsWith('-') ? x : `- ${x}`)).join('\n');
-}                                               // [PX-CHANGE]
+}
 
-// [PX-FIX] Normalizador de evento OddsAPI v4 → shape interno
+// Normalizador de evento OddsAPI v4 → shape interno
 function normalizeOddsEvent(ev) {
   try {
     const id = ev?.id || `${ev?.commence_time}-${ev?.home_team}-${ev?.away_team}`;
@@ -309,7 +304,7 @@ function normalizeOddsEvent(ev) {
 exports.handler = async (event, context) => {
   assertEnv();
 
-  // [PX-ADD] Heartbeat de ciclo (ayuda a auditar scheduler/UTC)
+  // Heartbeat de ciclo (auditar scheduler/UTC)
   const CICLO_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
   console.log(`▶️ CICLO ${CICLO_ID} start; now(UTC)= ${new Date().toISOString()}`);
 
@@ -323,14 +318,14 @@ exports.handler = async (event, context) => {
     return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true }) };
   }
   global.__punterx_lock = true;
-  
+
   // Lock distribuido (evita solapamiento entre contenedores cuando Netlify reintenta)
   const gotLock = await acquireDistributedLock(120);
   if (!gotLock) {
     console.warn('LOCK distribuido activo → salto ciclo');
     return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'lock' }) };
   }
-  
+
   const resumen = {
     recibidos: 0, enVentana: 0, candidatos: 0, procesados: 0, descartados_ev: 0,
     enviados_vip: 0, enviados_free: 0, intentos_vip: 0, intentos_free: 0,
@@ -355,12 +350,12 @@ exports.handler = async (event, context) => {
 
     // Filtrar eventos ya iniciados (minutosFaltantes negativos)
     const eventosUpcoming = (eventos || []).filter(ev => {
-       const t = Date.parse(ev.commence_time);
-       return Number.isFinite(t) && t > Date.now();
+      const t = Date.parse(ev.commence_time);
+      return Number.isFinite(t) && t > Date.now();
     }); // Sólo eventos por comenzar
     const filteredCount = resumen.recibidos - (Array.isArray(eventosUpcoming) ? eventosUpcoming.length : 0);
     if (filteredCount > 0) {
-       console.log(`Filtrados ${filteredCount} eventos ya comenzados (omitidos)`);
+      console.log(`Filtrados ${filteredCount} eventos ya comenzados (omitidos)`);
     }
 
     // 2) Normalizar eventos
@@ -388,28 +383,25 @@ exports.handler = async (event, context) => {
     resumen.fallback  = fallbackCount;
 
     // Sub-contadores dentro de la ventana principal
-const sub4555 = inWindow.filter(p => {
-  const m = Math.round(p.minutosFaltantes);
-  return m >= SUB_MAIN_MIN && m <= SUB_MAIN_MAX; // 45–55 por default
-}).length;
+    const sub4555 = inWindow.filter(p => {
+      const m = Math.round(p.minutosFaltantes);
+      return m >= SUB_MAIN_MIN && m <= SUB_MAIN_MAX; // 45–55
+    }).length;
 
-const subEarly = inWindow.filter(p => {
-  const m = Math.round(p.minutosFaltantes);
-  return m >= WINDOW_MAIN_MIN && m < SUB_MAIN_MIN; // 40–44 por default
-}).length;
+    const subEarly = inWindow.filter(p => {
+      const m = Math.round(p.minutosFaltantes);
+      return m >= WINDOW_MAIN_MIN && m < SUB_MAIN_MIN; // 40–44 si la main arranca en 45
+    }).length;
 
-// (Opcional) guarda en el resumen para verlos en el JSON final
-resumen.principal = principalCount;
-resumen.fallback  = fallbackCount;
-resumen.sub_45_55 = sub4555;
-resumen.sub_40_44 = subEarly;
+    resumen.sub_45_55 = sub4555;
+    resumen.sub_40_44 = subEarly;
 
-console.log(
-  `📊 Filtrado (OddsAPI): Principal=${principalCount} ` +
-  `(45–55=${sub4555}, ${WINDOW_MAIN_MIN}–${SUB_MAIN_MIN-1}=${subEarly}) ` +
-  `| Fallback=${fallbackCount} | Total EN VENTANA=${inWindow.length} ` +
-  `| Eventos RECIBIDOS=${resumen.recibidos}`
-);
+    console.log(
+      `📊 Filtrado (OddsAPI): Principal=${principalCount} ` +
+      `(45–55=${sub4555}, ${WINDOW_MAIN_MIN}–${SUB_MAIN_MIN-1}=${subEarly}) ` +
+      `| Fallback=${fallbackCount} | Total EN VENTANA=${inWindow.length} ` +
+      `| Eventos RECIBIDOS=${resumen.recibidos}`
+    );
 
     if (!inWindow.length) {
       console.log('OddsAPI: sin partidos en ventana');
@@ -433,23 +425,22 @@ console.log(
 
       try {
         abortIfOverBudget();
-        // [PX-ADD] Resolver de nombres y liga ANTES de consultar API-FOOTBALL
+        // Resolver de nombres y liga ANTES de consultar API-FOOTBALL
         try {
           const resolved = resolveTeamsAndLeague
             ? await resolveTeamsAndLeague({
-              home: P.home,
-              away: P.away,
-              sport_title: P.liga || P.sport_title || ''
-            })
+                home: P.home,
+                away: P.away,
+                sport_title: P.liga || P.sport_title || ''
+              })
             : null;
-          
+
           if (resolved) {
             const prevHome = P.home, prevAway = P.away, prevLiga = P.liga;
             if (resolved.home && resolved.home !== P.home) P.home = resolved.home;
             if (resolved.away && resolved.away !== P.away) P.away = resolved.away;
             if (!P.liga && resolved.league) P.liga = resolved.league;
-            // Guarda alias para trazabilidad (no se persiste, solo ayuda en logs/prompts)
-            if (resolved.aliases) P._aliases = resolved.aliases;
+            if (resolved.aliases) P._aliases = resolved.aliases; // trazabilidad
             console.log(
               `[evt:${P.id}] RESOLVE > home="${prevHome}"→"${P.home}" | away="${prevAway}"→"${P.away}" | liga="${prevLiga||'N/D'}"→"${P.liga||'N/D'}"`
             );
@@ -458,9 +449,8 @@ console.log(
           console.warn(`[evt:${P.id}] ResolverTeams warning:`, er?.message || er);
         }
 
-        // A) Enriquecimiento API-FOOTBALL (con backoff mínimo)
+        // A) Enriquecimiento API-FOOTBALL
         const info = await enriquecerPartidoConAPIFootball(P) || {};
-        // Auditoría de match AF (fixture_id presente o no)
         if (info && info.fixture_id) {
           afHits++;
           if (DEBUG_TRACE) {
@@ -482,13 +472,14 @@ console.log(
             continue;
           }
         }
-        // Propagar país/liga detectados al objeto del partido
+
+        // Propagar país/liga detectados
         if (info && typeof info === 'object') {
           if (info.pais) P.pais = info.pais;
           if (info.liga) P.liga = info.liga;
         }
 
-        // B) Memoria relevante (máx 5 en client-side)
+        // B) Memoria relevante (máx 5)
         const memoria = await obtenerMemoriaSimilar(P);
 
         // C) Construir prompt maestro con opciones_apostables reales
@@ -601,12 +592,12 @@ function scorePreliminar(p) {
   if (hasTotals) score += 10;
   if (hasSpread) score += 5;
 
-  // Prioridad temporal dentro de la ventana principal (sin excluir 40–44)
+  // Prioridad temporal dentro de la ventana principal
   const mins = Number(p.minutosFaltantes);
   if (Number.isFinite(mins) && mins >= WINDOW_MAIN_MIN && mins <= WINDOW_MAIN_MAX) {
-    score += 10; // está en principal (40–55 por configuración actual)
+    score += 10;
     if (mins >= SUB_MAIN_MIN && mins <= SUB_MAIN_MAX) {
-      score += 5; // sub-bonus si está en 45–55 (alineaciones/mercado más estables)
+      score += 5;
     }
   }
   return score;
@@ -985,8 +976,7 @@ async function pedirPickConModelo(modelo, prompt) {
   }
 
   const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {"no_pick":true,"motivo_no_pick":"sin señal"}.';
-  // Ajuste de tokens: arranque bajo y retry controlado
-  // Arrancamos en 260 para ahorrar costo y reducir prob. de 'length'
+  // Ajuste de tokens: arranque bajo y retry controlado (cost-aware)
   let tokens = 260;
 
   // 1er intento
@@ -1005,10 +995,9 @@ async function pedirPickConModelo(modelo, prompt) {
     };
     try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
     if (meta.finish_reason === 'length') {
-      // Retry: +80 tokens, manteniendo JSON forzado y opcional fallback de modelo
+      // Retry: +80 tokens, mantener JSON estricto y permitir fallback de modelo
       tokens = Math.min(tokens + 80, 340);
       const modeloRetry = process.env.OPENAI_MODEL_FALLBACK || modelo;
-      // Nudge final para obligar JSON completo y compacto
       const messagesRetry = [
         ...req.messages,
         { role: "user", content: "⚠️ Repite TODO el JSON COMPLETO y compacto. No cortes la salida, no repitas texto previo. Formato estrictamente JSON-objeto." }
@@ -1017,7 +1006,6 @@ async function pedirPickConModelo(modelo, prompt) {
         ...req,
         model: modeloRetry,
         max_completion_tokens: tokens,
-        // ¡No eliminar response_format! Mantener JSON estricto en el retry
         response_format: { type: "json_object" },
         messages: messagesRetry
       };
@@ -1386,7 +1374,6 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
       entrada.minute_at_pick = partido.minute || null;
       entrada.phase = partido.phase || null;
       entrada.score_at_pick = partido.score || null;
-      // [PX-FIX] corregido: usar "partido" y no variable inexistente "party"
       entrada.market_point = (partido.pickPoint != null) ? String(partido.pickPoint) : null;
       entrada.vigencia_text = partido.vigenciaText || null;
     }
@@ -1425,6 +1412,11 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
     const wanted = Number(maxTokens) || 320;
     payload.max_completion_tokens = Math.min(Math.max(260, wanted), 380);
     payload.response_format = { type: "json_object" };
+    // Parámetros deterministas para reducir dispersión y finish_reason length
+    payload.temperature = 0.2;
+    payload.top_p = 1;
+    payload.presence_penalty = 0;
+    payload.frequency_penalty = 0;
   } else {
     payload.max_tokens = maxTokens;
     payload.temperature = 0.15;
@@ -1449,6 +1441,11 @@ async function repairPickJSON(model, rawText) {
 
   if (isG5) {
     fixReq.max_completion_tokens = 300;
+    fixReq.temperature = 0.2;
+    fixReq.top_p = 1;
+    fixReq.presence_penalty = 0;
+    fixReq.frequency_penalty = 0;
+    fixReq.response_format = { type: "json_object" };
   } else {
     fixReq.temperature = 0.2;
     fixReq.top_p = 1;
