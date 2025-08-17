@@ -423,7 +423,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
 
     const norm = s => String(s||"").toLowerCase()
       .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
-      .replace(/\b(f\.?c\.?|c\.?f\.?|s\.?c\.?|afc|club|deportivo)\b/g,"")
+      .replace(/\b(f\.?c\.?|c\.?f\.?|s\.?c\.?|a\.?c\.?|u\.?d\.?|cd|afc|cf|sc|club|deportivo|the)\b/g,"")
       .replace(/[^a-z0-9]+/g," ").trim();
 
     if (afLeagueId) {
@@ -456,7 +456,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
 
     // 2) Fallback: búsqueda textual (menos preciso)
     const q = `${partido.home} ${partido.away}`;
-    const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}`;
+    const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}&timezone=UTC`;
     const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
     if (!res?.ok) {
       console.warn(`[evt:${partido?.id}] AF search error:`, res?.status, await safeText(res));
@@ -464,10 +464,10 @@ async function enriquecerPartidoConAPIFootball(partido) {
     }
     const data = await safeJson(res);
     if (!data?.response || data.response.length === 0) {
-      console.warn(`[evt:${partido.id}] Sin coincidencias en API-Football`);
+      console.warn(`[evt:${partido.id}] Sin coincidencias en API-Football (search="${q}", homeN="${norm(partido.home)}", awayN="${norm(partido.away)}")`);
       // Fallback adicional: intentar búsqueda por cada equipo (home/away)
-      const tryOne = async (q2) => {
-        const u = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q2)}`;
+      const tryOne = async (q) => {
+        const u = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}&timezone=UTC`;
         const r = await fetchWithRetry(u, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
         if (!r?.ok) return null;
         const j = await safeJson(r);
@@ -503,6 +503,55 @@ async function enriquecerPartidoConAPIFootball(partido) {
       .sort((a,b)=> b.nameScore - a.nameScore);
 
     const best = candidates[0]?.x || arr[0];
+    if (!best) {
+    // --- Fallback final robusto: resolver IDs vía /teams y consultar /fixtures por H2H en ventana de ±2 días
+      const kickoff = Date.parse(partido.commence_time || "") || Date.now();
+      const day = 24*3600*1000;
+      const from = new Date(kickoff - 2*day).toISOString().slice(0,10);
+      const to   = new Date(kickoff + 2*day).toISOString().slice(0,10);
+      const fetchTeam = async (name) => {
+        const tu = `https://v3.football.api-sports.io/teams?search=${encodeURIComponent(name)}`;
+        const tr = await fetchWithRetry(tu, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
+        if (!tr?.ok) return null;
+        const tj = await safeJson(tr);
+        const items = Array.isArray(tj?.response) ? tj.response : [];
+        if (!items.length) return null;
+        // elegir mejor por norm() del nombre reportado
+        const target = norm(name);
+        const scored = items.map(x => {
+          const nm = norm(x?.team?.name);
+          const score = nm === target ? 2 : (nm.includes(target) || target.includes(nm) ? 1 : 0);
+          return { x, score };
+        }).sort((a,b)=> b.score - a.score);
+        return scored[0]?.x?.team?.id || items[0]?.team?.id || null;
+      };
+      const th = await fetchTeam(partido.home);
+      const ta = await fetchTeam(partido.away);
+      if (th && ta) {
+        const fu = `https://v3.football.api-sports.io/fixtures?h2h=${th}-${ta}&from=${from}&to=${to}&timezone=UTC`;
+        const fr = await fetchWithRetry(fu, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
+        if (fr?.ok) {
+          const fj = await safeJson(fr);
+          const fa = Array.isArray(fj?.response) ? fj.response : [];
+          // elegir más cercano al kickoff
+          fa.sort((a,b)=> Math.abs(Date.parse(a?.fixture?.date||0)-kickoff) - Math.abs(Date.parse(b?.fixture?.date||0)-kickoff));
+          const fx = fa[0];
+          if (fx) {
+            return {
+              liga: fx?.league?.name || sportTitle || null,
+              pais: fx?.league?.country || null,
+              fixture_id: fx?.fixture?.id || null,
+              fecha: fx?.fixture?.date || null,
+              estadio: fx?.fixture?.venue?.name || null,
+              ciudad: fx?.fixture?.venue?.city || null,
+              arbitro: fx?.fixture?.referee || null,
+              clima: fx?.fixture?.weather || null
+            };
+          }
+        }
+      }
+      return {};
+    }
     return {
       liga: best?.league?.name || sportTitle || null,
       pais: best?.league?.country || null,
@@ -636,7 +685,7 @@ async function pedirPickConModelo(modelo, prompt) {
 
   const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {"no_pick":true,"motivo_no_pick":"sin señal"}.';
   // Ajuste de tokens: arranque bajo y retry controlado
-  let tokens = 550; // [PX-FIX] antes 600
+  let tokens = 500; // [PX-FIX] antes 600
 
   // 1er intento
   let req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
@@ -655,7 +704,7 @@ async function pedirPickConModelo(modelo, prompt) {
     try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
 
     if (meta.finish_reason === 'length') {
-      tokens = Math.min(tokens + 150, 700); // [PX-FIX] antes +200→800
+      tokens = Math.min(tokens + 150, 650);
       req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
       if (req.response_format) delete req.response_format;
       const c2 = await openai.chat.completions.create(req);
@@ -916,7 +965,7 @@ function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoE
 
   return [
     `🎯 PICK NIVEL: ${encabezadoNivel}`,
-    `🏆 ${infoExtra?.pais || partido?.pais || 'N/D'} - ${partido.liga}`,
+    `🏆 ${COUNTRY_FLAG} ${(infoExtra?.pais || partido?.pais || 'N/D')} - ${partido.liga}`,
     `⚔️ ${partido.home} vs ${partido.away}`,
     `⏱️ ${formatMinAprox(mins)}`,
     ``,
@@ -942,7 +991,7 @@ function construirMensajeFREE(partido, pick, probPct, ev, nivel) {
 
   return [
     `📡 RADAR DE VALOR`,
-    `🏆 ${infoFromPromptPais(partido) || 'N/D'} - ${partido.liga}`,
+    `🏆 ${COUNTRY_FLAG} ${(infoFromPromptPais(partido) || 'N/D')} - ${partido.liga}`,
     `⚔️ ${partido.home} vs ${partido.away}`,
     `⏱️ ${formatMinAprox(mins)}`,
     ``,
@@ -992,13 +1041,16 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
       apuesta: pick.apuesta,
       tipo_pick: tipo,
       liga: partido.liga,
-      pais: partido.pais || null, // [PX-FIX] persistir país
+      pais: partido.pais || null,
       equipos: `${partido.home} — ${partido.away}`,
       ev: ev,
       probabilidad: probPct,
       nivel: nivel,
       timestamp: nowISO()
     };
+    if (tipo !== 'LIVE') {
+      entrada.top3_json = (Array.isArray(cuota?.top3) ? cuota.top3 : null);
+    }
 
     // top3_json también en PRE (si se dispone del arreglo)
     if (cuotaInfoOrNull && Array.isArray(cuotaInfoOrNull.top3)) {
