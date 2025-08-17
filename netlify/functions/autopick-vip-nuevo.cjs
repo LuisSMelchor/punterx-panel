@@ -7,6 +7,9 @@ const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
 const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
+// Al inicio junto a otros requires:
+const { computeCorazonada } = require('./_corazonada.cjs');
+
 
 // Resolver de equipos/liga (coincidencias OddsAPI ↔ API-FOOTBALL) — carga segura
 let resolveTeamsAndLeague = null;
