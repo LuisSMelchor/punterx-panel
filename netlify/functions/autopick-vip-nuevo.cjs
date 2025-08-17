@@ -113,13 +113,16 @@ async function fetchWithRetry(url, init={}, opts={ retries:2, base:500 }) {
         if (attempt >= opts.retries) return res;
         const ra = Number(res.headers.get('retry-after')) || 0;
         const backoff = ra ? ra*1000 : (opts.base * Math.pow(2, attempt));
+        console.warn(`[HTTP ${res.status}] retry in ${backoff}ms → ${url}`);
         await sleep(backoff);
         attempt++; continue;
       }
       return res;
     } catch (e) {
-      if (attempt >= opts.retries) throw e;
-      await sleep(opts.base * Math.pow(2, attempt));
+      if (attempt >= opts.retries) { console.error('fetchWithRetry error (final):', e?.message || e); throw e; }
+      const backoff = opts.base * Math.pow(2, attempt);
+      console.warn(`fetchWithRetry net error: ${e?.message || e} → retry in ${backoff}ms`);
+      await sleep(backoff);
       attempt++;
     }
   }
@@ -457,6 +460,9 @@ async function enriquecerPartidoConAPIFootball(partido) {
       .replace(/[^a-z0-9]+/g, " ")
       .trim();
 
+    const homeN = norm(partido.home);
+    const awayN = norm(partido.away);
+
     // Tokenización simple para Jaccard
     const tok = (s) => norm(s).split(/\s+/).filter(Boolean);
 
@@ -469,18 +475,15 @@ async function enriquecerPartidoConAPIFootball(partido) {
       const union = new Set([...setT, ...setC]).size;
       let j = union ? inter / union : 0;
       if (norm(target) === norm(candidate)) j += 1; // boost por igualdad exacta
-      // Boost adicional si incluye siglas (ej. “pumas” vs “pumas unam”)
-      if (norm(candidate).includes(norm(target)) || norm(target).includes(norm(candidate))) j += 0.25;
+      if (norm(candidate).includes(norm(target)) || norm(target).includes(norm(candidate))) j += 0.25; // incluye siglas
       return j; // rango aproximado [0..2.25]
     }
 
     function fixtureScore(fx, homeName, awayName) {
       const th = fx?.teams?.home?.name || "";
       const ta = fx?.teams?.away?.name || "";
-      // Mejor de (home→home / away→away) o (home→away / away→home) por seguridad
       const direct = nameScore(homeName, th) + nameScore(awayName, ta);
       const swapped = nameScore(homeName, ta) + nameScore(awayName, th);
-      // Boost por cercanía temporal al kickoff reportado por OddsAPI
       const dt2 = Date.parse(fx?.fixture?.date || "");
       const deltaH = Number.isFinite(dt2) ? Math.abs(dt2 - kickoffMs) / 3600000 : 999;
       const timeBoost = deltaH <= 36 ? 0.25 : 0; // dentro de la ventana ±36h
@@ -493,71 +496,68 @@ async function enriquecerPartidoConAPIFootball(partido) {
                         .sort((a, b) => b.score - a.score);
       const best = scored[0];
       if (!best || !best.x) return null;
-      // Umbral razonable: ≥1.0 suele indicar coincidencia fuerte (igualdad exacta = +1)
       if (best.score < 0.9) {
         console.warn(`[evt:${partido?.id}] Puntaje bajo (${best.score.toFixed(2)}) para mejor candidato (${whyTag})`);
       }
       return best.x;
     }
 
-    // ... después de construir `arr = data.response;` y antes del return final:
-const hN = norm(partido.home), aN = norm(partido.away);
-const kickoffMs = Date.parse(partido.commence_time || "") || Date.now();
-
-// Tu heurística actual (por nombre/fecha) queda como primer intento:
-const candidates = arr
-  .filter(x => {
-    const dt2 = Date.parse(x?.fixture?.date || "");
-    if (!Number.isFinite(dt2)) return true;
-    const diffH = Math.abs((dt2 - kickoffMs)/3600000);
-    return diffH <= 60; // ampliamos a ±60h para dar más cancha al resolver
-  })
-  .map(x => {
-    const th = norm(x?.teams?.home?.name);
-    const ta = norm(x?.teams?.away?.name);
-    const nameScore = ((th===hN && ta===aN) || (th===aN && ta===hN)) ? 2 :
-                      (th.includes(hN)||ta.includes(aN)||th.includes(aN)||ta.includes(hN) ? 1 : 0);
-    return { x, nameScore };
-  })
-  .sort((a,b)=> b.nameScore - a.nameScore);
-
-let best = candidates[0]?.x || arr[0] || null;
-
-// Si no hay match “confiable” por la heurística anterior, usamos el resolver de similitud
-if (!best || candidates[0]?.nameScore < 2) {
-  const resolved = resolveFixtureFromList(partido, arr);
-  if (resolved) {
-    best = resolved;
+    // === 1) PRIMARIO: fixtures por LIGA + FECHA exacta (UTC)
     try {
-      console.log(`[evt:${partido?.id}] Resolver AF: asignado fixture_id=${resolved?.fixture?.id} league="${resolved?.league?.name}"`);
-    } catch {}
-  }
-}
+      const dateStr = new Date(kickoffMs).toISOString().slice(0,10);
+      if (afLeagueId) {
+        const url = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dateStr)}&league=${encodeURIComponent(afLeagueId)}&timezone=UTC`;
+        const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
+        if (res?.ok) {
+          const data = await safeJson(res);
+          const arr = Array.isArray(data?.response) ? data.response : [];
+          // Heurística rápida por nombre/fecha ±60h
+          const candidates = arr
+            .filter(x => {
+              const dt2 = Date.parse(x?.fixture?.date || "");
+              if (!Number.isFinite(dt2)) return true;
+              const diffH = Math.abs((dt2 - kickoffMs)/3600000);
+              return diffH <= 60;
+            })
+            .map(x => {
+              const th = norm(x?.teams?.home?.name);
+              const ta = norm(x?.teams?.away?.name);
+              const ns = ((th===homeN && ta===awayN) || (th===awayN && ta===homeN)) ? 2 :
+                         (th.includes(homeN)||ta.includes(awayN)||th.includes(awayN)||ta.includes(homeN) ? 1 : 0);
+              return { x, nameScore: ns };
+            })
+            .sort((a,b)=> b.nameScore - a.nameScore);
+          let best = candidates[0]?.nameScore ? candidates[0]?.x : null;
 
-if (!best) {
-  return {};
-}
-
-return {
-  liga: best?.league?.name || sportTitle || null,
-  pais: best?.league?.country || null,
-  fixture_id: best?.fixture?.id || null,
-  fecha: best?.fixture?.date || null,
-  estadio: best?.fixture?.venue?.name || null,
-  ciudad: best?.fixture?.venue?.city || null,
-  arbitro: best?.fixture?.referee || null,
-  clima: best?.fixture?.weather || null
-};
-
+          // Resolver por similitud si no confía la heurística
+          if (!best || candidates[0]?.nameScore < 2) {
+            const resolved = resolveFixtureFromList(partido, arr);
+            if (resolved) {
+              best = resolved;
+              console.log(`[evt:${partido?.id}] Resolver AF (league+date): fixture_id=${resolved?.fixture?.id} league="${resolved?.league?.name}"`);
+            }
+          }
+          if (best) {
+            return {
+              liga: best?.league?.name || sportTitle || null,
+              pais: best?.league?.country || null,
+              fixture_id: best?.fixture?.id || null,
+              fecha: best?.fixture?.date || null,
+              estadio: best?.fixture?.venue?.name || null,
+              ciudad: best?.fixture?.venue?.city || null,
+              arbitro: best?.fixture?.referee || null,
+              clima: best?.fixture?.weather || null
+            };
           }
         } else if (res) {
           console.warn(`[evt:${partido?.id}] AF fixtures league+date falló:`, res.status, await safeText(res));
         }
-  catch (e) {
-        console.warn(`[evt:${partido?.id}] Error league+date:`, e?.message || e);
-}
+      }
+    } catch (e) {
+      console.warn(`[evt:${partido?.id}] Error league+date:`, e?.message || e);
+    }
 
-    // === 2) SECUNDARIO: fixtures por LIGA en ventana ±2 días (UTC) ===
+    // === 2) SECUNDARIO: fixtures por LIGA en ventana ±2 días (UTC)
     if (afLeagueId) {
       try {
         const from = new Date(kickoffMs - 2 * day).toISOString().slice(0, 10);
@@ -586,7 +586,7 @@ return {
       }
     }
 
-    // === 3) TERCER INTENTO: búsqueda textual (menos preciso) ===
+    // === 3) TERCER INTENTO: búsqueda textual (menos preciso)
     try {
       const q = `${partido.home} ${partido.away}`;
       const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}&timezone=UTC`;
@@ -611,12 +611,12 @@ return {
           arr = [...arrH, ...arrA];
         }
 
-        // Filtra por cercanía temporal ±36h
+        // Filtra por cercanía temporal ±48h
         const filtered = arr.filter(x => {
           const dt2 = Date.parse(x?.fixture?.date || "");
           if (!Number.isFinite(dt2)) return true;
           const diffH = Math.abs((dt2 - kickoffMs) / 3600000);
-          return diffH <= 48; // ampliamos a ±48h para search
+          return diffH <= 48;
         });
 
         const best = selectBestFixture(filtered, partido.home, partido.away, "search");
@@ -1175,7 +1175,7 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
       timestamp: nowISO()
     };
     if (tipo !== 'LIVE') {
-      entrada.top3_json = (Array.isArray(cuota?.top3) ? cuota.top3 : null);
+      entrada.top3_json = (Array.isArray(cuotaInfoOrNull?.top3) ? cuotaInfoOrNull.top3 : null);
     }
 
     // top3_json también en PRE (si se dispone del arreglo)
@@ -1189,8 +1189,13 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
       entrada.minute_at_pick = partido.minute || null;
       entrada.phase = partido.phase || null;
       entrada.score_at_pick = partido.score || null;
-      entrada.market_point = (partido.pickPoint != null) ? String(partido.pickPoint) : null;
+      entrada.market_point = (partido.pickPoint != null) ? String(party.pickPoint) : null; // NOTE: corrected below
       entrada.vigencia_text = partido.vigenciaText || null;
+    }
+
+    // Fix typo: party → partido for market_point value
+    if (tipo === 'LIVE') {
+      entrada.market_point = (partido.pickPoint != null) ? String(partido.pickPoint) : entrada.market_point;
     }
 
     const { data: dupRow, error: dupErr } = await supabase
