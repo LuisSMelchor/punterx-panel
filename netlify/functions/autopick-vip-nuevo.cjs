@@ -13,7 +13,19 @@ const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
 // [PX-FIX] Fin imports requeridos
 
 // [PX-ADD] Resolver de equipos/liga (coincidencias OddsAPI ↔ API-FOOTBALL)
-const matchHelper = require('./_lib/match-helper.cjs');
+// Carga segura: soporta export default y export nombrado
+let resolveTeamsAndLeague = null;
+try {
+  const mh = require('./_lib/match-helper.cjs');
+  resolveTeamsAndLeague = (typeof mh === 'function')
+    ? mh
+    : (mh && typeof mh.resolveTeamsAndLeague === 'function' ? mh.resolveTeamsAndLeague : null);
+  if (!resolveTeamsAndLeague) {
+    console.warn('[MATCH-HELPER] Módulo cargado pero sin resolveTeamsAndLeague válido');
+  }
+} catch (e) {
+  console.warn('[MATCH-HELPER] No se pudo cargar:', e?.message || e);
+}
 
 const {
   SUPABASE_URL,
@@ -363,11 +375,14 @@ console.log(
         abortIfOverBudget();
         // [PX-ADD] Resolver de nombres y liga ANTES de consultar API-FOOTBALL
         try {
-          const resolved = await matchHelper.resolveTeamsAndLeague({
-            home: P.home,
-            away: P.away,
-            sport_title: P.liga || P.sport_title || ''
-          });
+          const resolved = resolveTeamsAndLeague
+            ? await resolveTeamsAndLeague({
+              home: P.home,
+              away: P.away,
+              sport_title: P.liga || P.sport_title || ''
+            })
+            : null;
+          
           if (resolved) {
             const prevHome = P.home, prevAway = P.away, prevLiga = P.liga;
             if (resolved.home && resolved.home !== P.home) P.home = resolved.home;
@@ -910,7 +925,7 @@ async function pedirPickConModelo(modelo, prompt) {
 
   const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {"no_pick":true,"motivo_no_pick":"sin señal"}.';
   // Ajuste de tokens: arranque bajo y retry controlado
-  let tokens = 500; // [PX-FIX] antes 600
+  let tokens = 320; // arranque más bajo para evitar 'length' y timeouts
 
   // 1er intento
   let req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
@@ -929,7 +944,7 @@ async function pedirPickConModelo(modelo, prompt) {
     try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
 
     if (meta.finish_reason === 'length') {
-      tokens = Math.min(tokens + 150, 650);
+      tokens = Math.min(tokens + 80, 400); // retry corto y techo bajo
       req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
       if (req.response_format) delete req.response_format;
       const c2 = await openai.chat.completions.create(req);
@@ -1323,7 +1338,9 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
   const payload = { model, messages };
 
   if (isG5) {
-    payload.max_completion_tokens = Math.max(550, Number(maxTokens) || 550); // [PX-FIX] antes 650
+    // Mantén el tope de salida compacto para no agotar 30s
+    const wanted = Number(maxTokens) || 320;
+    payload.max_completion_tokens = Math.min(Math.max(260, wanted), 380);
     payload.response_format = { type: "json_object" };
   } else {
     payload.max_tokens = maxTokens;
