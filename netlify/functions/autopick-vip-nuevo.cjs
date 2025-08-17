@@ -357,13 +357,13 @@ exports.handler = async (event, context) => {
           resumen.intentos_vip++;
           const msg = construirMensajeVIP(P, pick, probPct, ev, nivel, cuotaInfo, info);
           const ok = await enviarVIP(msg);
-          if (ok) { resumen.enviados_vip++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuota, "VIP"); }
+          if (ok) { resumen.enviados_vip++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuotaInfo, "VIP"); }
           console.log(ok ? traceId + ' ✅ Enviado VIP' : traceId + ' ⚠️ Falló envío VIP');
         } else {
           resumen.intentos_free++;
           const msg = construirMensajeFREE(P, pick, probPct, ev, nivel);
           const ok = await enviarFREE(msg);
-          if (ok) { resumen.enviados_free++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuota, "FREE"); }
+          if (ok) { resumen.enviados_free++; await guardarPickSupabase(P, pick, probPct, ev, nivel, null, "FREE"); }
           console.log(ok ? traceId + ' ✅ Enviado FREE' : traceId + ' ⚠️ Falló envío FREE');
         }
 
@@ -466,8 +466,8 @@ async function enriquecerPartidoConAPIFootball(partido) {
     if (!data?.response || data.response.length === 0) {
       console.warn(`[evt:${partido.id}] Sin coincidencias en API-Football`);
       // Fallback adicional: intentar búsqueda por cada equipo (home/away)
-      const tryOne = async (q) => {
-        const u = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}`;
+      const tryOne = async (q2) => {
+        const u = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q2)}`;
         const r = await fetchWithRetry(u, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
         if (!r?.ok) return null;
         const j = await safeJson(r);
@@ -636,7 +636,7 @@ async function pedirPickConModelo(modelo, prompt) {
 
   const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {"no_pick":true,"motivo_no_pick":"sin señal"}.';
   // Ajuste de tokens: arranque bajo y retry controlado
-  let tokens = 600;
+  let tokens = 550; // [PX-FIX] antes 600
 
   // 1er intento
   let req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
@@ -655,7 +655,7 @@ async function pedirPickConModelo(modelo, prompt) {
     try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
 
     if (meta.finish_reason === 'length') {
-      tokens = Math.min(tokens + 200, 800);
+      tokens = Math.min(tokens + 150, 700); // [PX-FIX] antes +200→800
       req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
       if (req.response_format) delete req.response_format;
       const c2 = await openai.chat.completions.create(req);
@@ -703,12 +703,16 @@ async function obtenerPickConFallback(prompt) {
 
 // =============== PROMPT ===============
 
-// Lee `prompts_punterx.md` y extrae la sección “1) Pre-match”
+// Cache simple del MD (evita E/S por pick)
+let __PROMPT_MD_CACHE = null;
+
 function readFileIfExists(p) {
   try { return fs.readFileSync(p, 'utf8'); } catch(_) { return null; }
 }
 
 function getPromptTemplateFromMD() {
+  if (__PROMPT_MD_CACHE) return __PROMPT_MD_CACHE;
+
   const candidates = [
     path.join(process.cwd(), 'prompts_punterx.md'),
     path.join(__dirname, 'prompts_punterx.md'),
@@ -719,9 +723,10 @@ function getPromptTemplateFromMD() {
     md = readFileIfExists(p);
     if (md) { console.log('[PROMPT] MD detectado en', p); break; }
   }
+  __PROMPT_MD_CACHE = md;
   if (!md) return null;
 
-  // Acepta “Pre-match/Pre-match” (guiones Unicode o ASCII) y variantes
+  // Acepta “Pre-match/Pre–match” (guiones Unicode o ASCII) y variantes
   const rx = /^\s*(?:#+\s*)?1\)\s*Pre[\-– ]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
   const m = md.match(rx);
   if (!m) return null;
@@ -793,11 +798,11 @@ function construirPrompt(partido, info, memoria) {
   const prompt = [
     `Eres un analista de apuestas experto. Devuelve SOLO un JSON EXACTO con esta forma:`,
     `{`,
-    `  "analisis_gratuito": ""`,
-    `  "analisis_vip": ""`,
+    `  "analisis_gratuito": "",`,
+    `  "analisis_vip": "",`,
     `  "apuesta": "",`,
-    `  "apuestas_extra": ""`, 
-    `  "frase_motivacional": ""`,
+    `  "apuestas_extra": "",`,
+    `  "frase_motivacional": "",`,
     `  "probabilidad": 0.0,`,
     `  "no_pick": false,`,
     `  "motivo_no_pick": ""`,
@@ -978,7 +983,7 @@ async function enviarVIP(text) {
 }
 
 // =============== SUPABASE SAVE ===============
-async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuota, tipo) {
+async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoOrNull, tipo) {
   try {
     const evento = `${partido.home} vs ${partido.away} (${partido.liga})`;
     const entrada = {
@@ -987,12 +992,19 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuota, tip
       apuesta: pick.apuesta,
       tipo_pick: tipo,
       liga: partido.liga,
+      pais: partido.pais || null, // [PX-FIX] persistir país
       equipos: `${partido.home} — ${partido.away}`,
       ev: ev,
       probabilidad: probPct,
       nivel: nivel,
       timestamp: nowISO()
     };
+
+    // top3_json también en PRE (si se dispone del arreglo)
+    if (cuotaInfoOrNull && Array.isArray(cuotaInfoOrNull.top3)) {
+      entrada.top3_json = cuotaInfoOrNull.top3;
+    }
+
     if (tipo === 'LIVE') {
       entrada.is_live = true;
       entrada.kickoff_at = partido.commence_time || null;
@@ -1001,7 +1013,6 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuota, tip
       entrada.score_at_pick = partido.score || null;
       entrada.market_point = (partido.pickPoint != null) ? String(partido.pickPoint) : null;
       entrada.vigencia_text = partido.vigenciaText || null;
-      entrada.top3_json = (Array.isArray(cuota?.top3) ? cuota.top3 : null);
     }
 
     const { data: dupRow, error: dupErr } = await supabase
@@ -1034,7 +1045,7 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
   const payload = { model, messages };
 
   if (isG5) {
-    payload.max_completion_tokens = Math.max(650, Number(maxTokens) || 650);
+    payload.max_completion_tokens = Math.max(550, Number(maxTokens) || 550); // [PX-FIX] antes 650
     payload.response_format = { type: "json_object" };
   } else {
     payload.max_tokens = maxTokens;
