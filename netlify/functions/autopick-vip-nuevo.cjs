@@ -12,6 +12,9 @@ const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
 
 // [PX-FIX] Fin imports requeridos
 
+// [PX-ADD] Resolver de equipos/liga (coincidencias OddsAPI ↔ API-FOOTBALL)
+const matchHelper = require(path.join(__dirname, '..', '_lib', 'match-helper'));
+
 const {
   SUPABASE_URL,
   SUPABASE_KEY,
@@ -297,7 +300,28 @@ exports.handler = async (event, context) => {
 
       try {
         abortIfOverBudget();
-
+        // [PX-ADD] Resolver de nombres y liga ANTES de consultar API-FOOTBALL
+        try {
+          const resolved = await matchHelper.resolveTeamsAndLeague({
+            home: P.home,
+            away: P.away,
+            sport_title: P.liga || P.sport_title || ''
+          });
+          if (resolved) {
+            const prevHome = P.home, prevAway = P.away, prevLiga = P.liga;
+            if (resolved.home && resolved.home !== P.home) P.home = resolved.home;
+            if (resolved.away && resolved.away !== P.away) P.away = resolved.away;
+            if (!P.liga && resolved.league) P.liga = resolved.league;
+            // Guarda alias para trazabilidad (no se persiste, solo ayuda en logs/prompts)
+            if (resolved.aliases) P._aliases = resolved.aliases;
+            console.log(
+              `[evt:${P.id}] RESOLVE > home="${prevHome}"→"${P.home}" | away="${prevAway}"→"${P.away}" | liga="${prevLiga||'N/D'}"→"${P.liga||'N/D'}"`
+            );
+          }
+        } catch (er) {
+          console.warn(`[evt:${P.id}] ResolverTeams warning:`, er?.message || er);
+        }
+        
         // A) Enriquecimiento API-FOOTBALL (con backoff mínimo)
         const info = await enriquecerPartidoConAPIFootball(P) || {};
         // Propagar país/liga detectados al objeto del partido
