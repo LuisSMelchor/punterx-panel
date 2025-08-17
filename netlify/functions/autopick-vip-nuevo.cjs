@@ -41,6 +41,10 @@ const WINDOW_MAIN_MAX = Number(process.env.WINDOW_MAIN_MAX || 55);
 const WINDOW_FB_MIN   = Number(process.env.WINDOW_FB_MIN   || 35);
 const WINDOW_FB_MAX   = Number(process.env.WINDOW_FB_MAX   || 70);
 
+// Sub-ventana dentro de la principal para priorizar 45–55 sin cerrar 40–44
+const SUB_MAIN_MIN = Number(process.env.SUB_MAIN_MIN || 45);
+const SUB_MAIN_MAX = Number(process.env.SUB_MAIN_MAX || 55);
+
 const PREFILTER_MIN_BOOKIES = Number(process.env.PREFILTER_MIN_BOOKIES || 2);
 const MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY || 6);
 const MAX_PER_CYCLE = Number(process.env.MAX_PER_CYCLE || 50);
@@ -311,10 +315,29 @@ exports.handler = async (event, context) => {
     resumen.principal = principalCount;
     resumen.fallback  = fallbackCount;
 
-    console.log(
-      `📊 Filtrado (OddsAPI): Principal=${principalCount} | Fallback=${fallbackCount}` +
-      ` | Total EN VENTANA=${inWindow.length} | Eventos RECIBIDOS=${resumen.recibidos}`
-    );
+    // Sub-contadores dentro de la ventana principal
+const sub4555 = inWindow.filter(p => {
+  const m = Math.round(p.minutosFaltantes);
+  return m >= SUB_MAIN_MIN && m <= SUB_MAIN_MAX; // 45–55 por default
+}).length;
+
+const subEarly = inWindow.filter(p => {
+  const m = Math.round(p.minutosFaltantes);
+  return m >= WINDOW_MAIN_MIN && m < SUB_MAIN_MIN; // 40–44 por default
+}).length;
+
+// (Opcional) guarda en el resumen para verlos en el JSON final
+resumen.principal = principalCount;
+resumen.fallback  = fallbackCount;
+resumen.sub_45_55 = sub4555;
+resumen.sub_40_44 = subEarly;
+
+console.log(
+  `📊 Filtrado (OddsAPI): Principal=${principalCount} ` +
+  `(45–55=${sub4555}, ${WINDOW_MAIN_MIN}–${SUB_MAIN_MIN-1}=${subEarly}) ` +
+  `| Fallback=${fallbackCount} | Total EN VENTANA=${inWindow.length} ` +
+  `| Eventos RECIBIDOS=${resumen.recibidos}`
+);
 
     if (!inWindow.length) {
       console.log('OddsAPI: sin partidos en ventana');
@@ -486,21 +509,29 @@ exports.handler = async (event, context) => {
 // =============== PRE-FILTER & SCORING ===============
 function scorePreliminar(p) {
   let score = 0;
-  const set = new Set([...(p.marketsOffers?.h2h||[]), ...(p.marketsOffers?.totals_over||[]),
-    ...(p.marketsOffers?.totals_under||[]), ...(p.marketsOffers?.spreads||[])]
+
+  // Diversidad de bookies y mercados presentes
+  const set = new Set([...(p.marketsOffers?.h2h||[]),
+                       ...(p.marketsOffers?.totals_over||[]),
+                       ...(p.marketsOffers?.totals_under||[]),
+                       ...(p.marketsOffers?.spreads||[])]
     .map(x => (x?.bookie||"").toLowerCase()).filter(Boolean));
   if (set.size >= PREFILTER_MIN_BOOKIES) score += 20;
 
-  const hasH2H = (p.marketsOffers?.h2h||[]).length > 0;
-  const hasTotals = (p.marketsOffers?.totals_over||[]).length > 0 && (p.marketsOffers?.totals_under||[]).length > 0;
-  const hasSpread = (p.marketsOffers?.spreads||[]).length > 0;
-  if (hasH2H) score += 15;
+  const hasH2H   = (p.marketsOffers?.h2h||[]).length > 0;
+  const hasTotals= (p.marketsOffers?.totals_over||[]).length > 0 && (p.marketsOffers?.totals_under||[]).length > 0;
+  const hasSpread= (p.marketsOffers?.spreads||[]).length > 0;
+  if (hasH2H)    score += 15;
   if (hasTotals) score += 10;
   if (hasSpread) score += 5;
 
-  // Bonus si está en ventana principal (más relevante)
-  if (Number.isFinite(p.minutosFaltantes) && p.minutosFaltantes >= WINDOW_MAIN_MIN && p.minutosFaltantes <= WINDOW_MAIN_MAX) {
-    score += 10;
+  // Prioridad temporal dentro de la ventana principal (sin excluir 40–44)
+  const mins = Number(p.minutosFaltantes);
+  if (Number.isFinite(mins) && mins >= WINDOW_MAIN_MIN && mins <= WINDOW_MAIN_MAX) {
+    score += 10; // está en principal (40–55 por configuración actual)
+    if (mins >= SUB_MAIN_MIN && mins <= SUB_MAIN_MAX) {
+      score += 5; // sub-bonus si está en 45–55 (alineaciones/mercado más estables)
+    }
   }
   return score;
 }
