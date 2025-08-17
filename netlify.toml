@@ -55,21 +55,13 @@
   ]
 
 # ---------------------------------------------------
+
 # Autopick en background (cron frecuente, mismo ritmo)
-# ---------------------------------------------------
-[functions."autopick-vip-nuevo-background"]
-  # CRON: cada 15 minutos (ajusta si usabas otro)
-  schedule = "*/15 * * * *"
-  included_files = [
-    "netlify/functions/_supabase-client.cjs",
-    "prompts_punterx.md",
-    "netlify/functions/_lib/**"
-  ]
-  external_node_modules = [
-    "@supabase/supabase-js",
-    "openai",
-    "node-fetch"
-  ]
+# Deshabilitado: consolidamos PRE en una sola función para evitar duplicados
+# [[scheduled.functions]]
+# path = "autopick-vip-nuevo-background"
+# schedule = "*/15 * * * *"
+
 
 # --------------------------------------
 # Outrights (menos frecuente por volumen)
