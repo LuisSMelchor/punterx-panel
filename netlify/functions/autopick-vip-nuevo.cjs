@@ -266,8 +266,7 @@ exports.handler = async (event, context) => {
     const partidos = eventosUpcoming.map(normalizeOddsEvent).filter(Boolean);
     const inWindow = partidos.filter(p => {
       const mins = Math.round(p.minutosFaltantes);
-      if (process.env.DEBUG === '1') {
-        console.log(`DBG commence_time= ${p.commence_time} mins= ${mins}`);}
+      console.log(`DBG commence_time= ${p.commence_time} mins= ${mins}`);
       const principal = mins >= WINDOW_MAIN_MIN && mins <= WINDOW_MAIN_MAX;
       const fallback  = !principal && mins >= WINDOW_FB_MIN && mins <= WINDOW_FB_MAX;
       return principal || fallback;
@@ -298,7 +297,7 @@ exports.handler = async (event, context) => {
 
         // A) Enriquecimiento API-FOOTBALL (con backoff mínimo)
         const info = await enriquecerPartidoConAPIFootball(P) || {};
-        // [PX-FIX] Propagar país/liga detectados al objeto del partido para uso en FREE y logs
+        // Propagar país/liga detectados al objeto del partido
         if (info && typeof info === 'object') {
           if (info.pais) P.pais = info.pais;
           if (info.liga) P.liga = info.liga;
@@ -336,7 +335,6 @@ exports.handler = async (event, context) => {
         // Probabilidad (no inventar) + coherencia con implícita
         const probPct = estimarlaProbabilidadPct(pick);
         if (probPct == null) { console.warn(traceId, '❌ Probabilidad ausente → descartando pick'); continue; }
-        // [PX-FIX] Validación estricta de rango
         if (probPct < 5 || probPct > 85) { console.warn(traceId, '❌ Probabilidad fuera de rango [5–85] → descartando pick'); continue; }
         const imp = impliedProbPct(cuota);
         if (imp != null && Math.abs(probPct - imp) > 15) {
@@ -357,13 +355,13 @@ exports.handler = async (event, context) => {
 
         if (destinoVIP) {
           resumen.intentos_vip++;
-          const msg = construirMensajeVIP(P, pick, probPct, ev, nivel, cuotaInfo, info); // [PX-CHANGE]
+          const msg = construirMensajeVIP(P, pick, probPct, ev, nivel, cuotaInfo, info);
           const ok = await enviarVIP(msg);
           if (ok) { resumen.enviados_vip++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuota, "VIP"); }
           console.log(ok ? traceId + ' ✅ Enviado VIP' : traceId + ' ⚠️ Falló envío VIP');
         } else {
           resumen.intentos_free++;
-          const msg = construirMensajeFREE(P, pick, probPct, ev, nivel);        // [PX-CHANGE]
+          const msg = construirMensajeFREE(P, pick, probPct, ev, nivel);
           const ok = await enviarFREE(msg);
           if (ok) { resumen.enviados_free++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuota, "FREE"); }
           console.log(ok ? traceId + ' ✅ Enviado FREE' : traceId + ' ⚠️ Falló envío FREE');
@@ -422,13 +420,11 @@ async function enriquecerPartidoConAPIFootball(partido) {
     const afLeagueId = AF_LEAGUE_ID_BY_TITLE[sportTitle] || null;
     const dt = partido?.commence_time ? new Date(partido.commence_time) : null;
     const dateStr = dt && !isNaN(dt) ? dt.toISOString().slice(0,10) : new Date().toISOString().slice(0,10);
-    
+
     const norm = s => String(s||"").toLowerCase()
-  .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
-  // quita prefijos comunes con y sin puntos: fc, f.c., cf, c.f., sc, s.c., afc, etc.
-  .replace(/\b(f\.?c\.?|c\.?f\.?|s\.?c\.?|afc|club|deportivo)\b/g,"")
-  .replace(/[^a-z0-9]+/g," ")
-  .trim();
+      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+      .replace(/\b(f\.?c\.?|c\.?f\.?|s\.?c\.?|afc|club|deportivo)\b/g,"")
+      .replace(/[^a-z0-9]+/g," ").trim();
 
     if (afLeagueId) {
       const url = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dateStr)}&league=${encodeURIComponent(afLeagueId)}`;
@@ -526,7 +522,6 @@ async function enriquecerPartidoConAPIFootball(partido) {
 // =============== MEMORIA (Supabase) ===============
 async function obtenerMemoriaSimilar(partido) {
   try {
-    // Lectura acotada — optimizaría con filtros server-side si hay schema de liga/equipos
     const { data, error } = await supabase
       .from(PICK_TABLE)
       .select('evento, analisis, apuesta, tipo_pick, liga, equipos, ev, probabilidad, nivel, timestamp')
@@ -572,7 +567,6 @@ function estimarlaProbabilidadPct(pick) {
   if (typeof pick.probabilidad === 'undefined') return null;
   const v = Number(pick.probabilidad);
   if (Number.isNaN(v)) return null;
-  // La probabilidad puede venir [0,1] o [0,100]
   return (v > 0 && v < 1) ? +(v*100).toFixed(2) : +v.toFixed(2);
 }
 
@@ -622,20 +616,18 @@ function ensurePickShape(obj) {
     no_pick: false,
     motivo_no_pick: ''
   };
-  // Combina propiedades existentes con base
   return Object.assign(base, obj || {});
 }
 
 // =============== PREDICADOS DE PICK ===============
 function esNoPick(p) { return !!p && p.no_pick === true; }
-
 function pickCompleto(p) {
   return !!(p && p.analisis_vip && p.analisis_gratuito && p.apuesta && typeof p.probabilidad === 'number');
 }
 
 // =============== OpenAI (ChatCompletion) ===============
 async function pedirPickConModelo(modelo, prompt) {
-  // [PX-FIX] Límite de llamadas por ciclo para evitar 429 y costos
+  // Límite de llamadas por ciclo
   global.__px_oai_calls = global.__px_oai_calls || 0;
   if (global.__px_oai_calls >= MAX_OAI_CALLS_PER_CYCLE) {
     console.warn('[OAI] Límite de llamadas alcanzado en este ciclo');
@@ -643,6 +635,7 @@ async function pedirPickConModelo(modelo, prompt) {
   }
 
   const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {"no_pick":true,"motivo_no_pick":"sin señal"}.';
+  // Ajuste de tokens: arranque bajo y retry controlado
   let tokens = 600;
 
   // 1er intento
@@ -662,11 +655,9 @@ async function pedirPickConModelo(modelo, prompt) {
     try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
 
     if (meta.finish_reason === 'length') {
-      // abre margen pero con tope
       tokens = Math.min(tokens + 200, 800);
-
       req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
-      if (req.response_format) delete req.response_format; // por si diera 400
+      if (req.response_format) delete req.response_format;
       const c2 = await openai.chat.completions.create(req);
       global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
       const raw2 = c2?.choices?.[0]?.message?.content || "";
@@ -679,7 +670,6 @@ async function pedirPickConModelo(modelo, prompt) {
 
   } catch (e) {
     const msg = String(e?.message || '');
-    // Reintento ante 400 por parámetro no soportado (response_format, etc.)
     if (/unknown parameter|unsupported parameter|response_format/i.test(msg)) {
       try {
         const req2 = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
@@ -705,7 +695,6 @@ async function obtenerPickConFallback(prompt) {
     console.info("♻️ Fallback de modelo →", MODEL_FALLBACK);
     pick = await pedirPickConModelo(MODEL_FALLBACK, prompt);
   }
-  // Último recurso: si sigue mal, marcar no_pick para no romper el ciclo
   if (!pick) {
     pick = ensurePickShape({ no_pick: true, motivo_no_pick: "sin respuesta del modelo" });
   }
@@ -714,12 +703,12 @@ async function obtenerPickConFallback(prompt) {
 
 // =============== PROMPT ===============
 
-// [PX-CHANGE] Lee `prompts_punterx.md` y extrae la sección “1) Pre-match”
-function readFileIfExists(p) {          // [PX-CHANGE]
+// Lee `prompts_punterx.md` y extrae la sección “1) Pre-match”
+function readFileIfExists(p) {
   try { return fs.readFileSync(p, 'utf8'); } catch(_) { return null; }
-}                                       // [PX-CHANGE]
+}
 
-function getPromptTemplateFromMD() {    // [PX-CHANGE]
+function getPromptTemplateFromMD() {
   const candidates = [
     path.join(process.cwd(), 'prompts_punterx.md'),
     path.join(__dirname, 'prompts_punterx.md'),
@@ -732,30 +721,28 @@ function getPromptTemplateFromMD() {    // [PX-CHANGE]
   }
   if (!md) return null;
 
-  // Acepta “Pre-match”, “Pre-match” (guiones Unicode) y variantes
+  // Acepta “Pre-match/Pre-match” (guiones Unicode o ASCII) y variantes
   const rx = /^\s*(?:#+\s*)?1\)\s*Pre[\-– ]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
   const m = md.match(rx);
   if (!m) return null;
   return m[0].trim();
-}                                       // [PX-CHANGE]
+}
 
-function renderTemplateWithMarkers(tpl, { contexto, opcionesList }) {  // [PX-CHANGE]
+function renderTemplateWithMarkers(tpl, { contexto, opcionesList }) {
   if (!tpl) return null;
   let out = tpl;
 
-  // Sustitución de marcadores requeridos
   const ctxJson = JSON.stringify(contexto);
   const opciones = (opcionesList || []).map((s, i) => `${i+1}) ${s}`).join('\n');
 
   out = out.replace(/\{\{\s*CONTEXT_JSON\s*\}\}/g, ctxJson);
   out = out.replace(/\{\{\s*OPCIONES_APOSTABLES_LIST\s*\}\}/g, opciones);
 
-  // Si quedó algún marcador crítico sin resolver, invalida el template
   if (/\{\{\s*(CONTEXT_JSON|OPCIONES_APOSTABLES_LIST)\s*\}\}/.test(out)) {
     return null;
   }
   return out.trim();
-}                                       // [PX-CHANGE]
+}
 
 function construirOpcionesApostables(mejoresMercados) {
   if (!Array.isArray(mejoresMercados)) return [];
@@ -794,17 +781,15 @@ function construirPrompt(partido, info, memoria) {
 
   const opciones_apostables = construirOpcionesApostables(mejores);
 
-  // Si existe un prompt MD personalizado, úsalo; si no, fallback embebido
   const tpl = getPromptTemplateFromMD();
   if (tpl) {
     let rendered = renderTemplateWithMarkers(tpl, { contexto, opcionesList: opciones_apostables });
     if (rendered && rendered.length > 0) {
-      if (rendered.length > 8000) rendered = rendered.slice(0, 8000); // hard-cap por seguridad
+      if (rendered.length > 8000) rendered = rendered.slice(0, 8000);
       return rendered;
     }
   }
 
-  // Fallback seguro embebido (estructura estable y concisa)
   const prompt = [
     `Eres un analista de apuestas experto. Devuelve SOLO un JSON EXACTO con esta forma:`,
     `{`,
@@ -823,7 +808,7 @@ function construirPrompt(partido, info, memoria) {
     `- Si "no_pick" = true ⇒ se permite que "apuesta" esté vacía y "probabilidad" = 0.0.`,
     `- Responde SOLO el JSON sin texto adicional.`,
     ``,
-    JSON.stringify(contexto),  // ✅ único uso válido de 'contexto'
+    JSON.stringify(contexto),
     ``,
     `opciones_apostables (elige UNA y pégala EXACTA en "apuesta"):`,
     ...opciones_apostables.map((s, i) => `${i+1}) ${s}`)
@@ -844,61 +829,63 @@ function seleccionarCuotaSegunApuesta(partido, apuestaStr) {
       ...(odds.totals_under||[]).map(o => ({ ...o, key:'total_under', label:`Menos de ${o.point}` })),
       ...(odds.spreads||[]).map(o => ({ ...o, key:'spread', label:o.name }))
     ];
-    // Busca coincidencia directa por etiqueta normalizada
     const pick = all.find(o => normalizeStr(o.label) === apuesta);
     if (!pick) return null;
-    // Top3 odds for that market/outcome (for context)
-    const top3 = (pick.key === 'h2h')      ? partido.marketsBest.h2h && [partido.marketsBest.h2h] 
-                : (pick.key === 'total_over') ? partido.marketsOffers.totals_over.slice().sort((a,b)=> b.price - a.price).slice(0,3)
-                : (pick.key === 'total_under')? partido.marketsOffers.totals_under.slice().sort((a,b)=> b.price - a.price).slice(0,3)
-                : (pick.key === 'spread')    ? partido.marketsOffers.spreads.filter(x => x.name === pick.name).sort((a,b)=> b.price - a.price).slice(0,3)
-                : [];
+
+    const top3 = (pick.key === 'h2h')
+                  ? odds.h2h.filter(x => normalizeStr(x.name) === normalizeStr(pick.label)).sort((a,b)=> b.price - a.price).slice(0,3)
+                  : (pick.key === 'total_over')
+                    ? odds.totals_over.filter(x => x.point === pick.point).sort((a,b)=> b.price - a.price).slice(0,3)
+                    : (pick.key === 'total_under')
+                      ? odds.totals_under.filter(x => x.point === pick.point).sort((a,b)=> b.price - a.price).slice(0,3)
+                      : (pick.key === 'spread')
+                        ? odds.spreads.filter(x => normalizeStr(x.name)===normalizeStr(pick.label)).sort((a,b)=> b.price - a.price).slice(0,3)
+                        : [];
+
     return { valor: pick.price, point: pick.point, label: pick.label, top3: top3 || [] };
   } catch {
     return null;
   }
 }
 
-// [PX-FIX] Top 3 bookies para el mercado/outcome seleccionado
+// Top 3 bookies para el mercado/outcome seleccionado (filtrado por outcome/point)
 function top3ForSelectedMarket(partido, apuestaStr) {
   try {
     const apuesta = normalizeStr(apuestaStr);
-    const odds = partido?.marketsOffers; 
-    if (!odds) return [];
-
-    // Reconstruimos el "pick" tal y como se generó en seleccionarCuotaSegunApuesta
+    const odds = partido?.marketsOffers; if (!odds) return [];
     const all = [
       ...(odds.h2h||[]).map(o => ({ ...o, key:'h2h', label:o.name })),
       ...(odds.totals_over||[]).map(o => ({ ...o, key:'total_over', label:`Más de ${o.point}` })),
       ...(odds.totals_under||[]).map(o => ({ ...o, key:'total_under', label:`Menos de ${o.point}` })),
-      ...(odds.spreads||[]).map(o => ({ ...o, key:'spread', label:o.name, }))
+      ...(odds.spreads||[]).map(o => ({ ...o, key:'spread', label:o.name }))
     ];
-
     const pick = all.find(o => normalizeStr(o.label) === apuesta);
     if (!pick) return [];
-
     let pool = [];
-    if (pick.key === 'h2h') {
-      // misma selección (mismo nombre)
-      pool = (odds.h2h||[]).filter(x => normalizeStr(x.name) === normalizeStr(pick.label));
-    } else if (pick.key === 'total_over') {
-      // mismo "point" (misma línea de total)
-      pool = (odds.totals_over||[]).filter(x => Number(x.point) === Number(pick.point));
-    } else if (pick.key === 'total_under') {
-      pool = (odds.totals_under||[]).filter(x => Number(x.point) === Number(pick.point));
-    } else if (pick.key === 'spread') {
-      // mismo hándicap (misma etiqueta)
-      pool = (odds.spreads||[]).filter(x => normalizeStr(x.name) === normalizeStr(pick.label));
-    }
+    if (pick.key === 'h2h') pool = odds.h2h.filter(x => normalizeStr(x.name) === normalizeStr(pick.label));
+    else if (pick.key === 'total_over') pool = odds.totals_over.filter(x => x.point === pick.point);
+    else if (pick.key === 'total_under') pool = odds.totals_under.filter(x => x.point === pick.point);
+    else if (pick.key === 'spread') pool = odds.spreads.filter(x=> normalizeStr(x.name)===normalizeStr(pick.label));
+    return pool.sort((a,b)=> b.price - a.price).slice(0,3);
+  } catch { return []; }
+}
 
-    return (pool || []).slice().sort((a,b)=> Number(b.price) - Number(a.price)).slice(0,3);
-  } catch {
-    return [];
-  }
+function apuestaCoincideConOutcome(apuestaStr, outcomeStr, homeTeam, awayTeam) {
+  const a = normalizeStr(apuestaStr);
+  const o = normalizeStr(outcomeStr);
+  const home = normalizeStr(homeTeam || "");
+  const away = normalizeStr(awayTeam || "");
+
+  const esHome  = a.includes("1x2: local") || a.includes("local") || a.includes(home);
+  const esVisit = a.includes("1x2: visitante") || a.includes("visitante") || a.includes(away);
+  if (o.includes("draw") || o.includes("empate")) return a.includes("empate") || a.includes("draw");
+  if (esHome && (o.includes(away) || o.includes("away"))) return false;
+  if (esVisit && (o.includes(home) || o.includes("home"))) return false;
+  return true;
 }
 
 // =============== MENSAJES (formatos) ===============
-function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoExtra) { // [PX-CHANGE]
+function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoExtra) {
   const mins = Math.max(0, Math.round(partido.minutosFaltantes));
   const top3Arr = Array.isArray(cuotaInfo?.top3) ? cuotaInfo.top3 : [];
   const american = decimalToAmerican(cuotaInfo?.valor);
@@ -943,8 +930,7 @@ function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoE
   ].filter(Boolean).join('\n');
 }
 
-// [PX-CHANGE] FREE con frase motivacional y CTA actualizado
-function construirMensajeFREE(partido, pick, probPct, ev, nivel) {        // [PX-CHANGE]
+function construirMensajeFREE(partido, pick, probPct, ev, nivel) {
   const mins = Math.max(0, Math.round(partido.minutosFaltantes));
   const motiv = String(pick.frase_motivacional || '').trim();
   const motivLine = motiv && motiv.toLowerCase() !== 's/d' ? `\n💬 “${motiv}”\n` : '\n';
@@ -965,9 +951,8 @@ function construirMensajeFREE(partido, pick, probPct, ev, nivel) {        // [PX
   ].join('\n');
 }
 
-// Helper: si no tenemos info_extra aquí, usamos bandera por defecto para derivar país (muy básico)
+// Helper FREE
 function infoFromPromptPais(partido) {
-  // Preferimos el país provisto en enriquecimiento (si ya se inyectó en construirPrompt, vendrá en el texto final VIP; en FREE usamos este helper)
   return partido?.pais || null;
 }
 
@@ -1017,10 +1002,8 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuota, tip
       entrada.market_point = (partido.pickPoint != null) ? String(partido.pickPoint) : null;
       entrada.vigencia_text = partido.vigenciaText || null;
       entrada.top3_json = (Array.isArray(cuota?.top3) ? cuota.top3 : null);
-      // No consenso en PRE ni OUT, solo LIVE
     }
 
-    // [PX-FIX] Anti-duplicado por evento en PRE/OUT
     const { data: dupRow, error: dupErr } = await supabase
       .from(PICK_TABLE).select('id').eq('evento', evento).limit(1).maybeSingle();
     if (dupErr) { console.warn('Supabase dup check error:', dupErr?.message); }
@@ -1048,23 +1031,18 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
   messages.push({ role:'user', content: prompt });
 
   const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(model||''));
-
   const payload = { model, messages };
 
   if (isG5) {
-    // GPT-5: usa max_completion_tokens; NO mandar temperature/top_p/penalties ni 'reasoning'
     payload.max_completion_tokens = Math.max(650, Number(maxTokens) || 650);
-    // Intento de JSON mode: si da 400, lo quitamos en retry
     payload.response_format = { type: "json_object" };
   } else {
-    // Modelos clásicos
     payload.max_tokens = maxTokens;
     payload.temperature = 0.15;
     payload.top_p = 1;
     payload.presence_penalty = 0;
     payload.frequency_penalty = 0;
   }
-
   return payload;
 }
 
@@ -1081,7 +1059,6 @@ async function repairPickJSON(model, rawText) {
   };
 
   if (isG5) {
-    // [PX-FIX] GPT-5 → sólo max_completion_tokens
     fixReq.max_completion_tokens = 300;
   } else {
     fixReq.temperature = 0.2;
@@ -1102,15 +1079,16 @@ function arrBest(arr) {
   return arr.reduce((acc, x) => (x.price && (!acc || x.price > acc.price) ? x : acc), null);
 }
 
-// AF league mapping (if available)
+// AF league mapping (mínimo para mejorar aciertos por liga+fecha)
 const AF_LEAGUE_ID_BY_TITLE = {
   "England - Premier League": 39,
   "Spain - La Liga": 140,
   "Italy - Serie A": 135,
   "Germany - Bundesliga": 78,
   "France - Ligue 1": 61,
-  "UEFA - Champions League": 2
-  // Agrega aquí las que más uses (MLS, Liga MX, etc.) usando /leagues?search=
+  "Mexico - Liga MX": 262,
+  "Brazil - Serie A": 71,
+  "Argentina - Liga Profesional": 128
 };
-  // (Mapping of sport_title to API-Football league IDs, if provided elsewhere)
+
 const TAGLINE = "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.";
