@@ -13,7 +13,7 @@ const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
 // [PX-FIX] Fin imports requeridos
 
 // [PX-ADD] Resolver de equipos/liga (coincidencias OddsAPI ↔ API-FOOTBALL)
-const matchHelper = require(path.join(__dirname, '..', '_lib', 'match-helper'));
+const matchHelper = require('./_lib/match-helper.cjs');
 
 const {
   SUPABASE_URL,
