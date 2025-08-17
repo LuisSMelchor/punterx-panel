@@ -1,15 +1,18 @@
 // netlify/functions/autopick-vip-nuevo.cjs
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–55 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
+// + Corazonada IA integrada (helpers, cálculo, visualización y guardado en Supabase)
+// + Snapshots de cuotas (odds_prev_best) para señal de mercado (lectura y escritura)
+
+'use strict';
 
 const OpenAI = require('openai');
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
 const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
-// Al inicio junto a otros requires:
+// Corazonada (tu módulo ya existente)
 const { computeCorazonada } = require('./_corazonada.cjs');
-
 
 // Resolver de equipos/liga (coincidencias OddsAPI ↔ API-FOOTBALL) — carga segura
 let resolveTeamsAndLeague = null;
@@ -25,6 +28,7 @@ try {
   console.warn('[MATCH-HELPER] No se pudo cargar:', e?.message || e);
 }
 
+// =============== ENV ===============
 const {
   SUPABASE_URL,
   SUPABASE_KEY,
@@ -41,7 +45,7 @@ const {
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
 const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5';
 
-// Flags de auditoría/estricto (inertes si no se configuran en ENV)
+// Flags de auditoría/estricto
 const STRICT_MATCH = process.env.STRICT_MATCH === '1';  // exige match AF para seguir con IA/Telegram
 const DEBUG_TRACE  = process.env.DEBUG_TRACE === '1';   // trazas detalladas por evento
 
@@ -62,8 +66,15 @@ const SOFT_BUDGET_MS = Number(process.env.SOFT_BUDGET_MS || 70000);
 const MAX_OAI_CALLS_PER_CYCLE = Number(process.env.MAX_OAI_CALLS_PER_CYCLE || 40);
 const COUNTRY_FLAG = process.env.COUNTRY_FLAG || '🇲🇽';
 
+// Corazonada toggle
+const CORAZONADA_ENABLED = (process.env.CORAZONADA_ENABLED || '1') !== '0';
+
 const LOCK_TABLE = 'px_locks';
 const LOCK_KEY_FN = 'autopick_vip_nuevo';
+
+// Tablas
+const PICK_TABLE = 'picks_historicos';
+const ODDS_SNAPSHOTS_TABLE = 'odds_snapshots'; // nueva tabla para snapshots de cuotas
 
 function assertEnv() {
   const required = [
@@ -162,14 +173,9 @@ async function releaseDistributedLock() {
   }
 }
 
-// === Fin helpers diagnóstico ===
-
+// =============== CONFIG MODELOS ===============
 const MODEL = (process.env.OPENAI_MODEL || OPENAI_MODEL || 'gpt-5-mini');
 const MODEL_FALLBACK = (process.env.OPENAI_MODEL_FALLBACK || 'gpt-5');
-
-// =============== CONFIG (ENV-overridable) ===============
-const lockKey = 'punterx_lock';
-const PICK_TABLE = 'picks_historicos';
 
 // =============== UTILS ===============
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -250,7 +256,13 @@ function formatApuestasExtra(s) {
   return parts.map(x => (x.startsWith('-') ? x : `- ${x}`)).join('\n');
 }
 
-// Normalizador de evento OddsAPI v4 → shape interno
+// Aux: obtener mejor cuota de un array
+function arrBest(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  return arr.reduce((acc, x) => (x.price && (!acc || x.price > acc.price) ? x : acc), null);
+}
+
+// =============== NORMALIZADOR ODDSAPI ===============
 function normalizeOddsEvent(ev) {
   try {
     const id = ev?.id || `${ev?.commence_time}-${ev?.home_team}-${ev?.away_team}`;
@@ -303,11 +315,58 @@ function normalizeOddsEvent(ev) {
   }
 }
 
+// =============== SNAPSHOTS (odds_prev_best) ===============
+// Guardar snapshot de la mejor cuota del mercado/outcome seleccionado
+async function saveOddsSnapshot(partido, pickLabel, pointOrNull, bestObj) {
+  try {
+    if (!bestObj || !bestObj.price) return;
+    const row = {
+      event_id: String(partido.id || ''),
+      fixture_id: null, // se puede actualizar si ya tienes info.fixture_id
+      league_text: String(partido.liga || ''),
+      market: inferMarketFromApuesta(pickLabel),
+      outcome_label: String(pickLabel || ''),
+      point: (pointOrNull != null) ? Number(pointOrNull) : null,
+      best_price: Number(bestObj.price),
+      best_bookie: String(bestObj.bookie || ''),
+      captured_at: nowISO()
+    };
+    const { error } = await supabase.from(ODDS_SNAPSHOTS_TABLE).insert([row]);
+    if (error) console.warn('[SNAPSHOT] insert error:', error.message);
+  } catch (e) {
+    console.warn('[SNAPSHOT] exception:', e?.message || e);
+  }
+}
+
+// Obtener best price previo (si existe)
+async function getPrevBestOdds(partido, pickLabel, pointOrNull) {
+  try {
+    const market = inferMarketFromApuesta(pickLabel);
+    let q = supabase
+      .from(ODDS_SNAPSHOTS_TABLE)
+      .select('best_price, best_bookie, captured_at')
+      .eq('event_id', String(partido.id || ''))
+      .eq('market', market)
+      .eq('outcome_label', String(pickLabel || ''))
+      .order('captured_at', { ascending: false })
+      .limit(1);
+
+    if (pointOrNull != null) q = q.eq('point', Number(pointOrNull));
+
+    const { data, error } = await q;
+    if (error) { console.warn('[SNAPSHOT] select error:', error.message); return null; }
+    const r = Array.isArray(data) && data[0] ? data[0] : null;
+    return r ? Number(r.best_price) : null;
+  } catch (e) {
+    console.warn('[SNAPSHOT] select exception:', e?.message || e);
+    return null;
+  }
+}
+
 // =============== NETLIFY HANDLER ===============
 exports.handler = async (event, context) => {
   assertEnv();
 
-  // Heartbeat de ciclo (auditar scheduler/UTC)
   const CICLO_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
   console.log(`▶️ CICLO ${CICLO_ID} start; now(UTC)= ${new Date().toISOString()}`);
 
@@ -322,7 +381,7 @@ exports.handler = async (event, context) => {
   }
   global.__punterx_lock = true;
 
-  // Lock distribuido (evita solapamiento entre contenedores cuando Netlify reintenta)
+  // Lock distribuido
   const gotLock = await acquireDistributedLock(120);
   if (!gotLock) {
     console.warn('LOCK distribuido activo → salto ciclo');
@@ -337,7 +396,7 @@ exports.handler = async (event, context) => {
   };
 
   try {
-    // 1) Obtener partidos OddsAPI (prefiltro cuotas activas + ventana)
+    // 1) Obtener partidos OddsAPI
     const base = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu,us,uk&oddsFormat=decimal&markets=h2h,totals,spreads`;
     const url = `${base}&apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
     const tOdds = Date.now();
@@ -351,31 +410,28 @@ exports.handler = async (event, context) => {
     resumen.recibidos = Array.isArray(eventos) ? eventos.length : 0;
     console.log(`ODDSAPI ok=true count=${resumen.recibidos} ms=${tOddsMs}`);
 
-    // Filtrar eventos ya iniciados (minutosFaltantes negativos)
+    // Filtrar ya iniciados
     const eventosUpcoming = (eventos || []).filter(ev => {
       const t = Date.parse(ev.commence_time);
       return Number.isFinite(t) && t > Date.now();
-    }); // Sólo eventos por comenzar
-    const filteredCount = resumen.recibidos - (Array.isArray(eventosUpcoming) ? eventosUpcoming.length : 0);
-    if (filteredCount > 0) {
-      console.log(`Filtrados ${filteredCount} eventos ya comenzados (omitidos)`);
-    }
+    });
 
-    // 2) Normalizar eventos
+    // 2) Normalizar
     const partidos = eventosUpcoming.map(normalizeOddsEvent).filter(Boolean);
+
+    // Filtrar por ventana
     const inWindow = partidos.filter(p => {
       const mins = Math.round(p.minutosFaltantes);
-      console.log(`DBG commence_time= ${p.commence_time} mins= ${mins}`);
       const principal = mins >= WINDOW_MAIN_MIN && mins <= WINDOW_MAIN_MAX;
       const fallback  = !principal && mins >= WINDOW_FB_MIN && mins <= WINDOW_FB_MAX;
       return principal || fallback;
     });
 
-    // Conteos por ventana y log claro (EN VENTANA vs RECIBIDOS)
     const principalCount = inWindow.filter(p => {
       const m = Math.round(p.minutosFaltantes);
       return m >= WINDOW_MAIN_MIN && m <= WINDOW_MAIN_MAX;
     }).length;
+
     const fallbackCount = inWindow.filter(p => {
       const m = Math.round(p.minutosFaltantes);
       return !(m >= WINDOW_MAIN_MIN && m <= WINDOW_MAIN_MAX) && (m >= WINDOW_FB_MIN && m <= WINDOW_FB_MAX);
@@ -385,17 +441,14 @@ exports.handler = async (event, context) => {
     resumen.principal = principalCount;
     resumen.fallback  = fallbackCount;
 
-    // Sub-contadores dentro de la ventana principal
     const sub4555 = inWindow.filter(p => {
       const m = Math.round(p.minutosFaltantes);
       return m >= SUB_MAIN_MIN && m <= SUB_MAIN_MAX; // 45–55
     }).length;
-
     const subEarly = inWindow.filter(p => {
       const m = Math.round(p.minutosFaltantes);
-      return m >= WINDOW_MAIN_MIN && m < SUB_MAIN_MIN; // 40–44 si la main arranca en 45
+      return m >= WINDOW_MAIN_MIN && m < SUB_MAIN_MIN; // 40–44 si aplicara
     }).length;
-
     resumen.sub_45_55 = sub4555;
     resumen.sub_40_44 = subEarly;
 
@@ -411,10 +464,12 @@ exports.handler = async (event, context) => {
       return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
     }
 
-    // 3) Prefiltro ligero (no descarta, solo prioriza)
-    const candidatos = inWindow.sort((a,b) => scorePreliminar(b) - scorePreliminar(a)).slice(0, MAX_PER_CYCLE);
+    // 3) Prefiltro ligero (prioriza, no descarta)
+    const candidatos = inWindow
+      .sort((a,b) => scorePreliminar(b) - scorePreliminar(a))
+      .slice(0, MAX_PER_CYCLE);
+
     resumen.candidatos = candidatos.length;
-    console.log(`OddsAPI: recibidos=${resumen.recibidos}, en_ventana=${resumen.enVentana} (${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX}m)`);
 
     // 4) Procesar candidatos con enriquecimiento + OpenAI
     let afHits = 0, afFails = 0;
@@ -428,7 +483,8 @@ exports.handler = async (event, context) => {
 
       try {
         abortIfOverBudget();
-        // Resolver de nombres y liga ANTES de consultar API-FOOTBALL
+
+        // Resolver nombres/ligas antes de API-FOOTBALL
         try {
           const resolved = resolveTeamsAndLeague
             ? await resolveTeamsAndLeague({
@@ -443,7 +499,7 @@ exports.handler = async (event, context) => {
             if (resolved.home && resolved.home !== P.home) P.home = resolved.home;
             if (resolved.away && resolved.away !== P.away) P.away = resolved.away;
             if (!P.liga && resolved.league) P.liga = resolved.league;
-            if (resolved.aliases) P._aliases = resolved.aliases; // trazabilidad
+            if (resolved.aliases) P._aliases = resolved.aliases;
             console.log(
               `[evt:${P.id}] RESOLVE > home="${prevHome}"→"${P.home}" | away="${prevAway}"→"${P.away}" | liga="${prevLiga||'N/D'}"→"${P.liga||'N/D'}"`
             );
@@ -485,10 +541,10 @@ exports.handler = async (event, context) => {
         // B) Memoria relevante (máx 5)
         const memoria = await obtenerMemoriaSimilar(P);
 
-        // C) Construir prompt maestro con opciones_apostables reales
+        // C) Prompt maestro con opciones apostables reales
         const prompt = construirPrompt(P, info, memoria);
 
-        // D) OpenAI (fallback + 1 reintento en cada modelo)
+        // D) OpenAI (fallback + retries defensivos)
         let pick, modeloUsado = MODEL;
         try {
           const r = await obtenerPickConFallback(prompt);
@@ -501,7 +557,7 @@ exports.handler = async (event, context) => {
           console.error(traceId, 'Error GPT:', e?.message || e); continue;
         }
 
-        // Selección de cuota EXACTA del mercado pedido
+        // Seleccionar cuota EXACTA del mercado pedido
         const cuotaSel = seleccionarCuotaSegunApuesta(P, pick.apuesta);
         if (!cuotaSel || !cuotaSel.valor) { console.warn(traceId, '❌ No se encontró cuota del mercado solicitado → descartando'); continue; }
         const cuota = Number(cuotaSel.valor);
@@ -512,7 +568,7 @@ exports.handler = async (event, context) => {
           console.warn(traceId, '❌ Inconsistencia apuesta/outcome → descartando'); continue;
         }
 
-        // Probabilidad (no inventar) + coherencia con implícita
+        // Probabilidad + coherencia con implícita
         const probPct = estimarlaProbabilidadPct(pick);
         if (probPct == null) { console.warn(traceId, '❌ Probabilidad ausente → descartando pick'); continue; }
         if (probPct < 5 || probPct > 85) { console.warn(traceId, '❌ Probabilidad fuera de rango [5–85] → descartando pick'); continue; }
@@ -522,11 +578,46 @@ exports.handler = async (event, context) => {
           continue;
         }
 
+        // EV
         const ev = calcularEV(probPct, cuota);
         if (ev == null) { console.warn(traceId, 'EV nulo'); continue; }
         resumen.procesados++;
-
         if (ev < 10) { resumen.descartados_ev++; console.log(traceId, `EV ${ev}% < 10% → descartado`); continue; }
+
+        // === Corazonada IA (si habilitada) ===
+        let cz = { score: 0, motivo: '' };
+        try {
+          if (CORAZONADA_ENABLED) {
+            const side = inferPickSideFromApuesta(pick.apuesta);
+            const market = inferMarketFromApuesta(pick.apuesta);
+
+            // oddsNow (best), oddsPrev (best) vía snapshots:
+            const oddsNowBest = (cuotaSel && Number(cuotaSel.valor)) || null;
+            const oddsPrevBest = await getPrevBestOdds(P, pick.apuesta, cuotaSel.point);
+
+            // Para computeCorazonada necesitamos xg/availability/contexto
+            const xgStats = buildXgStatsFromAF(info);           // ajusta si tu objeto AF difiere
+            const availability = buildAvailabilityFromAF(info);
+            const context = buildContextFromAF(info);
+
+            const cora = computeCorazonada({
+              pick: { side, market },
+              oddsNow: { best: oddsNowBest },
+              oddsPrev: { best: oddsPrevBest },
+              xgStats,
+              availability,
+              context
+            });
+            cz = { score: cora?.score || 0, motivo: String(cora?.motivo || '').trim() };
+
+            // Guardar snapshot del best actual (para próximos ciclos)
+            const top3Arr = Array.isArray((cuotaSel && cuotaSel.top3) ? cuotaSel.top3 : []) ? cuotaSel.top3 : [];
+            const bestObj = top3Arr.length ? top3Arr[0] : { price: oddsNowBest, bookie: 'n/d' };
+            await saveOddsSnapshot(P, pick.apuesta, cuotaSel.point ?? null, bestObj);
+          }
+        } catch (e) {
+          console.warn(traceId, '[Corazonada] excepción:', e?.message || e);
+        }
 
         // Nivel y destino
         const nivel = clasificarPickPorEV(ev);
@@ -535,21 +626,21 @@ exports.handler = async (event, context) => {
 
         if (destinoVIP) {
           resumen.intentos_vip++;
-          const msg = construirMensajeVIP(P, pick, probPct, ev, nivel, cuotaInfo, info);
+          const msg = construirMensajeVIP(P, pick, probPct, ev, nivel, cuotaInfo, info, cz);
           const ok = await enviarVIP(msg);
           if (ok) {
             resumen.enviados_vip++;
-            await guardarPickSupabase(P, pick, probPct, ev, nivel, cuotaInfo, "VIP");
+            await guardarPickSupabase(P, pick, probPct, ev, nivel, cuotaInfo, "VIP", cz);
           }
           const topBookie = (cuotaInfo.top3 && cuotaInfo.top3[0]?.bookie) ? `${cuotaInfo.top3[0].bookie}@${cuotaInfo.top3[0].price}` : `cuota=${cuotaSel.valor}`;
           console.log(ok ? `${traceId} ✅ Enviado VIP | fixture=${info?.fixture_id || 'N/D'} | ${topBookie}` : `${traceId} ⚠️ Falló envío VIP`);
         } else {
           resumen.intentos_free++;
-          const msg = construirMensajeFREE(P, pick, probPct, ev, nivel);
+          const msg = construirMensajeFREE(P, pick, probPct, ev, nivel, cz);
           const ok = await enviarFREE(msg);
           if (ok) {
             resumen.enviados_free++;
-            await guardarPickSupabase(P, pick, probPct, ev, nivel, null, "FREE");
+            await guardarPickSupabase(P, pick, probPct, ev, nivel, null, "FREE", cz);
           }
           console.log(ok ? `${traceId} ✅ Enviado FREE | fixture=${info?.fixture_id || 'N/D'} | cuota=${cuotaSel.valor}` : `${traceId} ⚠️ Falló envío FREE`);
         }
@@ -563,7 +654,6 @@ exports.handler = async (event, context) => {
     resumen.af_hits = afHits; resumen.af_fails = afFails;
 
     return { statusCode: 200, body: JSON.stringify({ ok: true, resumen }) };
-
   } catch (e) {
     console.error('❌ Excepción en ciclo principal:', e?.message || e);
     return { statusCode: 200, body: JSON.stringify({ ok: false, error: e?.message || 'exception' }) };
@@ -581,11 +671,12 @@ function scorePreliminar(p) {
   let score = 0;
 
   // Diversidad de bookies y mercados presentes
-  const set = new Set([...(p.marketsOffers?.h2h||[]),
-                       ...(p.marketsOffers?.totals_over||[]),
-                       ...(p.marketsOffers?.totals_under||[]),
-                       ...(p.marketsOffers?.spreads||[])]
-    .map(x => (x?.bookie||"").toLowerCase()).filter(Boolean));
+  const set = new Set([
+    ...(p.marketsOffers?.h2h||[]),
+    ...(p.marketsOffers?.totals_over||[]),
+    ...(p.marketsOffers?.totals_under||[]),
+    ...(p.marketsOffers?.spreads||[])
+  ].map(x => (x?.bookie||"").toLowerCase()).filter(Boolean));
   if (set.size >= PREFILTER_MIN_BOOKIES) score += 20;
 
   const hasH2H   = (p.marketsOffers?.h2h||[]).length > 0;
@@ -614,14 +705,13 @@ async function enriquecerPartidoConAPIFootball(partido) {
       return {};
     }
 
-    // --- Helpers locales (no rompen el scope global)
+    // --- Helpers locales
     const sportTitle = String(partido?.sport_title || partido?.liga || "").trim();
     const afLeagueId = AF_LEAGUE_ID_BY_TITLE[sportTitle] || null;
     const kickoffMs = Date.parse(partido.commence_time || "") || Date.now();
     const kickoffISO = new Date(kickoffMs).toISOString();
     const day = 24 * 3600 * 1000;
 
-    // Normalizador: elimina acentos, abreviaturas y artículos comunes.
     const norm = (s) => String(s || "")
       .toLowerCase()
       .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -632,10 +722,8 @@ async function enriquecerPartidoConAPIFootball(partido) {
     const homeN = norm(partido.home);
     const awayN = norm(partido.away);
 
-    // Tokenización simple para Jaccard
     const tok = (s) => norm(s).split(/\s+/).filter(Boolean);
 
-    // Similaridad por Jaccard con boost si es igualdad exacta tras norm()
     function nameScore(target, candidate) {
       const t = tok(target), c = tok(candidate);
       if (!t.length || !c.length) return 0;
@@ -643,9 +731,9 @@ async function enriquecerPartidoConAPIFootball(partido) {
       const inter = [...setT].filter(x => setC.has(x)).length;
       const union = new Set([...setT, ...setC]).size;
       let j = union ? inter / union : 0;
-      if (norm(target) === norm(candidate)) j += 1; // boost por igualdad exacta
-      if (norm(candidate).includes(norm(target)) || norm(target).includes(norm(candidate))) j += 0.25; // incluye siglas
-      return j; // rango aproximado [0..2.25]
+      if (norm(target) === norm(candidate)) j += 1;
+      if (norm(candidate).includes(norm(target)) || norm(target).includes(norm(candidate))) j += 0.25;
+      return j;
     }
 
     function fixtureScore(fx, homeName, awayName) {
@@ -655,7 +743,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
       const swapped = nameScore(homeName, ta) + nameScore(awayName, th);
       const dt2 = Date.parse(fx?.fixture?.date || "");
       const deltaH = Number.isFinite(dt2) ? Math.abs(dt2 - kickoffMs) / 3600000 : 999;
-      const timeBoost = deltaH <= 36 ? 0.25 : 0; // dentro de la ventana ±36h
+      const timeBoost = deltaH <= 36 ? 0.25 : 0;
       return Math.max(direct, swapped) + timeBoost;
     }
 
@@ -680,7 +768,6 @@ async function enriquecerPartidoConAPIFootball(partido) {
         if (res?.ok) {
           const data = await safeJson(res);
           const arr = Array.isArray(data?.response) ? data.response : [];
-          // Heurística rápida por nombre/fecha ±60h
           const candidates = arr
             .filter(x => {
               const dt2 = Date.parse(x?.fixture?.date || "");
@@ -698,7 +785,6 @@ async function enriquecerPartidoConAPIFootball(partido) {
             .sort((a,b)=> b.nameScore - a.nameScore);
           let best = candidates[0]?.nameScore ? candidates[0]?.x : null;
 
-          // Resolver por similitud si no confía la heurística
           if (!best || candidates[0]?.nameScore < 2) {
             const resolved = resolveFixtureFromList(partido, arr);
             if (resolved) {
@@ -715,7 +801,8 @@ async function enriquecerPartidoConAPIFootball(partido) {
               estadio: best?.fixture?.venue?.name || null,
               ciudad: best?.fixture?.venue?.city || null,
               arbitro: best?.fixture?.referee || null,
-              clima: best?.fixture?.weather || null
+              weather: best?.fixture?.weather || null, // algunos providers
+              xg: null, availability: null // reservados para builders locales
             };
           }
         } else if (res) {
@@ -746,7 +833,8 @@ async function enriquecerPartidoConAPIFootball(partido) {
               estadio: best?.fixture?.venue?.name || null,
               ciudad: best?.fixture?.venue?.city || null,
               arbitro: best?.fixture?.referee || null,
-              clima: best?.fixture?.weather || null
+              weather: best?.fixture?.weather || null,
+              xg: null, availability: null
             };
           }
         }
@@ -755,7 +843,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
       }
     }
 
-    // === 3) TERCER INTENTO: búsqueda textual (menos preciso)
+    // === 3) BÚSQUEDA TEXTUAL
     try {
       const q = `${partido.home} ${partido.away}`;
       const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}&timezone=UTC`;
@@ -766,8 +854,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
         const j = await safeJson(res);
         let arr = Array.isArray(j?.response) ? j.response : [];
         if (!arr.length) {
-          console.warn(`[evt:${partido.id}] Sin coincidencias search="${q}", homeN="${homeN}", awayN="${awayN}"`);
-          // Fallback adicional: intentar búsqueda por cada equipo (home/away)
+          // Fallback por cada equipo
           const tryOne = async (name) => {
             const u = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(name)}&timezone=UTC`;
             const r = await fetchWithRetry(u, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
@@ -780,7 +867,6 @@ async function enriquecerPartidoConAPIFootball(partido) {
           arr = [...arrH, ...arrA];
         }
 
-        // Filtra por cercanía temporal ±48h
         const filtered = arr.filter(x => {
           const dt2 = Date.parse(x?.fixture?.date || "");
           if (!Number.isFinite(dt2)) return true;
@@ -798,7 +884,8 @@ async function enriquecerPartidoConAPIFootball(partido) {
             estadio: best?.fixture?.venue?.name || null,
             ciudad: best?.fixture?.venue?.city || null,
             arbitro: best?.fixture?.referee || null,
-            clima: best?.fixture?.weather || null
+            weather: best?.fixture?.weather || null,
+            xg: null, availability: null
           };
         }
       }
@@ -806,7 +893,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
       console.warn(`[evt:${partido?.id}] Error search:`, e?.message || e);
     }
 
-    // === 4) ÚLTIMO RECURSO: resolver IDs de equipos y consultar H2H en ±2 días ===
+    // === 4) ÚLTIMO RECURSO: IDs equipos & H2H ±2d
     try {
       const from = new Date(kickoffMs - 2 * day).toISOString().slice(0, 10);
       const to = new Date(kickoffMs + 2 * day).toISOString().slice(0, 10);
@@ -820,7 +907,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
         const target = norm(name);
         const win = items.map(x => {
           const nm = x?.team?.name || "";
-          return { id: x?.team?.id, score: nameScore(target, nm) };
+          return { id: x?.team?.id, score: (target === norm(nm)) ? 2 : (norm(nm).includes(target) || target.includes(norm(nm)) ? 1 : 0) };
         }).sort((a, b) => b.score - a.score)[0];
         return win?.id || items[0]?.team?.id || null;
       };
@@ -845,7 +932,8 @@ async function enriquecerPartidoConAPIFootball(partido) {
               estadio: fx?.fixture?.venue?.name || null,
               ciudad: fx?.fixture?.venue?.city || null,
               arbitro: fx?.fixture?.referee || null,
-              clima: fx?.fixture?.weather || null
+              weather: fx?.fixture?.weather || null,
+              xg: null, availability: null
             };
           }
         }
@@ -854,8 +942,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
       console.warn(`[evt:${partido?.id}] Error H2H ±2d:`, e?.message || e);
     }
 
-    // Si todo falla:
-    console.warn(`[evt:${partido?.id}] Sin coincidencias en API-Football (kickoff=${kickoffISO}, homeN="${homeN}", awayN="${awayN}")`);
+    console.warn(`[evt:${partido?.id}] Sin coincidencias en API-Football`);
     return {};
   } catch (e) {
     console.error(`[evt:${partido?.id}] Error enriquecerPartidoConAPIFootball:`, e?.message || e);
@@ -940,7 +1027,7 @@ function clasificarPickPorEV(ev) {
 // =============== OAI JSON PARSING ===============
 function extractFirstJsonBlock(text) {
   if (!text) return null;
-  const match = text.match(/\{[\s\S]*\}/);
+  const match = text.match(/{[\s\S]*}/);
   if (!match) return null;
   try {
     return JSON.parse(match[0]);
@@ -979,11 +1066,9 @@ async function pedirPickConModelo(modelo, prompt) {
   }
 
   const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {"no_pick":true,"motivo_no_pick":"sin señal"}.';
-  // Ajuste de tokens: arranque bajo y retry controlado (cost-aware)
   let tokens = 260;
 
-  // 1er intento
-  let req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
+  const req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
   try {
     const t0 = Date.now();
     const completion = await openai.chat.completions.create(req);
@@ -993,17 +1078,17 @@ async function pedirPickConModelo(modelo, prompt) {
     const meta = {
       model: modelo,
       ms: Date.now() - t0,
-      finish_reason: choice?.finish_reason || completion?.choices?.[0]?.finish_reason || "n/d",
+      finish_reason: choice?.finish_reason || "n/d",
       usage: completion?.usage || null
     };
     try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
+
     if (meta.finish_reason === 'length') {
-      // Retry: +80 tokens, mantener JSON estricto y permitir fallback de modelo
       tokens = Math.min(tokens + 80, 340);
       const modeloRetry = process.env.OPENAI_MODEL_FALLBACK || modelo;
       const messagesRetry = [
         ...req.messages,
-        { role: "user", content: "⚠️ Repite TODO el JSON COMPLETO y compacto. No cortes la salida, no repitas texto previo. Formato estrictamente JSON-objeto." }
+        { role: "user", content: "⚠️ Repite TODO el JSON COMPLETO y compacto. No cortes la salida. Formato estrictamente JSON-objeto." }
       ];
       const req2 = {
         ...req,
@@ -1033,17 +1118,10 @@ async function pedirPickConModelo(modelo, prompt) {
 
   } catch (e) {
     const msg = String(e?.message || '');
-    // Hotfix: algunos modelos (gpt-5*) devuelven "Unsupported value: 'temperature' ... Only default (1)"
-    // Reintenta eliminando sampling params y/o response_format según corresponda.
     if (/Unsupported value:\s*'temperature'|unknown parameter|unsupported parameter|response_format/i.test(msg)) {
       try {
         const req2 = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
-        // Limpieza defensiva: quita sampling params para cualquier modelo si hubo error por temperature
-        delete req2.temperature;
-        delete req2.top_p;
-        delete req2.presence_penalty;
-        delete req2.frequency_penalty;
-        // Solo quita response_format si el servidor lo marcó como no soportado:
+        delete req2.temperature; delete req2.top_p; delete req2.presence_penalty; delete req2.frequency_penalty;
         if (/response_format/i.test(msg) && req2.response_format) delete req2.response_format;
         const c2 = await openai.chat.completions.create(req2);
         global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
@@ -1097,8 +1175,8 @@ function getPromptTemplateFromMD() {
   __PROMPT_MD_CACHE = md;
   if (!md) return null;
 
-  // Acepta “Pre-match/Pre–match” (guiones Unicode o ASCII) y variantes
-  const rx = /^\s*(?:#+\s*)?1\)\s*Pre[\-– ]match\b[\s\S]*?(?=^\s*(?:#+\s*)?\d+\)\s|\Z)/mi;
+  // Usamos la sección 1) Pre-match (permite variaciones de guiones)
+  const rx = /(?:^|\n)\s*(?:#+\s*)?1\)\s*Pre(?:-|–|\s)match[\s\S]*?(?=\n\s*(?:#+\s*)?\d+\)|\Z)/mi;
   const m = md.match(rx);
   if (!m) return null;
   return m[0].trim();
@@ -1111,10 +1189,10 @@ function renderTemplateWithMarkers(tpl, { contexto, opcionesList }) {
   const ctxJson = JSON.stringify(contexto);
   const opciones = (opcionesList || []).map((s, i) => `${i+1}) ${s}`).join('\n');
 
-  out = out.replace(/\{\{\s*CONTEXT_JSON\s*\}\}/g, ctxJson);
-  out = out.replace(/\{\{\s*OPCIONES_APOSTABLES_LIST\s*\}\}/g, opciones);
+  out = out.replace(/{{\s*CONTEXT_JSON\s*}}/g, ctxJson);
+  out = out.replace(/{{\s*OPCIONES_APOSTABLES_LIST\s*}}/g, opciones);
 
-  if (/\{\{\s*(CONTEXT_JSON|OPCIONES_APOSTABLES_LIST)\s*\}\}/.test(out)) {
+  if (/{{\s*(CONTEXT_JSON|OPCIONES_APOSTABLES_LIST)\s*}}/.test(out)) {
     return null;
   }
   return out.trim();
@@ -1167,28 +1245,26 @@ function construirPrompt(partido, info, memoria) {
   }
 
   const prompt = [
-    `Eres un analista de apuestas experto. Devuelve SOLO un JSON EXACTO con esta forma:`,
-    `{`,
-    `  "analisis_gratuito": "",`,
-    `  "analisis_vip": "",`,
-    `  "apuesta": "",`,
-    `  "apuestas_extra": "",`,
-    `  "frase_motivacional": "",`,
-    `  "probabilidad": 0.0,`,
-    `  "no_pick": false,`,
-    `  "motivo_no_pick": ""`,
-    `}`,
-    `Reglas:`,
-    `- Si "no_pick" = false ⇒ "apuesta" OBLIGATORIA y "probabilidad" ∈ [0.05, 0.85].`,
-    `- "apuesta" debe ser EXACTAMENTE una de 'opciones_apostables' listadas abajo (cópiala literal).`,
-    `- Si "no_pick" = true ⇒ se permite que "apuesta" esté vacía y "probabilidad" = 0.0.`,
-    `- Responde SOLO el JSON sin texto adicional.`,
-    ``,
-    JSON.stringify(contexto),
-    ``,
-    `opciones_apostables (elige UNA y pégala EXACTA en "apuesta"):`,
-    ...opciones_apostables.map((s, i) => `${i+1}) ${s}`)
-  ].join("\n");
+`Eres un analista de apuestas experto. Devuelve SOLO un JSON EXACTO con esta forma:`,
+`{`,
+`  "analisis_gratuito": "",`,
+`  "analisis_vip": "",`,
+`  "apuesta": "",`,
+`  "apuestas_extra": "",`,
+`  "frase_motivacional": "",`,
+`  "probabilidad": 0.0,`,
+`  "no_pick": false,`,
+`  "motivo_no_pick": ""`,
+`}`,
+`Reglas:`,
+`- Si "no_pick" = false ⇒ "apuesta" OBLIGATORIA y "probabilidad" ∈ [0.05, 0.85].`,
+`- "apuesta" debe ser EXACTAMENTE una de 'opciones_apostables' listadas abajo (cópiala literal).`,
+`- Si "no_pick" = true ⇒ se permite que "apuesta" esté vacía y "probabilidad" = 0.0.`,
+`- Responde SOLO el JSON sin texto adicional.`,
+JSON.stringify(contexto),
+`opciones_apostables (elige UNA y pégala EXACTA en "apuesta"):`,
+...opciones_apostables.map((s, i) => `${i+1}) ${s}`)
+].join("\n");
 
   return prompt;
 }
@@ -1260,32 +1336,102 @@ function apuestaCoincideConOutcome(apuestaStr, outcomeStr, homeTeam, awayTeam) {
   return true;
 }
 
+// =============== Corazonada: helpers de mapeo y UI ===============
+function inferPickSideFromApuesta(apuesta) {
+  const s = String(apuesta || '').toLowerCase();
+  if (/^\s*local\b|home\b|^1$/.test(s)) return 'home';
+  if (/^\s*visitante\b|away\b|^2$/.test(s)) return 'away';
+  if (/\bempate\b|draw|^x$/.test(s)) return 'draw';
+  if (/over|más de|mas de/.test(s)) return 'over';
+  if (/under|menos de/.test(s)) return 'under';
+  if (/ambos anotan.*sí|ambos anotan.*si|btts.*yes/.test(s)) return 'btts_yes';
+  if (/ambos anotan.*no|btts.*no/.test(s)) return 'btts_no';
+  return 'home';
+}
+
+function inferMarketFromApuesta(apuesta) {
+  const s = String(apuesta || '').toLowerCase();
+  if (/ambos anotan|btts/.test(s)) return 'btts';
+  if (/over|under|total|más de|menos de|mas de/.test(s)) return 'totals';
+  if (/handicap/.test(s)) return 'asian_handicap';
+  if (/doble oportunidad|double chance/.test(s)) return 'double_chance';
+  return 'h2h';
+}
+
+function corazonadaBadge(score) {
+  if (score >= 90) return '🔥';
+  if (score >= 75) return '⚡';
+  if (score >= 50) return '✨';
+  return '';
+}
+
+// Estos builders leen tu objeto enriquecido de API-FOOTBALL (ajusta si difiere)
+function buildXgStatsFromAF(af) {
+  try {
+    if (!af || !af.xg) return null;
+    const h = af.xg.home || {};
+    const a = af.xg.away || {};
+    return {
+      home: { xg_for: Number(h.for || h.xg_for || 0), xg_against: Number(h.against || h.xg_against || 0), n: Number(h.n || 5) },
+      away: { xg_for: Number(a.for || a.xg_for || 0), xg_against: Number(a.against || a.xg_against || 0), n: Number(a.n || 5) }
+    };
+  } catch { return null; }
+}
+
+function buildAvailabilityFromAF(af) {
+  try {
+    if (!af || !af.availability) return null;
+    const h = Number(af.availability.home?.deltaRating || 0);
+    const a = Number(af.availability.away?.deltaRating || 0);
+    return { home: { deltaRating: h }, away: { deltaRating: a } };
+  } catch { return null; }
+}
+
+function buildContextFromAF(af) {
+  try {
+    const w = af?.weather || af?.clima || null;  // {tempC, humidity, windKmh, precipitationMm} si disponible
+    const rest = af?.restDays || null; // {home, away}
+    return {
+      tempC: Number.isFinite(w?.tempC) ? w.tempC : null,
+      humidity: Number.isFinite(w?.humidity) ? w.humidity : null,
+      windKmh: Number.isFinite(w?.windKmh) ? w.windKmh : null,
+      precipitationMm: Number.isFinite(w?.precipitationMm) ? w.precipitationMm : null,
+      restDaysHome: Number.isFinite(rest?.home) ? rest.home : null,
+      restDaysAway: Number.isFinite(rest?.away) ? rest.away : null
+    };
+  } catch { return null; }
+}
+
 // =============== MENSAJES (formatos) ===============
-function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoExtra) {
+function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoExtra, cz) {
   const mins = Math.max(0, Math.round(partido.minutosFaltantes));
   const top3Arr = Array.isArray(cuotaInfo?.top3) ? cuotaInfo.top3 : [];
   const american = decimalToAmerican(cuotaInfo?.valor);
 
   const top3Text = top3Arr.length
     ? [
-        '🏆 Mejores 3 casas de apuestas para este partido:',
-        ...top3Arr.map((b,i) => {
-          const line = `${b.bookie} — ${Number(b.price).toFixed(2)}`;
-          return i === 0 ? `<b>${line}</b>` : line;
-        })
-      ].join('\n')
+      '🏦 Top 3 bookies:',
+      ...top3Arr.map((b,i) => {
+        const line = `${b.bookie} — ${Number(b.price).toFixed(2)}`;
+        return i === 0 ? `<b>${line}</b>` : line;
+      })
+    ].join('\n')
     : '';
 
   const datos = [];
-  if (infoExtra?.clima)   datos.push(`- Clima: ${typeof infoExtra.clima === 'string' ? infoExtra.clima : 'disponible'}`);
+  if (infoExtra?.weather || infoExtra?.clima)   datos.push(`- Clima: disponible`);
   if (infoExtra?.arbitro) datos.push(`- Árbitro: ${infoExtra.arbitro}`);
   if (infoExtra?.estadio) datos.push(`- Estadio: ${infoExtra.estadio}${infoExtra?.ciudad ? ` (${infoExtra.ciudad})` : ''}`);
-  const datosBlock = datos.length ? `\n📊 Datos a considerar:\n${datos.join('\n')}` : '';
+  const datosBlock = datos.length ? `\n📊 Datos avanzados:\n${datos.join('\n')}` : '';
 
-  const cuotaTxt = `${Number(cuotaInfo.valor).toFixed(2)}${cuotaInfo.point ? ` @ ${cuotaInfo.point}` : ''}`;
+  const cuotaTxt = `${Number(cuotaInfo.valor).toFixed(2)}${(cuotaInfo.point!=null) ? ` @ ${cuotaInfo.point}` : ''}`;
   const encabezadoNivel = `${emojiNivel(nivel)} ${nivel}`;
 
-  return [
+  const czLine = (cz && cz.score >= 50)
+    ? `${corazonadaBadge(cz.score)} Corazonada IA: ${cz.score}/100${cz.motivo ? ` — ${cz.motivo}` : ''}`
+    : '';
+
+  const lines = [
     `🎯 PICK NIVEL: ${encabezadoNivel}`,
     `🏆 ${COUNTRY_FLAG} ${(infoExtra?.pais || partido?.pais || 'N/D')} - ${partido.liga}`,
     `⚔️ ${partido.home} vs ${partido.away}`,
@@ -1293,6 +1439,8 @@ function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoE
     ``,
     `🧠 ${pick.analisis_vip}`,
     ``,
+    czLine || '',
+    czLine ? '' : '',
     `EV: ${ev.toFixed(0)}% | Posibilidades de acierto: ${probPct.toFixed(0)}% | Momio: ${american}`,
     `💡 Apuesta sugerida: ${pick.apuesta}`,
     `💰 Cuota usada: ${cuotaTxt}`,
@@ -1303,13 +1451,19 @@ function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoE
     ``,
     TAGLINE,
     `\n⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder. Ninguna apuesta es segura.`
-  ].filter(Boolean).join('\n');
+  ].filter(Boolean);
+
+  return lines.join('\n');
 }
 
-function construirMensajeFREE(partido, pick, probPct, ev, nivel) {
+function construirMensajeFREE(partido, pick, probPct, ev, nivel, cz) {
   const mins = Math.max(0, Math.round(partido.minutosFaltantes));
   const motiv = String(pick.frase_motivacional || '').trim();
   const motivLine = motiv && motiv.toLowerCase() !== 's/d' ? `\n💬 “${motiv}”\n` : '\n';
+
+  const czLine = (cz && cz.score >= 50)
+    ? `\n${corazonadaBadge(cz.score)} Corazonada IA: ${cz.score}/100${cz.motivo ? ` — ${cz.motivo}` : ''}\n`
+    : '\n';
 
   return [
     `📡 RADAR DE VALOR`,
@@ -1319,6 +1473,7 @@ function construirMensajeFREE(partido, pick, probPct, ev, nivel) {
     ``,
     `${pick.analisis_gratuito}`,
     motivLine.trimEnd(),
+    czLine.trimEnd(),
     `⏳ Quedan menos de ${Math.max(1, mins)} minutos para este encuentro.`,
     ``,
     `🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.`,
@@ -1354,12 +1509,15 @@ async function enviarVIP(text) {
 }
 
 // =============== SUPABASE SAVE ===============
-async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoOrNull, tipo) {
+async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoOrNull, tipo, cz) {
   try {
     const evento = `${partido.home} vs ${partido.away} (${partido.liga})`;
+    const czText = (cz && (cz.score > 0 || cz?.motivo))
+      ? `\n\n[Corazonada IA] score=${cz.score}/100${cz.motivo ? ` | motivo: ${cz.motivo}` : ''}`
+      : '';
     const entrada = {
       evento,
-      analisis: `${pick.analisis_gratuito}\n---\n${pick.analisis_vip}`,
+      analisis: `${pick.analisis_gratuito}\n---\n${pick.analisis_vip}${czText}`,
       apuesta: pick.apuesta,
       tipo_pick: tipo,
       liga: partido.liga,
@@ -1370,15 +1528,13 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
       nivel: nivel,
       timestamp: nowISO()
     };
-    if (tipo !== 'LIVE') {
-      entrada.top3_json = (Array.isArray(cuotaInfoOrNull?.top3) ? cuotaInfoOrNull.top3 : null);
-    }
 
     // top3_json también en PRE (si se dispone del arreglo)
     if (cuotaInfoOrNull && Array.isArray(cuotaInfoOrNull.top3)) {
       entrada.top3_json = cuotaInfoOrNull.top3;
     }
 
+    // Campos contextualizados para LIVE (placeholder si en el futuro aplicas)
     if (tipo === 'LIVE') {
       entrada.is_live = true;
       entrada.kickoff_at = partido.commence_time || null;
@@ -1389,14 +1545,30 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
       entrada.vigencia_text = partido.vigenciaText || null;
     }
 
+    // Anti-duplicado por evento (pre-match)
     const { data: dupRow, error: dupErr } = await supabase
       .from(PICK_TABLE).select('id').eq('evento', evento).limit(1).maybeSingle();
     if (dupErr) { console.warn('Supabase dup check error:', dupErr?.message); }
+
     if (!dupRow) {
       const { error } = await supabase.from(PICK_TABLE).insert([ entrada ]);
       if (error) {
         console.error('Supabase insert error:', error.message);
-        resumen.guardados_fail++;
+        // Si falla por columna inexistente (ej. top3_json), no romper el flujo:
+        // Opcional: intenta sin top3_json
+        if (/column .* does not exist/i.test(error.message)) {
+          try {
+            delete entrada.top3_json;
+            const { error: e2 } = await supabase.from(PICK_TABLE).insert([ entrada ]);
+            if (e2) { console.error('Supabase insert (retry) error:', e2.message); resumen.guardados_fail++; }
+            else { resumen.guardados_ok++; }
+          } catch (e3) {
+            console.error('Supabase insert (retry) exception:', e3?.message || e3);
+            resumen.guardados_fail++;
+          }
+        } else {
+          resumen.guardados_fail++;
+        }
       } else {
         resumen.guardados_ok++;
       }
@@ -1419,75 +1591,4 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
   const payload = { model, messages };
 
   if (isG5) {
-    // Mantén el tope de salida compacto para no agotar 30s
-    const wanted = Number(maxTokens) || 320;
-    payload.max_completion_tokens = Math.min(Math.max(260, wanted), 380);
-    payload.response_format = { type: "json_object" };
-    // Parámetros deterministas para reducir dispersión y finish_reason length
-    payload.temperature = 0.2;
-    payload.top_p = 1;
-    payload.presence_penalty = 0;
-    payload.frequency_penalty = 0;
-    // IMPORTANT: modelos gpt-5* no aceptan temperature/top_p/penalties → eliminar si llegan del caller
-    delete payload.temperature;
-    delete payload.top_p;
-    delete payload.presence_penalty;
-    delete payload.frequency_penalty;
-  } else {
-    payload.max_tokens = maxTokens;
-    payload.temperature = 0.15;
-    payload.top_p = 1;
-    payload.presence_penalty = 0;
-    payload.frequency_penalty = 0;
-  }
-  return payload;
-}
-
-// =============== JSON Repair (if needed) ===============
-async function repairPickJSON(model, rawText) {
-  const prompt = `El siguiente mensaje debería ser solo un JSON válido pero puede estar malformado:\n<<<\n${rawText}\n>>>\nReescríbelo corrigiendo llaves, comas y comillas para que sea un JSON válido con la misma información.`;
-
-  const fixerModel = (String(model||'').toLowerCase().includes('gpt-5')) ? 'gpt-5-mini' : model;
-  const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(fixerModel||''));
-
-  const fixReq = {
-    model: fixerModel,
-    messages: [{ role:'user', content: prompt }]
-  };
-
-  if (isG5) {
-    // gpt-5*: sin sampling params
-    fixReq.max_completion_tokens = 300;
-  } else {
-    fixReq.temperature = 0.2;
-    fixReq.top_p = 1;
-    fixReq.presence_penalty = 0;
-    fixReq.frequency_penalty = 0;
-    fixReq.response_format = { type: "json_object" };
-    fixReq.max_tokens = 300;
-  }
-
-  const res = await openai.chat.completions.create(fixReq);
-  const raw = res?.choices?.[0]?.message?.content || "";
-  return extractFirstJsonBlock(raw);
-}
-
-// Aux: obtener mejor cuota de un array
-function arrBest(arr) {
-  if (!Array.isArray(arr) || arr.length === 0) return null;
-  return arr.reduce((acc, x) => (x.price && (!acc || x.price > acc.price) ? x : acc), null);
-}
-
-// AF league mapping (mínimo para mejorar aciertos por liga+fecha)
-const AF_LEAGUE_ID_BY_TITLE = {
-  "England - Premier League": 39,
-  "Spain - La Liga": 140,
-  "Italy - Serie A": 135,
-  "Germany - Bundesliga": 78,
-  "France - Ligue 1": 61,
-  "Mexico - Liga MX": 262,
-  "Brazil - Serie A": 71,
-  "Argentina - Liga Profesional": 128
-};
-
-const TAGLINE = "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.";
+    const wanted =
