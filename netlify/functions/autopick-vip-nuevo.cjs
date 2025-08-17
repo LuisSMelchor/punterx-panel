@@ -1030,10 +1030,18 @@ async function pedirPickConModelo(modelo, prompt) {
 
   } catch (e) {
     const msg = String(e?.message || '');
-    if (/unknown parameter|unsupported parameter|response_format/i.test(msg)) {
+    // Hotfix: algunos modelos (gpt-5*) devuelven "Unsupported value: 'temperature' ... Only default (1)"
+    // Reintenta eliminando sampling params y/o response_format según corresponda.
+    if (/Unsupported value:\s*'temperature'|unknown parameter|unsupported parameter|response_format/i.test(msg)) {
       try {
         const req2 = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
-        if (req2.response_format) delete req2.response_format;
+        // Limpieza defensiva: quita sampling params para cualquier modelo si hubo error por temperature
+        delete req2.temperature;
+        delete req2.top_p;
+        delete req2.presence_penalty;
+        delete req2.frequency_penalty;
+        // Solo quita response_format si el servidor lo marcó como no soportado:
+        if (/response_format/i.test(msg) && req2.response_format) delete req2.response_format;
         const c2 = await openai.chat.completions.create(req2);
         global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
         const raw2 = c2?.choices?.[0]?.message?.content || "";
@@ -1417,6 +1425,11 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
     payload.top_p = 1;
     payload.presence_penalty = 0;
     payload.frequency_penalty = 0;
+    // IMPORTANT: modelos gpt-5* no aceptan temperature/top_p/penalties → eliminar si llegan del caller
+    delete payload.temperature;
+    delete payload.top_p;
+    delete payload.presence_penalty;
+    delete payload.frequency_penalty;
   } else {
     payload.max_tokens = maxTokens;
     payload.temperature = 0.15;
@@ -1440,7 +1453,9 @@ async function repairPickJSON(model, rawText) {
   };
 
   if (isG5) {
+    // gpt-5*: sin sampling params
     fixReq.max_completion_tokens = 300;
+  } else {
     fixReq.temperature = 0.2;
     fixReq.top_p = 1;
     fixReq.presence_penalty = 0;
