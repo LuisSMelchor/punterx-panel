@@ -1461,11 +1461,6 @@ async function repairPickJSON(model, rawText) {
     fixReq.presence_penalty = 0;
     fixReq.frequency_penalty = 0;
     fixReq.response_format = { type: "json_object" };
-  } else {
-    fixReq.temperature = 0.2;
-    fixReq.top_p = 1;
-    fixReq.presence_penalty = 0;
-    fixReq.frequency_penalty = 0;
     fixReq.max_tokens = 300;
   }
 
