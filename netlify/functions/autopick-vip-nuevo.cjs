@@ -415,27 +415,50 @@ async function enriquecerPartidoConAPIFootball(partido) {
       return {};
     }
 
+    // --- Normalizador reforzado (alias/artículos/abreviaturas comunes)
+    const norm = (s) => String(s || "")
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      // descarta abreviaturas y artículos comunes en múltiples idiomas
+      .replace(/\b(f\.?c\.?|c\.?f\.?|s\.?c\.?|a\.?c\.?|u\.?d\.?|u\.?n\.?a\.?m\.?|cd|afc|cf|sc|ac|ud|club|deportivo|sporting|the)\b/g, "")
+      // limpia conectores "de", "da", "do" cuando quedan aislados como ruido
+      .replace(/\b(de|da|do|del|la|el|los|las)\b/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+
+    // alias rápidos (mejoran emparejamientos típicos)
+    const alias = (s) => {
+      let t = String(s || "").toLowerCase().trim();
+      // ejemplos MX/SA comunes
+      t = t.replace(/\bpumas\b/g, "pumas unam");
+      t = t.replace(/\bamerica\b/g, "club america");
+      t = t.replace(/\btoluca\b/g, "deportivo toluca");
+      t = t.replace(/\bthe strongest\b/g, "strongest");
+      return t;
+    };
+
+    const homeRaw = alias(partido.home);
+    const awayRaw = alias(partido.away);
+    const hN = norm(homeRaw);
+    const aN = norm(awayRaw);
+
     // 1) Intento por liga + fecha (mejor precisión que search por texto)
     const sportTitle = String(partido?.sport_title || partido?.liga || "").trim();
     const afLeagueId = AF_LEAGUE_ID_BY_TITLE[sportTitle] || null;
     const dt = partido?.commence_time ? new Date(partido.commence_time) : null;
-    const dateStr = dt && !isNaN(dt) ? dt.toISOString().slice(0,10) : new Date().toISOString().slice(0,10);
-
-    const norm = s => String(s||"").toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
-      .replace(/\b(f\.?c\.?|c\.?f\.?|s\.?c\.?|a\.?c\.?|u\.?d\.?|cd|afc|cf|sc|club|deportivo|the)\b/g,"")
-      .replace(/[^a-z0-9]+/g," ").trim();
+    const dateStr = dt && !isNaN(dt) ? dt.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
 
     if (afLeagueId) {
-      const url = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dateStr)}&league=${encodeURIComponent(afLeagueId)}`;
+      const url = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dateStr)}&league=${encodeURIComponent(afLeagueId)}&timezone=UTC`;
       const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
       if (res && res.ok) {
-        let data = await safeJson(res);
+        const data = await safeJson(res);
         const arr = Array.isArray(data?.response) ? data.response : [];
-        const hN = norm(partido.home), aN = norm(partido.away);
         const match = arr.find(x => {
-          const th = norm(x?.teams?.home?.name), ta = norm(x?.teams?.away?.name);
-          return (th===hN && ta===aN) || (th===aN && ta===hN);
+          const th = norm(x?.teams?.home?.name);
+          const ta = norm(x?.teams?.away?.name);
+          return (th === hN && ta === aN) || (th === aN && ta === hN) ||
+                 (th.includes(hN) && ta.includes(aN)) || (th.includes(aN) && ta.includes(hN));
         }) || null;
         if (match) {
           return {
@@ -454,104 +477,120 @@ async function enriquecerPartidoConAPIFootball(partido) {
       }
     }
 
-    // 2) Fallback: búsqueda textual (menos preciso)
-    const q = `${partido.home} ${partido.away}`;
+    // 2) Fallback: búsqueda textual (menos preciso) — incluye timezone=UTC
+    const q = `${homeRaw} ${awayRaw}`;
     const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}&timezone=UTC`;
     const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
     if (!res?.ok) {
       console.warn(`[evt:${partido?.id}] AF search error:`, res?.status, await safeText(res));
       return {};
     }
+
     const data = await safeJson(res);
     if (!data?.response || data.response.length === 0) {
-      console.warn(`[evt:${partido.id}] Sin coincidencias en API-Football (search="${q}", homeN="${norm(partido.home)}", awayN="${norm(partido.away)}")`);
-      // Fallback adicional: intentar búsqueda por cada equipo (home/away)
-      const tryOne = async (q) => {
-        const u = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}&timezone=UTC`;
-        const r = await fetchWithRetry(u, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
-        if (!r?.ok) return null;
-        const j = await safeJson(r);
-        if (!j?.response || j.response.length === 0) return null;
-        return j.response;
+      console.warn(`[evt:${partido.id}] Sin coincidencias en API-Football (search="${q}", homeN="${hN}", awayN="${aN}")`);
+      // 2a) Fallback adicional: intentar búsqueda por cada equipo (home/away)
+      const tryOne = async (name) => {
+        const uq = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(name)}&timezone=UTC`;
+        const rr = await fetchWithRetry(uq, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
+        if (!rr?.ok) return null;
+        const jj = await safeJson(rr);
+        if (!jj?.response || jj.response.length === 0) return null;
+        return jj.response;
       };
-      const arrH = await tryOne(partido.home);
-      const arrA = !arrH ? await tryOne(partido.away) : null;
+      const arrH = await tryOne(homeRaw);
+      const arrA = !arrH ? await tryOne(awayRaw) : null;
       const extra = arrH || arrA;
       if (!extra) {
+        // 3) Fallback final robusto: resolver IDs vía /teams y consultar /fixtures H2H ±2 días
+        const kickoff = Date.parse(partido.commence_time || "") || Date.now();
+        const day = 24 * 3600 * 1000;
+        const from = new Date(kickoff - 2 * day).toISOString().slice(0, 10);
+        const to = new Date(kickoff + 2 * day).toISOString().slice(0, 10);
+
+        const fetchTeamId = async (name) => {
+          const tu = `https://v3.football.api-sports.io/teams?search=${encodeURIComponent(name)}`;
+          const tr = await fetchWithRetry(tu, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
+          if (!tr?.ok) return null;
+          const tj = await safeJson(tr);
+          const items = Array.isArray(tj?.response) ? tj.response : [];
+          if (!items.length) return null;
+          const target = norm(name);
+          const scored = items.map(x => {
+            const nm = norm(x?.team?.name);
+            const score = (nm === target) ? 3 : (nm.includes(target) || target.includes(nm) ? 2 : 0);
+            return { x, score };
+          }).sort((a, b) => b.score - a.score);
+          return scored[0]?.x?.team?.id || items[0]?.team?.id || null;
+        };
+
+        const th = await fetchTeamId(homeRaw);
+        const ta = await fetchTeamId(awayRaw);
+        if (th && ta) {
+          // probar H2H en orden directo y revertido
+          const h2hPairs = [`${th}-${ta}`, `${ta}-${th}`];
+          for (const pair of h2hPairs) {
+            const fu = `https://v3.football.api-sports.io/fixtures?h2h=${pair}&from=${from}&to=${to}&timezone=UTC`;
+            const fr = await fetchWithRetry(fu, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
+            if (fr?.ok) {
+              const fj = await safeJson(fr);
+              const fa = Array.isArray(fj?.response) ? fj.response : [];
+              if (fa.length) {
+                // elegir el más cercano al kickoff
+                fa.sort((a, b) => Math.abs(Date.parse(a?.fixture?.date || 0) - kickoff) - Math.abs(Date.parse(b?.fixture?.date || 0) - kickoff));
+                const fx = fa[0];
+                if (fx) {
+                  return {
+                    liga: fx?.league?.name || sportTitle || null,
+                    pais: fx?.league?.country || null,
+                    fixture_id: fx?.fixture?.id || null,
+                    fecha: fx?.fixture?.date || null,
+                    estadio: fx?.fixture?.venue?.name || null,
+                    ciudad: fx?.fixture?.venue?.city || null,
+                    arbitro: fx?.fixture?.referee || null,
+                    clima: fx?.fixture?.weather || null
+                  };
+                }
+              }
+            }
+          }
+        }
         return {};
       }
       data.response = extra;
     }
-    const arr = data.response;
 
-    // Filtra por fecha cercana al kickoff y mejor nombre
-    const hN = norm(partido.home), aN = norm(partido.away);
+    // 2b) Filtra por fecha cercana al kickoff y mejor nombre entre candidatos
+    const arr = data.response;
     const kickoffMs = Date.parse(partido.commence_time || "") || Date.now();
     const candidates = arr
       .filter(x => {
         const dt2 = Date.parse(x?.fixture?.date || "");
         if (!Number.isFinite(dt2)) return true;
-        const diffH = Math.abs((dt2 - kickoffMs)/3600000);
+        const diffH = Math.abs((dt2 - kickoffMs) / 3600000);
         return diffH <= 36; // ±36h
       })
       .map(x => {
         const th = norm(x?.teams?.home?.name);
         const ta = norm(x?.teams?.away?.name);
-        const nameScore = ((th===hN && ta===aN) || (th===aN && ta===hN)) ? 2 : (th.includes(hN)||ta.includes(aN)||th.includes(aN)||ta.includes(hN) ? 1 : 0);
-        return { x, nameScore };
+        const nScore =
+          (th === hN && ta === aN) || (th === aN && ta === hN) ? 3
+          : (th.includes(hN) && ta.includes(aN)) || (th.includes(aN) && ta.includes(hN)) ? 2
+          : (th.includes(hN) || ta.includes(aN) || th.includes(aN) || ta.includes(hN)) ? 1
+          : 0;
+        const tScore = Number.isFinite(Date.parse(x?.fixture?.date || "")) ? (36 - Math.min(36, Math.abs((Date.parse(x.fixture.date) - kickoffMs) / 3600000))) / 36 : 0;
+        // pondera por nombre y cercanía temporal
+        const score = nScore * 10 + tScore;
+        return { x, score };
       })
-      .sort((a,b)=> b.nameScore - a.nameScore);
+      .sort((a, b) => b.score - a.score);
 
     const best = candidates[0]?.x || arr[0];
     if (!best) {
-    // --- Fallback final robusto: resolver IDs vía /teams y consultar /fixtures por H2H en ventana de ±2 días
-      const kickoff = Date.parse(partido.commence_time || "") || Date.now();
-      const day = 24*3600*1000;
-      const from = new Date(kickoff - 2*day).toISOString().slice(0,10);
-      const to   = new Date(kickoff + 2*day).toISOString().slice(0,10);
-      const fetchTeam = async (name) => {
-        const tu = `https://v3.football.api-sports.io/teams?search=${encodeURIComponent(name)}`;
-        const tr = await fetchWithRetry(tu, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
-        if (!tr?.ok) return null;
-        const tj = await safeJson(tr);
-        const items = Array.isArray(tj?.response) ? tj.response : [];
-        if (!items.length) return null;
-        // elegir mejor por norm() del nombre reportado
-        const target = norm(name);
-        const scored = items.map(x => {
-          const nm = norm(x?.team?.name);
-          const score = nm === target ? 2 : (nm.includes(target) || target.includes(nm) ? 1 : 0);
-          return { x, score };
-        }).sort((a,b)=> b.score - a.score);
-        return scored[0]?.x?.team?.id || items[0]?.team?.id || null;
-      };
-      const th = await fetchTeam(partido.home);
-      const ta = await fetchTeam(partido.away);
-      if (th && ta) {
-        const fu = `https://v3.football.api-sports.io/fixtures?h2h=${th}-${ta}&from=${from}&to=${to}&timezone=UTC`;
-        const fr = await fetchWithRetry(fu, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
-        if (fr?.ok) {
-          const fj = await safeJson(fr);
-          const fa = Array.isArray(fj?.response) ? fj.response : [];
-          // elegir más cercano al kickoff
-          fa.sort((a,b)=> Math.abs(Date.parse(a?.fixture?.date||0)-kickoff) - Math.abs(Date.parse(b?.fixture?.date||0)-kickoff));
-          const fx = fa[0];
-          if (fx) {
-            return {
-              liga: fx?.league?.name || sportTitle || null,
-              pais: fx?.league?.country || null,
-              fixture_id: fx?.fixture?.id || null,
-              fecha: fx?.fixture?.date || null,
-              estadio: fx?.fixture?.venue?.name || null,
-              ciudad: fx?.fixture?.venue?.city || null,
-              arbitro: fx?.fixture?.referee || null,
-              clima: fx?.fixture?.weather || null
-            };
-          }
-        }
-      }
+      console.warn(`[evt:${partido?.id}] No se pudo determinar fixture tras todos los intentos (search="${q}", hN="${hN}", aN="${aN}")`);
       return {};
     }
+
     return {
       liga: best?.league?.name || sportTitle || null,
       pais: best?.league?.country || null,
