@@ -1,257 +1,220 @@
-📄 PunterX — Configuración y Estado Actual
+📄 PunterX — Configuración y Estado Actual (Actualizado)
 
-Fecha: 15 de agosto de 2025
+Fecha: 17 de agosto de 2025
+Estado: ✅ Deploy completado, logs instrumentados. ⏳ En espera de próximos ciclos para validar reducción total de “Sin coincidencias en API-FOOTBALL” y calidad de picks.
 
 0) Resumen ejecutivo
 
-PunterX es un sistema automatizado para detectar y publicar picks de alto EV vía OddsAPI (cuotas), API-FOOTBALL PRO (datos deportivos), OpenAI GPT-5 (análisis y diagnóstico), Supabase (histórico y memoria IA) y Telegram (canal FREE y grupo VIP).
-Ahora incorpora apuestas EN VIVO (in-play) con flujo de prefiltro de valor, enriquecimiento de partido en tiempo real y mensajes editables/fijados en VIP.
+PunterX es un sistema automatizado que detecta y publica picks de alto EV usando OddsAPI (cuotas), API-FOOTBALL PRO (datos de partido), OpenAI GPT-5 (análisis en JSON), Supabase (histórico/memoria) y Telegram (FREE/VIP).
+El sistema ahora incluye:
 
-1) Arquitectura (alta nivel)
+Match Resolver propio (OddsAPI ↔ API-FOOTBALL) con normalización avanzada y scoring (Jaccard + boosts) para emparejar equipos/liga/fecha sin depender solo de search=.
 
-Runtime: Netlify Functions (Node 20, CommonJS con esbuild).
+Estrategia league_id+date como intento primario, con fallbacks robustos (search, teams, h2h ±2d).
 
-Datos externos:
+Logs de trazabilidad en puntos críticos (ventana, resolver, enriquecimiento, OpenAI, guardado) para auditoría rápida.
 
-OddsAPI — cuotas (pre y live), mercados, consenso/top-3.
+Bandera y país en PRE y VIP, Top-3 ordenado (mejor en negritas), anti-duplicado LIVE por minute_bucket.
 
-API-FOOTBALL PRO — fixtures, minuto/estado, marcador, árbitro, clima, odds live de respaldo.
+Presupuesto de IA por ciclo y retry ajustado cuando hay finish_reason: length.
 
-IA: OpenAI GPT-5 / GPT-5-mini (fallback) → JSON estructurado para análisis.
+1) Arquitectura (alto nivel)
 
-Persistencia: Supabase (picks_historicos + telemetría opcional).
+Runtime: Netlify Functions (Node 20, CommonJS, esbuild)
 
-Distribución: Telegram Bot API (FREE channel y VIP group).
+Fuentes:
 
-Operación: crons Netlify; opción Replit para “loop” local.
+OddsAPI → cuotas pre/live (mercados h2h/totals/spreads)
 
-Compatibilidad y coherencia: mantener CommonJS, sin top-level await. Mantener formato de mensajes y reglas de EV.
+API-FOOTBALL PRO → fixtures, minuto/estado, marcador, árbitro, clima
 
-2) Archivos clave
+IA: OpenAI GPT-5 (primario) con GPT-5-mini (fallback) → JSON estructurado
 
-netlify/functions/autopick-vip-nuevo.cjs — Pre-match (ventana principal 40–55 min; fallback 35–70).
+Persistencia: Supabase (picks_historicos + tablas de diagnóstico opcionales)
 
-NUEVO: mapeo AF_LEAGUE_ID_BY_TITLE y enriquecimiento por league_id + date (reduce “Sin coincidencias”).
+Distribución: Telegram Bot API (FREE channel, VIP group)
 
-netlify/functions/autopick-outrights.cjs — Apuestas a futuro (teaser 7d antes, final 24±2h).
+Operación: Netlify Cron; loop local opcional para LIVE
 
-NUEVO: AF_LEAGUE_ID_BY_SPORTKEY y resolución de liga por /leagues?id= (fallback search=).
+Coherencia: CommonJS sin top-level await; formatos y reglas de EV consistentes
 
-netlify/functions/autopick-live.cjs — En vivo (in-play).
+2) Archivos clave y módulos nuevos
 
-OddsAPI-first para prefiltro (qué es apostable + mejores precios), AF para minuto/marcador/fase, IA si hay valor, EV+validaciones, envío Telegram (VIP fijado), guardado Supabase, anti-duplicado por bucket 5’.
+netlify/functions/autopick-vip-nuevo.cjs — PRE-match (ventana principal 40–55; fallback 35–70)
 
-netlify/functions/send.js — helpers FREE/VIP (Pre, Live, Outrights) + endpoint /send.
+✅ NUEVO: Logs finos (ventanas, contadores, modelo IA, EV, guardado, errores Telegram).
 
-NUEVO: plantillas LIVE y PRE/OUTRIGHT, top-3 sin numeración y #1 en negritas; país antes de la liga; edición y pin.
+✅ NUEVO: Match Resolver previo al enriquecimiento con AF.
 
-prompts_punterx.md — prompts IA consolidados.
+✅ NUEVO: Enriquecimiento por league_id+date y fallbacks (search, teams + fixtures?h2h).
 
-PunterX-Config.md — este documento.
+✅ NUEVO: País + bandera en mensajes; Top-3 con #1 en negritas.
 
-Otros: diagnostico-total.js, verificador-aciertos.js, analisis-semanal.js, memoria-inteligente.js, check-status.js.
+✅ NUEVO: Presupuesto de IA por ciclo y retry con max_completion_tokens adaptativo.
 
-3) Formatos de mensaje (consolidado)
-3.1 Pre-match — FREE
+netlify/functions/autopick-live.cjs — EN VIVO (in-play)
+OddsAPI-first (prefiltro valor), AF para minuto/fase/score, IA/EV/validaciones, FREE/VIP (VIP pin+edit), anti-duplicado por minute_bucket.
+
+netlify/functions/autopick-outrights.cjs — A futuro (teaser 6–8d; final 22–26h)
+League map y resolución por /leagues?id= con fallback a search.
+
+netlify/functions/send.js — helpers de envío a Telegram (PRE/LIVE/OUTRIGHT)
+
+Módulos nuevos en _lib/
+
+_lib/match-helper.js — Normalización de cadenas, Jaccard score con boosts, resolveTeamsAndLeague (umbral configurable con MATCH_RESOLVE_CONFIDENCE).
+
+_lib/af-resolver.cjs — resolveFixtureFromList: elige fixture mejor puntuado desde una lista AF (usa nameScore, Boost temporal ±36–60h).
+
+prompts_punterx.md — prompts IA consolidados (sección 1) con placeholders ({{CONTEXT_JSON}}, {{OPCIONES_APOSTABLES_LIST}})
+
+PunterX-Config.md — este documento
+
+3) Flujo actualizado de PRE-match
+
+OddsAPI recupera eventos ⇒ se filtran ya iniciados ⇒ se valida ventana
+
+Principal: 40–55 min, Fallback: 35–70 min
+
+Logs: DBG commence_time=... mins=... y totales por bucket
+
+Match Resolver (nuevo)
+
+match-helper.resolveTeamsAndLeague({ home, away, sport_title })
+
+Normalización (acentos, stopwords “fc/cf/sc/afc/club/deportivo/the/el/la/los/las/de/do/da/unam”…), Jaccard + boosts por igualdad e inclusión (p.ej. “pumas” ↔ “pumas unam”)
+
+Aplica umbral MATCH_RESOLVE_CONFIDENCE (default sugerido: 0.75)
+
+Log: RESOLVE > home="Toluca"→"Deportivo Toluca" | away="Pumas"→"Pumas UNAM" | liga="N/D"→"Liga MX"
+
+Enriquecimiento con API-FOOTBALL (mejorado)
+
+Intento 1: fixtures?date=YYYY-MM-DD&league={id} (vía AF_LEAGUE_ID_BY_TITLE)
+
+Intento 2: fixtures?league={id}&from=YYYY-MM-DD&to=YYYY-MM-DD (±2d)
+
+Intento 3: fixtures?search=HOME AWAY (y luego por cada equipo)
+
+Intento 4: teams?search= → IDs → fixtures?h2h=homeId-awayId&from=...&to=... (±2d)
+
+Selección por score: nombres (home/away directo o swapped) + boost temporal (±36–60h)
+
+Logs: “Resolver AF: asignado fixture_id=…”, “Puntaje bajo (…) para mejor candidato” y “Sin coincidencias …” con debug normalizado
+
+Construcción de prompt con opciones apostables reales (Top mercados y mejor cuota por mercado)
+
+OpenAI GPT-5 → JSON
+
+Solo JSON; si length, retry con max_completion_tokens ↑
+
+Presupuesto por ciclo: MAX_OAI_CALLS_PER_CYCLE
+
+Validaciones: probabilidad ∈ [5%, 85%], coherencia con implícita ≤15 p.p.
+
+EV y guardado
+
+EV ≥10% requerido
+
+FREE: 10–14.9%, VIP: ≥15%
+
+Guardar en Supabase (PRE/LIVE/OUTRIGHT), Top-3 en top3_json, país y liga, sin duplicar (clave evento)
+
+Envío a Telegram
+
+FREE y/o VIP (VIP con bandera, país y Top-3 #1 en negritas)
+
+4) Formatos de mensaje (consolidado)
+4.1 PRE — FREE
 📡 RADAR DE VALOR
-🏆 {pais} - {liga} - {equipos}
-🕒 Inicio: {kickoff}
+🏆 {bandera} {pais} - {liga}
+⚔️ {home} vs {away}
+⏱️ {inicio_relativo}
 
-📊 Análisis:
-{analisis}
+{analisis_gratuito}
 
-🎁 Únete al VIP para ver:
-- EV y probabilidad estimada
-- Apuesta sugerida + Apuestas extra
-- Top-3 casas con mejor cuota
+⏳ Quedan menos de {mins} minutos para este encuentro.
 
 🔎 IA Avanzada, monitoreando el mercado global 24/7.
 ⚠️ Este contenido es informativo. Apostar conlleva riesgo.
 
-3.2 Pre-match — VIP
-🎯 PICK {nivel}
-🏆 {pais} - {liga} - {equipos}
-🕒 Inicio: {kickoff}
+4.2 PRE — VIP
+🎯 PICK NIVEL: {emoji} {nivel}
+🏆 {bandera} {pais} - {liga}
+⚔️ {home} vs {away}
+⏱️ {inicio_relativo}
 
-EV: {ev}% | Prob. estimada IA: {probabilidad}% | Momio: {momio}
+🧠 {analisis_vip}
 
-💡 Apuesta sugerida: {apuesta_sugerida}
+EV: {ev}% | Posibilidades de acierto: {prob}% | Momio: {momio_americano}
+💡 Apuesta sugerida: {apuesta}
+💰 Cuota usada: {cuota} {[@ point opcional]}
 
-Apuestas extra:
+📋 Apuestas extra:
 {apuestas_extra}
 
-🏆 Top-3 casas (mejor resaltada):
-{top3}
+🏆 Mejores 3 casas:
+<b>{bookie1 — cuota1}</b>
+{bookie2 — cuota2}
+{bookie3 — cuota3}
 
-📊 Datos avanzados:
-{datos}
+{datos_opcionales}
 
-🔎 IA Avanzada, monitoreando el mercado global 24/7.
+🔎 {TAGLINE}
 ⚠️ Este contenido es informativo. Apostar conlleva riesgo.
 
-3.3 En vivo — FREE
-🔴 EN VIVO - RADAR DE VALOR
-🏆 {pais} - {liga} - {equipos}
-⏱️ {minuto}  |  Marcador: {marcador}  |  Fase: {fase}
+4.3 LIVE — FREE y 4.4 LIVE — VIP
 
-📊 Análisis en tiempo real:
-{razonamiento}
+(Se conservan como en la versión previa; incluyen minuto, marcador, fase, vigencia, snapshot, pin/edit en VIP).
 
-💬 “En vivo, cada jugada puede cambiarlo todo. Aquí es donde nacen las oportunidades.”
+5) Validaciones y niveles
 
-🎁 Únete al VIP para ver:
-- Apuesta sugerida y apuestas extra
-- EV y probabilidad estimada
-- Top-3 casas con la mejor cuota
+Reglas IA:
 
-🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.
-⚠️ Este contenido es informativo. Apostar conlleva riesgo.
+apuesta ∈ opciones apostables vigentes
 
-3.4 En vivo — VIP
-🔴 LIVE PICK - {nivel}
-🏆 {pais} - {liga} - {equipos}
-⏱️ {minuto}  |  Marcador: {marcador}  |  Fase: {fase}
+probabilidad ∈ [5, 85]
 
-EV: {ev}% | Prob. estimada IA: {probabilidad}% | Momio: {momio}
+|prob(model) − prob(implícita)| ≤ 15 p.p.
 
-💡 Apuesta sugerida: {apuesta_sugerida}
-📌 Vigencia: {vigencia}
+Corte de EV: ≥10% (FREE 10–14.9, VIP ≥15)
 
-Apuestas extra:
-{apuestas_extra}
+Niveles VIP: 🟣 Ultra (≥40), 🎯 Élite (30–39.9), 🥈 Avanzado (20–29.9), 🥉 Competitivo (15–19.9)
 
-📊 Razonamiento EN VIVO:
-{razonamiento}
+6) Anti-duplicado LIVE
 
-🏆 Top-3 casas (mejor resaltada):
-{top3}
+Clave: (fixture_id, minute_bucket) (bucket de 5 min) durante 90 min
 
-🧭 Snapshot mercado:
-{snapshot}
+Nuevo campo minute_bucket en picks_historicos
 
-🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.
-⚠️ Este contenido es informativo. Apostar conlleva riesgo.
-
-
-Detalles de formato globales:
-
-País antes de la liga.
-
-Top-3 sin numeración, mejor en negritas.
-
-Eliminada la frase de “última actualización”.
-
-En VIP LIVE el post se puede fijar y editar (minuto/cuotas/EV/notas).
-
-3.5 Outrights (teaser y final)
-
-Teaser (~7 días antes) → FREE + VIP.
-
-Final (24 ± 2h) → VIP (EV ≥ 15%) o FREE (10–14.9%).
-
-Apuestas extra por probabilidad (umbral configurable).
-
-Top-3 casas y “Datos verificados en tiempo real”.
-
-4) Reglas de guardado y validaciones IA
-
-No guardar picks con EV < 10% o con datos incompletos.
-
-Validaciones IA (LIVE y PRE):
-
-apuesta ∈ opciones_apostables válidas.
-
-probabilidad ∈ [5%, 85%].
-
-coherencia con probabilidad implícita ≤ 15 p.p.
-
-Clasificación:
-
-FREE → 10% ≤ EV < 15%
-
-VIP → EV ≥ 15%
-
-Niveles VIP:
-
-🥉 Competitivo: 15–19.9%
-
-🥈 Avanzado: 20–29.9%
-
-🎯 Élite Mundial: 30–39.9%
-
-🟣 Ultra Élite: ≥ 40%
-
-5) EN VIVO — diseño del flujo
-5.1 Prefiltro (OddsAPI-first)
-
-Trae eventos live por sport_keys y mercados LIVE_MARKETS (p.ej. h2h,totals,spreads).
-
-Requiere ≥ LIVE_MIN_BOOKIES casas activas.
-
-Calcula consenso (mediana) y mejor oferta (top-3 deduplicado).
-
-Acepta candidatos con gap (implícita consenso − implícita mejor) ≥ LIVE_PREFILTER_GAP_PP (p.p.).
-
-5.2 Enriquecimiento (API-FOOTBALL PRO)
-
-fixtures?live=all → minuto, fase (early, mid, ht, late) y marcador.
-
-Empareja por home/away normalizado y/o por league_id + date (según el script).
-
-(Opc) odds live de respaldo si faltan mercados en OddsAPI.
-
-5.3 IA y EV
-
-IA solo si pasa el prefiltro.
-
-EV calculado vs mejor cuota; validar probabilidad y gap con implícita.
-
-Clasifica en FREE/VIP y genera payload para send.js.
-
-5.4 Anti-duplicado & edición
-
-Anti-duplicado por fixture y bucket de minuto (5’).
-
-Edición del mismo post en VIP/FREE ante gol/roja y cambios relevantes (no spam).
-
-Cooldown por partido LIVE_COOLDOWN_MIN min.
-
-6) Bug de “Sin coincidencias en API-FOOTBALL”: causa y solución
-6.1 Causa
-
-El enriquecimiento por búsqueda textual (fixtures?search=) fallaba con algunos equipos/acentos/alias, generando logs:
-
-[evt:...] Sin coincidencias en API-Football
-
-6.2 Solución aplicada
-
-Pre-match (autopick-vip-nuevo.cjs):
-
-Mapa AF_LEAGUE_ID_BY_TITLE (p.ej. "Spain - LaLiga" → 140).
-
-Primero fixtures?date=YYYY-MM-DD&league={id} y match por nombres normalizados (sin acentos/FC/CF…).
-
-Si no aparece, fallback a fixtures?search= (lo de siempre).
-
-Outrights (autopick-outrights.cjs):
-
-Mapa AF_LEAGUE_ID_BY_SPORTKEY (p.ej. soccer_spain_la_liga → 140).
-
-Resolución de liga por /leagues?id= (precisa), con fallback a leagues?search=.
-
-LIVE (autopick-live.cjs):
-
-OddsAPI-first para “qué es apostable” + mejores precios.
-
-AF como índice live para minuto/marcador/fase, con matching normalizado.
-
-Resultado esperado: drástica reducción de falsos “no match” y mayor estabilidad del flujo.
+Envío/edit controlado con cooldown LIVE_COOLDOWN_MIN
 
 7) Variables de entorno (nuevas y existentes)
 
-Añade en Netlify (Site settings → Environment variables):
+Añadir/ajustar en Netlify → Site settings → Environment variables:
 
-# Live tunables
+# === Ventanas PRE ===
+WINDOW_MAIN_MIN=40
+WINDOW_MAIN_MAX=55
+WINDOW_FB_MIN=35
+WINDOW_FB_MAX=70
+
+# === IA / OpenAI ===
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5
+OPENAI_MODEL_FALLBACK=gpt-5-mini
+MAX_OAI_CALLS_PER_CYCLE=40
+SOFT_BUDGET_MS=70000
+
+# === Resolver / Matching ===
+MATCH_RESOLVE_CONFIDENCE=0.75       # Umbral global del Match Helper (0–1)
+COUNTRY_FLAG=🇲🇽                    # Bandera por defecto si no se resuelve país
+
+# === OddsAPI ===
+ODDS_API_KEY=...
+# Pre:
+PREFILTER_MIN_BOOKIES=2
+# Live:
 LIVE_MIN_BOOKIES=3
 LIVE_POLL_MS=25000
 LIVE_COOLDOWN_MIN=8
@@ -260,66 +223,65 @@ LIVE_REGIONS=eu,uk,us
 LIVE_PREFILTER_GAP_PP=5
 RUN_WINDOW_MS=60000
 
-# OpenAI
-OPENAI_MODEL=gpt-5
-OPENAI_MODEL_FALLBACK=gpt-5-mini
+# === API-FOOTBALL ===
+API_FOOTBALL_KEY=...
 
-# Existentes
+# === Supabase ===
 SUPABASE_URL=...
 SUPABASE_KEY=...
-ODDS_API_KEY=...
-API_FOOTBALL_KEY=...
+
+# === Telegram ===
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHANNEL_ID=...   # FREE
 TELEGRAM_GROUP_ID=...     # VIP
 
-8) Cron y netlify.toml
+8) netlify.toml (extracto)
+[functions]
+  node_bundler = "esbuild"
 
-Ejemplo mínimo para Live (ajusta según tu setup):
+[functions."autopick-vip-nuevo"]
+  included_files = ["prompts_punterx.md", "netlify/functions/send.js", "netlify/_lib/*"]
+  external_node_modules = ["@supabase/supabase-js", "openai"]
 
 [functions."autopick-live"]
-  node_bundler = "esbuild"
-  included_files = ["netlify/functions/send.js", "prompts_punterx.md"]
-  external_node_modules = ["node-fetch", "@supabase/supabase-js", "openai"]
   timeout = 60
+  included_files = ["prompts_punterx.md", "netlify/functions/send.js", "netlify/_lib/*"]
+  external_node_modules = ["@supabase/supabase-js", "openai"]
 
 
-Pre/Outrights mantienen sus crons previos. Verifica que los schedules no se solapen en exceso.
+(Ajusta crons/headers/redirects según tu setup.)
 
-9) Supabase — esquema y SQL idempotente
-
-Tabla base: picks_historicos. Si faltan columnas, aplicar:
-
--- Crear si no existe
+9) Supabase — SQL idempotente
+-- Tabla base
 CREATE TABLE IF NOT EXISTS public.picks_historicos (
-  id bigserial PRIMARY KEY,
-  evento text,
-  analisis text,
-  apuesta text,
-  tipo_pick text,                 -- 'PRE' | 'LIVE' | 'OUTRIGHT'
-  liga text,
-  equipos text,
-  ev numeric,
-  probabilidad numeric,
-  nivel text,
-  timestamp timestamptz DEFAULT now()
+  id               bigserial PRIMARY KEY,
+  evento           text,
+  analisis         text,
+  apuesta          text,
+  tipo_pick        text,               -- 'PRE' | 'LIVE' | 'OUTRIGHT'
+  liga             text,
+  equipos          text,
+  ev               numeric,
+  probabilidad     numeric,
+  nivel            text,
+  timestamp        timestamptz DEFAULT now(),
+  is_live          boolean DEFAULT false,
+  kickoff_at       timestamptz,
+  minute_at_pick   int,
+  phase            text,
+  score_at_pick    text,
+  market_point     text,
+  vigencia_text    text,
+  top3_json        jsonb,
+  consenso_json    jsonb,
+  pais             text
 );
 
--- Añadir columnas nuevas si faltan
+-- Campos nuevos/compatibilidad
 ALTER TABLE public.picks_historicos
-  ADD COLUMN IF NOT EXISTS is_live boolean DEFAULT false;
+  ADD COLUMN IF NOT EXISTS minute_bucket int;
 
-ALTER TABLE public.picks_historicos
-  ADD COLUMN IF NOT EXISTS kickoff_at timestamptz,
-  ADD COLUMN IF NOT EXISTS minute_at_pick int,
-  ADD COLUMN IF NOT EXISTS phase text,
-  ADD COLUMN IF NOT EXISTS score_at_pick text,
-  ADD COLUMN IF NOT EXISTS market_point text,
-  ADD COLUMN IF NOT EXISTS vigencia_text text,
-  ADD COLUMN IF NOT EXISTS top3_json jsonb,
-  ADD COLUMN IF NOT EXISTS consenso_json jsonb;
-
--- Normaliza is_live nulo
+-- Normalizaciones
 UPDATE public.picks_historicos
 SET is_live = COALESCE(is_live, false)
 WHERE is_live IS DISTINCT FROM false;
@@ -330,14 +292,21 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_picks_tipo') THEN
     CREATE INDEX idx_picks_tipo ON public.picks_historicos (tipo_pick);
   END IF;
+
   IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_picks_evento') THEN
     CREATE INDEX idx_picks_evento ON public.picks_historicos (evento);
   END IF;
+
   IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_picks_timestamp') THEN
     CREATE INDEX idx_picks_timestamp ON public.picks_historicos (timestamp DESC);
   END IF;
+
   IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_picks_is_live') THEN
     CREATE INDEX idx_picks_is_live ON public.picks_historicos (is_live);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_picks_minute_bucket') THEN
+    CREATE INDEX idx_picks_minute_bucket ON public.picks_historicos (minute_bucket);
   END IF;
 END $$;
 
@@ -351,96 +320,80 @@ END $$;
 }
 
 
-Nota: En un monorepo, verifica directorio de trabajo de tu workflow (para evitar errores tipo EJSONPARSE). Solo debe existir un objeto JSON raíz.
+Nota: En monorepo, asegura working-directory correcto en CI y un único objeto JSON raíz válido.
 
-11) Operación (Replit vs GitHub/Netlify)
+11) Observabilidad y puntos de log añadidos
 
-Producción: Netlify Functions + crons.
+Ventanas / filtrado:
+Filtrados X eventos ya comenzados (omitidos)
+DBG commence_time=… mins=…
+📊 Filtrado (OddsAPI): Principal=… | Fallback=… | Total recibidos=…
 
-Replit (opcional): útil como “loop local” para LIVE (npm run live), smoke tests y depuración. No es requisito para producción.
+Match Resolver / AF:
+RESOLVE > home="…"→"…" | away="…"→"…" | liga="…"→"…"
+Resolver AF: asignado fixture_id=… league="…"
+Puntaje bajo (…) para mejor candidato ( … )
+Sin coincidencias en API-Football (search="…", homeN="…", awayN="…")
+
+OpenAI:
+[OAI] meta= {"model":"…","ms":…,"finish_reason":"…","usage":{…}}
+♻️ Fallback de modelo → gpt-5-mini
+🔎 Modelo usado: …
+🛑 no_pick=true → …
+
+EV / guardado / envíos:
+EV XX% < 10% → descartado
+✅ Enviado VIP | ⚠️ Falló envío VIP
+✅ Enviado FREE | ⚠️ Falló envío FREE
+Pick duplicado, no guardado
+🏁 Resumen ciclo: {...} y Duration: … ms | Memory Usage: … MB
 
 12) Checklist de QA
 
-send.js responde ping y envía a FREE/VIP.
+ Ventanas PRE cumplen 40–55 (principal) / 35–70 (fallback)
 
-Pre-match: candidatos en ventana 40–55 (fallback 35–70), con enriquecimiento por league_id + date.
+ Resolver de equipos/liga activo y con MATCH_RESOLVE_CONFIDENCE aplicado
 
-Outrights: AF_LEAGUE_ID_BY_SPORTKEY → /leagues?id= → OK.
+ Enriquecimiento AF via league_id+date y fallbacks funcionando
 
-LIVE: prefiltro por gap y bookies, IA solo si pasa, EV y validaciones, fijado VIP y ediciones controladas.
+ Mensajes PRE/VIP con bandera/país y Top-3 correcto (#1 en negritas)
 
-Supabase: nuevas columnas visibles; guardado correcto (tipo_pick, is_live, minute_at_pick, etc.).
+ Presupuesto IA respeta MAX_OAI_CALLS_PER_CYCLE; retry ante length
 
-Top-3 sin numeración, mejor en negritas. País antes de liga.
+ Supabase guarda PRE/LIVE/OUTRIGHT con top3_json, pais y minute_bucket (LIVE)
 
-13) Control de cambios (hoy)
+ Anti-duplicado LIVE por bucket 5’ sin bloquear el fixture completo
 
-FIX: “Sin coincidencias en API-FOOTBALL” → enriquecimiento por league_id + date y matching normalizado (fallback search=).
+ Telegram FREE/VIP OK; VIP con pin/edit en LIVE
 
-ADD: autopick-live.cjs (in-play) OddsAPI-first; IA/EV/validaciones; anti-duplicado; mensajes LIVE; edición/pin.
+13) Cambios recientes (agosto 2025)
 
-ADD: Variables LIVE_* en Netlify.
+Match Resolver (OddsAPI ↔ AF) con normalización, Jaccard y boosts; umbral MATCH_RESOLVE_CONFIDENCE.
 
-UPD: send.js con plantillas PRE/LIVE/OUTRIGHT y top-3 sin numeración.
+AF por league_id+date como camino primario; fallbacks: search, teams+fixtures?h2h.
 
-SQL: columnas y índices idempotentes para LIVE/analíticas.
+Logs de trazabilidad en PRE (ventanas, resolver, AF, IA, EV, guardado).
 
-DOC: este PunterX-Config.md re-sincronizado.
+OpenAI: retry solo si length, max_completion_tokens adaptativo, límite por ciclo.
 
-14) Notas finales
+Bandera/país en mensajes; Top-3 reorganizado (#1 en negritas); frases de responsabilidad.
 
-Mantener coherencia con los niveles de EV y formatos.
+Supabase: minute_bucket para anti-duplicado LIVE + índices extra.
 
-Documentar cualquier cambio en prompts, variables o lógica también aquí.
+Outrights: mapas de liga por sportkey y resolución precisa por /leagues?id=.
 
-Evitar spam en LIVE: máx. 3 intervenciones/partido y cooldown activo.
+14) Notas finales y próximos pasos
 
-Continuar ampliando mapas de ligas (AF_LEAGUE_ID_BY_*) según cobertura necesaria.
+Estamos a la espera de los próximos logs para confirmar la caída sustancial de “Sin coincidencias en API-FOOTBALL” y la estabilidad del flujo completo.
 
----
+Si persiste algún “no match”, ampliar stopwords del normalizador y/o el mapa AF_LEAGUE_ID_BY_TITLE.
 
-## Cambios recientes (Agosto 2025)
+Mantener cortes de EV y restricciones de probabilidad/implícita.
 
-- **Integración de OddsAPI como fuente principal de partidos** cada 15 minutos, con validación cruzada en API-FOOTBALL.  
-- **Enriquecimiento de datos en IA**: se sumaron alineaciones, clima, árbitro, historial, forma y ausencias para el análisis GPT-5.  
-- **Clasificación de picks por EV**: se mantienen niveles (Ultra Élite, Élite Mundial, Avanzado, Competitivo, Informativo).  
-- **Canal gratuito activado con picks informativos (10–14% EV)** incluyendo análisis básico y frase motivacional de IA.  
-- **Top 3 casas de apuestas** ahora se muestran en los mensajes VIP, ordenadas por cuota.  
-- **Frase de responsabilidad** confirmada en picks gratuitos y VIP.  
-- **Apuestas extra** ampliadas: más de 2.5 goles, ambos anotan, doble oportunidad, goleador probable, marcador exacto, HT result y hándicap asiático.  
-- **Automatización en zona horaria America/Mexico_City**: detección de partidos que comienzan entre 45 y 55 minutos.  
-- **Live picks experimentales** iniciados en UK para fase de pruebas (archivo `autopick-live.cjs`).  
-- **Supabase**: sigue almacenando picks en `picks_historicos`, sin guardar picks con EV < 14% o datos incompletos.  
-- **Corrección en `package.json`**: se arregló un error de coma sobrante que impedía correr `npm ci`.  
-- **Manejo de errores**: se añadieron `try/catch` extra para prevenir que `data.find` rompa el flujo cuando API responde inesperadamente.  
+Evitar spam LIVE: máx. 3 ediciones por partido, con LIVE_COOLDOWN_MIN activo.
 
----
+Documentar cualquier ajuste en prompts o variables aquí mismo.
 
-## Notas de Errores y Soluciones Pendientes (Actualización 16 de agosto 2025)
+TAGLINE
 
-### Errores detectados en producción
-- **"Sin coincidencias en API-FOOTBALL"**: aparece en los logs cuando OddsAPI devuelve partidos que no logran empatarse con un fixture válido en API-FOOTBALL.  
-  - Impacto: se pierden posibles picks, incluso cuando hay cuotas disponibles.
-- **EJSONPARSE en `package.json`**: error por coma sobrante o malformación de JSON.  
-  - Impacto: bloqueó despliegue en GitHub Actions hasta ser corregido.
-- **Logs no resueltos**: todavía vemos errores genéricos como `data.find is not a function` en algunos puntos del script maestro.  
-  - Impacto: puede frenar ejecución de ciertos picks cuando la respuesta de API no tiene el formato esperado.
-
-### Soluciones implementadas (en espera de verificación)
-- Se reforzó el **match entre OddsAPI y API-FOOTBALL** usando normalización de nombres de equipos y fallback por `id` y `date`.  
-  - Estado: implementado, pendiente de comprobar si elimina todos los “Sin coincidencias”.
-- Se corrigió el **`package.json`** para que sea JSON válido.  
-  - Estado: corregido, pendiente de nueva corrida completa de `npm ci` en el pipeline.
-- Se agregó un **try/catch adicional en el flujo de partidos** para evitar que `data.find` rompa la ejecución.  
-  - Estado: implementado, falta validar en logs de Netlify.
-- Se mantuvo el **enfoque inicial en UK para live picks** (archivo `autopick-live.cjs`), como fase experimental antes de expandir regiones.  
-  - Estado: activo, esperando feedback de resultados en vivo.
-
-### Pendientes de validación
-- Confirmar que la normalización de equipos elimina por completo los errores de emparejamiento OddsAPI ↔ API-FOOTBALL.  
-- Verificar si los nuevos try/catch realmente capturan todos los casos donde `data.find` recibe datos inesperados.  
-- Testear en ambiente real que el `package.json` corregido despliega sin errores en GitHub Actions y Netlify.  
-- Ajustar configuración regional para LATAM en el live cuando se confirme el flujo en UK.
-
----
-
+🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.
