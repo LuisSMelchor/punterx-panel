@@ -1113,5 +1113,4 @@ const AF_LEAGUE_ID_BY_TITLE = {
   // Agrega aquí las que más uses (MLS, Liga MX, etc.) usando /leagues?search=
 };
   // (Mapping of sport_title to API-Football league IDs, if provided elsewhere)
-};
 const TAGLINE = "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.";
