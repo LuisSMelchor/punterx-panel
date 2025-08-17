@@ -7,6 +7,9 @@ const OpenAI = require('openai');
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
+// debajo de otros requires en autopick-vip-nuevo.cjs
+const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
+
 // [PX-FIX] Fin imports requeridos
 
 const {
@@ -473,38 +476,62 @@ async function enriquecerPartidoConAPIFootball(partido) {
       return best.x;
     }
 
-    const homeN = norm(partido.home);
-    const awayN = norm(partido.away);
+    // ... después de construir `arr = data.response;` y antes del return final:
+const hN = norm(partido.home), aN = norm(partido.away);
+const kickoffMs = Date.parse(partido.commence_time || "") || Date.now();
 
-    // === 1) PRIMARIO: fixtures por LIGA + FECHA (UTC) ===
-    if (afLeagueId) {
-      try {
-        const dateStr = new Date(kickoffMs).toISOString().slice(0, 10);
-        const url = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dateStr)}&league=${encodeURIComponent(afLeagueId)}&timezone=UTC`;
-        const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
-        if (res && res.ok) {
-          const j = await safeJson(res);
-          const arr = Array.isArray(j?.response) ? j.response : [];
-          const best = selectBestFixture(arr, partido.home, partido.away, `league+date (id=${afLeagueId}, ${dateStr})`);
-          if (best) {
-            return {
-              liga: best?.league?.name || sportTitle || null,
-              pais: best?.league?.country || null,
-              fixture_id: best?.fixture?.id || null,
-              fecha: best?.fixture?.date || null,
-              estadio: best?.fixture?.venue?.name || null,
-              ciudad: best?.fixture?.venue?.city || null,
-              arbitro: best?.fixture?.referee || null,
-              clima: best?.fixture?.weather || null
-            };
+// Tu heurística actual (por nombre/fecha) queda como primer intento:
+const candidates = arr
+  .filter(x => {
+    const dt2 = Date.parse(x?.fixture?.date || "");
+    if (!Number.isFinite(dt2)) return true;
+    const diffH = Math.abs((dt2 - kickoffMs)/3600000);
+    return diffH <= 60; // ampliamos a ±60h para dar más cancha al resolver
+  })
+  .map(x => {
+    const th = norm(x?.teams?.home?.name);
+    const ta = norm(x?.teams?.away?.name);
+    const nameScore = ((th===hN && ta===aN) || (th===aN && ta===hN)) ? 2 :
+                      (th.includes(hN)||ta.includes(aN)||th.includes(aN)||ta.includes(hN) ? 1 : 0);
+    return { x, nameScore };
+  })
+  .sort((a,b)=> b.nameScore - a.nameScore);
+
+let best = candidates[0]?.x || arr[0] || null;
+
+// Si no hay match “confiable” por la heurística anterior, usamos el resolver de similitud
+if (!best || candidates[0]?.nameScore < 2) {
+  const resolved = resolveFixtureFromList(partido, arr);
+  if (resolved) {
+    best = resolved;
+    try {
+      console.log(`[evt:${partido?.id}] Resolver AF: asignado fixture_id=${resolved?.fixture?.id} league="${resolved?.league?.name}"`);
+    } catch {}
+  }
+}
+
+if (!best) {
+  return {};
+}
+
+return {
+  liga: best?.league?.name || sportTitle || null,
+  pais: best?.league?.country || null,
+  fixture_id: best?.fixture?.id || null,
+  fecha: best?.fixture?.date || null,
+  estadio: best?.fixture?.venue?.name || null,
+  ciudad: best?.fixture?.venue?.city || null,
+  arbitro: best?.fixture?.referee || null,
+  clima: best?.fixture?.weather || null
+};
+
           }
         } else if (res) {
           console.warn(`[evt:${partido?.id}] AF fixtures league+date falló:`, res.status, await safeText(res));
         }
-      } catch (e) {
+  catch (e) {
         console.warn(`[evt:${partido?.id}] Error league+date:`, e?.message || e);
-      }
-    }
+}
 
     // === 2) SECUNDARIO: fixtures por LIGA en ventana ±2 días (UTC) ===
     if (afLeagueId) {
