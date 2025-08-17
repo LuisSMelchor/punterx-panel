@@ -986,7 +986,8 @@ async function pedirPickConModelo(modelo, prompt) {
 
   const systemHint = 'Responde EXCLUSIVAMENTE un objeto JSON válido. Si no tienes certeza o hay restricciones, responde {"no_pick":true,"motivo_no_pick":"sin señal"}.';
   // Ajuste de tokens: arranque bajo y retry controlado
-  let tokens = 320; // arranque más bajo para evitar 'length' y timeouts
+  // Arrancamos en 260 para ahorrar costo y reducir prob. de 'length'
+  let tokens = 260;
 
   // 1er intento
   let req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
@@ -1003,13 +1004,34 @@ async function pedirPickConModelo(modelo, prompt) {
       usage: completion?.usage || null
     };
     try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
-
     if (meta.finish_reason === 'length') {
-      tokens = Math.min(tokens + 80, 400); // retry corto y techo bajo
-      req = buildOpenAIPayload(modelo, prompt, tokens, systemHint);
-      if (req.response_format) delete req.response_format;
-      const c2 = await openai.chat.completions.create(req);
+      // Retry: +80 tokens, manteniendo JSON forzado y opcional fallback de modelo
+      tokens = Math.min(tokens + 80, 340);
+      const modeloRetry = process.env.OPENAI_MODEL_FALLBACK || modelo;
+      // Nudge final para obligar JSON completo y compacto
+      const messagesRetry = [
+        ...req.messages,
+        { role: "user", content: "⚠️ Repite TODO el JSON COMPLETO y compacto. No cortes la salida, no repitas texto previo. Formato estrictamente JSON-objeto." }
+      ];
+      const req2 = {
+        ...req,
+        model: modeloRetry,
+        max_completion_tokens: tokens,
+        // ¡No eliminar response_format! Mantener JSON estricto en el retry
+        response_format: { type: "json_object" },
+        messages: messagesRetry
+      };
+      const t1 = Date.now();
+      const c2 = await openai.chat.completions.create(req2);
       global.__px_oai_calls = (global.__px_oai_calls||0) + 1;
+      try {
+        console.info("[OAI] meta=", JSON.stringify({
+          model: modeloRetry,
+          ms: Date.now() - t1,
+          finish_reason: c2?.choices?.[0]?.finish_reason || "n/d",
+          usage: c2?.usage || null
+        }));
+      } catch {}
       const raw2 = c2?.choices?.[0]?.message?.content || "";
       const obj2 = extractFirstJsonBlock(raw2) || await repairPickJSON(modelo, raw2);
       return obj2 ? ensurePickShape(obj2) : null;
