@@ -69,6 +69,9 @@ const COUNTRY_FLAG = process.env.COUNTRY_FLAG || '🇲🇽';
 // Corazonada toggle
 const CORAZONADA_ENABLED = (process.env.CORAZONADA_ENABLED || '1') !== '0';
 
+// Lookback para oddsPrevBest (minutos)
+const ODDS_PREV_LOOKBACK_MIN = Number(process.env.ODDS_PREV_LOOKBACK_MIN || 7);
+
 const LOCK_TABLE = 'px_locks';
 const LOCK_KEY_FN = 'autopick_vip_nuevo';
 
@@ -316,42 +319,54 @@ function normalizeOddsEvent(ev) {
 }
 
 // =============== SNAPSHOTS (odds_prev_best) ===============
+// Normaliza clave de mercado para snapshots
+function mapMarketKeyForSnapshotFromApuesta(apuesta) {
+  const s = String(apuesta || '').toLowerCase();
+  if (/over|under|total|más de|menos de|mas de/.test(s)) return 'totals';
+  if (/handicap|spread/.test(s)) return 'spreads';
+  return 'h2h';
+}
+
 // Guardar snapshot de la mejor cuota del mercado/outcome seleccionado
-async function saveOddsSnapshot(partido, pickLabel, pointOrNull, bestObj) {
+async function saveOddsSnapshot({ event_key, fixture_id, market, outcome_label, point, best_price, best_bookie, top3_json }) {
   try {
-    if (!bestObj || !bestObj.price) return;
     const row = {
-      event_id: String(partido.id || ''),
-      fixture_id: null, // se puede actualizar si ya tienes info.fixture_id
-      league_text: String(partido.liga || ''),
-      market: inferMarketFromApuesta(pickLabel),
-      outcome_label: String(pickLabel || ''),
-      point: (pointOrNull != null) ? Number(pointOrNull) : null,
-      best_price: Number(bestObj.price),
-      best_bookie: String(bestObj.bookie || ''),
-      captured_at: nowISO()
+      event_key: String(event_key || ''),
+      fixture_id: Number.isFinite(fixture_id) ? fixture_id : null,
+      market: String(market || 'h2h'),
+      outcome_label: String(outcome_label || ''),
+      point: (point != null && Number.isFinite(Number(point))) ? Number(point) : null,
+      best_price: Number(best_price),
+      best_bookie: best_bookie ? String(best_bookie) : null,
+      top3_json: Array.isArray(top3_json) ? top3_json : null
     };
+    if (!row.event_key || !row.market || !row.outcome_label || !Number.isFinite(row.best_price) || row.best_price <= 1) return false;
+
     const { error } = await supabase.from(ODDS_SNAPSHOTS_TABLE).insert([row]);
-    if (error) console.warn('[SNAPSHOT] insert error:', error.message);
+    if (error) { console.warn('[SNAPSHOT] insert error:', error.message); return false; }
+    return true;
   } catch (e) {
     console.warn('[SNAPSHOT] exception:', e?.message || e);
+    return false;
   }
 }
 
-// Obtener best price previo (si existe)
-async function getPrevBestOdds(partido, pickLabel, pointOrNull) {
+// Obtener best price PREVIO con lookback (minutos)
+async function getPrevBestOdds({ event_key, market, outcome_label, point, lookbackMin }) {
   try {
-    const market = inferMarketFromApuesta(pickLabel);
+    const cutoffISO = new Date(Date.now() - Math.max(1, lookbackMin || ODDS_PREV_LOOKBACK_MIN) * 60000).toISOString();
+
     let q = supabase
       .from(ODDS_SNAPSHOTS_TABLE)
-      .select('best_price, best_bookie, captured_at')
-      .eq('event_id', String(partido.id || ''))
-      .eq('market', market)
-      .eq('outcome_label', String(pickLabel || ''))
+      .select('best_price,captured_at')
+      .eq('event_key', String(event_key || ''))
+      .eq('market', String(market || 'h2h'))
+      .eq('outcome_label', String(outcome_label || ''))
+      .lt('captured_at', cutoffISO)
       .order('captured_at', { ascending: false })
       .limit(1);
 
-    if (pointOrNull != null) q = q.eq('point', Number(pointOrNull));
+    if (point != null && Number.isFinite(Number(point))) q = q.eq('point', Number(point)); else q = q.is('point', null);
 
     const { data, error } = await q;
     if (error) { console.warn('[SNAPSHOT] select error:', error.message); return null; }
@@ -584,6 +599,25 @@ exports.handler = async (event, context) => {
         resumen.procesados++;
         if (ev < 10) { resumen.descartados_ev++; console.log(traceId, `EV ${ev}% < 10% → descartado`); continue; }
 
+        // === Señal de mercado: snapshot NOW y lookup PREV ===
+        try {
+          const marketForSnap = mapMarketKeyForSnapshotFromApuesta(pick.apuesta);
+          const outcomeLabelForSnap = String(pick.apuesta || '');
+          const bestBookie = (Array.isArray(cuotaSel?.top3) && cuotaSel.top3[0]?.bookie) ? String(cuotaSel.top3[0].bookie) : null;
+          await saveOddsSnapshot({
+            event_key: P.id,
+            fixture_id: info?.fixture_id || null,
+            market: marketForSnap,
+            outcome_label: outcomeLabelForSnap,
+            point: (cuotaSel.point != null) ? cuotaSel.point : null,
+            best_price: cuota,
+            best_bookie: bestBookie,
+            top3_json: Array.isArray(cuotaSel?.top3) ? cuotaSel.top3 : null
+          });
+        } catch (e) {
+          console.warn(traceId, '[SNAPSHOT] NOW warn:', e?.message || e);
+        }
+
         // === Corazonada IA (si habilitada) ===
         let cz = { score: 0, motivo: '' };
         try {
@@ -593,7 +627,14 @@ exports.handler = async (event, context) => {
 
             // oddsNow (best), oddsPrev (best) vía snapshots:
             const oddsNowBest = (cuotaSel && Number(cuotaSel.valor)) || null;
-            const oddsPrevBest = await getPrevBestOdds(P, pick.apuesta, cuotaSel.point);
+
+            const oddsPrevBest = await getPrevBestOdds({
+              event_key: P.id,
+              market: mapMarketKeyForSnapshotFromApuesta(pick.apuesta),
+              outcome_label: String(pick.apuesta || ''),
+              point: (cuotaSel.point != null) ? cuotaSel.point : null,
+              lookbackMin: ODDS_PREV_LOOKBACK_MIN
+            });
 
             // Para computeCorazonada necesitamos xg/availability/contexto
             const xgStats = buildXgStatsFromAF(info);           // ajusta si tu objeto AF difiere
@@ -609,11 +650,6 @@ exports.handler = async (event, context) => {
               context
             });
             cz = { score: cora?.score || 0, motivo: String(cora?.motivo || '').trim() };
-
-            // Guardar snapshot del best actual (para próximos ciclos)
-            const top3Arr = Array.isArray((cuotaSel && cuotaSel.top3) ? cuotaSel.top3 : []) ? cuotaSel.top3 : [];
-            const bestObj = top3Arr.length ? top3Arr[0] : { price: oddsNowBest, bookie: 'n/d' };
-            await saveOddsSnapshot(P, pick.apuesta, cuotaSel.point ?? null, bestObj);
           }
         } catch (e) {
           console.warn(traceId, '[Corazonada] excepción:', e?.message || e);
@@ -709,7 +745,6 @@ async function enriquecerPartidoConAPIFootball(partido) {
     const sportTitle = String(partido?.sport_title || partido?.liga || "").trim();
     const afLeagueId = AF_LEAGUE_ID_BY_TITLE[sportTitle] || null;
     const kickoffMs = Date.parse(partido.commence_time || "") || Date.now();
-    const kickoffISO = new Date(kickoffMs).toISOString();
     const day = 24 * 3600 * 1000;
 
     const norm = (s) => String(s || "")
@@ -1534,17 +1569,6 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
       entrada.top3_json = cuotaInfoOrNull.top3;
     }
 
-    // Campos contextualizados para LIVE (placeholder si en el futuro aplicas)
-    if (tipo === 'LIVE') {
-      entrada.is_live = true;
-      entrada.kickoff_at = partido.commence_time || null;
-      entrada.minute_at_pick = partido.minute || null;
-      entrada.phase = partido.phase || null;
-      entrada.score_at_pick = partido.score || null;
-      entrada.market_point = (partido.pickPoint != null) ? String(partido.pickPoint) : null;
-      entrada.vigencia_text = partido.vigenciaText || null;
-    }
-
     // Anti-duplicado por evento (pre-match)
     const { data: dupRow, error: dupErr } = await supabase
       .from(PICK_TABLE).select('id').eq('evento', evento).limit(1).maybeSingle();
@@ -1554,8 +1578,7 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
       const { error } = await supabase.from(PICK_TABLE).insert([ entrada ]);
       if (error) {
         console.error('Supabase insert error:', error.message);
-        // Si falla por columna inexistente (ej. top3_json), no romper el flujo:
-        // Opcional: intenta sin top3_json
+        // Fallback: reintento sin top3_json si la columna no existe
         if (/column .* does not exist/i.test(error.message)) {
           try {
             delete entrada.top3_json;
@@ -1591,4 +1614,64 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
   const payload = { model, messages };
 
   if (isG5) {
-    const wanted =
+    // Modelos gpt-5*: usar max_completion_tokens y response_format JSON
+    const wanted = Number(maxTokens) || 320;
+    payload.max_completion_tokens = Math.min(Math.max(260, wanted), 380);
+    payload.response_format = { type: "json_object" };
+    // Evita sampling params en gpt-5* (algunos endpoints los rechazan)
+    delete payload.temperature;
+    delete payload.top_p;
+    delete payload.presence_penalty;
+    delete payload.frequency_penalty;
+  } else {
+    payload.max_tokens = maxTokens;
+    payload.temperature = 0.15;
+    payload.top_p = 1;
+    payload.presence_penalty = 0;
+    payload.frequency_penalty = 0;
+  }
+  return payload;
+}
+
+// =============== JSON Repair (if needed) ===============
+async function repairPickJSON(model, rawText) {
+  const prompt = `El siguiente mensaje debería ser solo un JSON válido pero puede estar malformado:\n<<<\n${rawText}\n>>>\nReescríbelo corrigiendo llaves, comas y comillas para que sea un JSON válido con la misma información.`;
+
+  const fixerModel = (String(model||'').toLowerCase().includes('gpt-5')) ? 'gpt-5-mini' : model;
+  const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(fixerModel||''));
+
+  const fixReq = {
+    model: fixerModel,
+    messages: [{ role:'user', content: prompt }]
+  };
+
+  if (isG5) {
+    // gpt-5*: sin sampling params
+    fixReq.max_completion_tokens = 300;
+  } else {
+    fixReq.temperature = 0.2;
+    fixReq.top_p = 1;
+    fixReq.presence_penalty = 0;
+    fixReq.frequency_penalty = 0;
+    fixReq.response_format = { type: "json_object" };
+    fixReq.max_tokens = 300;
+  }
+
+  const res = await openai.chat.completions.create(fixReq);
+  const raw = res?.choices?.[0]?.message?.content || "";
+  return extractFirstJsonBlock(raw);
+}
+
+// =============== MAPS / CONSTANTES ===============
+const AF_LEAGUE_ID_BY_TITLE = {
+  "England - Premier League": 39,
+  "Spain - La Liga": 140,
+  "Italy - Serie A": 135,
+  "Germany - Bundesliga": 78,
+  "France - Ligue 1": 61,
+  "Mexico - Liga MX": 262,
+  "Brazil - Serie A": 71,
+  "Argentina - Liga Profesional": 128
+};
+
+const TAGLINE = "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.";
