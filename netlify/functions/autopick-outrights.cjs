@@ -167,8 +167,7 @@ async function fetchOutrights() {
   }
 
   // 2) Para cada sport con outrights, pedir mercado `outrights`
-  //    Regions: priorizamos EU y UK (puedes ajustar), odds decimal
-  const REGIONS = "eu,uk,us";
+  const REGIONS = process.env.ODDS_REGIONS || "us,uk,eu,au";
   for (const s of soccerOutrights) {
     const oddsURL =
       `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(s.key)}/odds` +
@@ -248,18 +247,7 @@ function soonInDaysISO(d=7) {
  */
 
 // ---- Mapa OddsAPI sport_key → API-FOOTBALL league_id (outrights) ----
-const AF_LEAGUE_ID_BY_SPORTKEY = {
-  "soccer_spain_la_liga": 140,
-  "soccer_epl": 39,
-  "soccer_italy_serie_a": 135,
-  "soccer_germany_bundesliga": 78,
-  "soccer_france_ligue_one": 61,
-  "soccer_netherlands_eredivisie": 88,
-  "soccer_portugal_primeira_liga": 94,
-  "soccer_usa_mls": 253,
-  "soccer_uefa_champs_league": 2,
-  "soccer_uefa_europa_league": 3
-};
+const AF_LEAGUE_ID_BY_SPORTKEY = {}; // sin listas fijas, resolver por búsqueda textual
 
 function apiFootballResolveLeague(searchName, sportKey) {
   const out = { leagueName: null, season: null, country: null, start: null, end: null };
