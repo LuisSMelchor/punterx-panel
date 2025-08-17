@@ -42,6 +42,7 @@ const {
   AUTH_CODE
 } = process.env;
 
+const ODDS_REGIONS = process.env.ODDS_REGIONS || 'us,uk,eu,au';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
 const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5';
 
@@ -412,7 +413,7 @@ exports.handler = async (event, context) => {
 
   try {
     // 1) Obtener partidos OddsAPI
-    const base = `https://api.the-odds-api.com/v4/sports/soccer/odds/?regions=eu,us,uk&oddsFormat=decimal&markets=h2h,totals,spreads`;
+    const base = `https://api.the-odds-api.com/v4/sports/soccer/...regions=${encodeURIComponent(ODDS_REGIONS)}&oddsFormat=decimal&markets=h2h,totals,spreads`;
     const url = `${base}&apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
     const tOdds = Date.now();
     const res = await fetchWithRetry(url, { method:'GET' }, { retries: 1, base: 400 });
@@ -743,7 +744,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
 
     // --- Helpers locales
     const sportTitle = String(partido?.sport_title || partido?.liga || "").trim();
-    const afLeagueId = AF_LEAGUE_ID_BY_TITLE[sportTitle] || null;
+    const afLeagueId = null; // sin mapeos estáticos; el resolver dinámico decide
     const kickoffMs = Date.parse(partido.commence_time || "") || Date.now();
     const day = 24 * 3600 * 1000;
 
@@ -1661,17 +1662,5 @@ async function repairPickJSON(model, rawText) {
   const raw = res?.choices?.[0]?.message?.content || "";
   return extractFirstJsonBlock(raw);
 }
-
-// =============== MAPS / CONSTANTES ===============
-const AF_LEAGUE_ID_BY_TITLE = {
-  "England - Premier League": 39,
-  "Spain - La Liga": 140,
-  "Italy - Serie A": 135,
-  "Germany - Bundesliga": 78,
-  "France - Ligue 1": 61,
-  "Mexico - Liga MX": 262,
-  "Brazil - Serie A": 71,
-  "Argentina - Liga Profesional": 128
-};
 
 const TAGLINE = "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.";
