@@ -1,95 +1,100 @@
-// netlify/functions/_lib/af-resolver.cjs
-// Resolver de fixture en API-FOOTBALL a partir de un partido de OddsAPI y una lista de candidatos.
+// af-resolver.cjs
+// -------------------------------------------------------------
+// API-FOOTBALL resolver: búsqueda de fixtures candidatos por nombres
+// Mantiene CommonJS. Sin top-level await.
+// Requiere: process.env.API_FOOTBALL_KEY (y opcional API_FOOTBALL_BASE)
+// -------------------------------------------------------------
+'use strict';
 
-const {
-  nameSimilarity,
-  normalizeName
-} = require('./match-normalizer.cjs');
+const maybeFetch = (typeof fetch !== 'undefined') ? fetch : require('node-fetch');
 
-const MATCH_MIN_SCORE = Number(process.env.MATCH_MIN_SCORE || 0.72);
-const MATCH_MIN_TEAM_SCORE = Number(process.env.MATCH_MIN_TEAM_SCORE || 0.62);
+const BASE = process.env.API_FOOTBALL_BASE || 'https://v3.football.api-sports.io';
+const KEY  = process.env.API_FOOTBALL_KEY;
 
-// Escala por diferencia horaria (en horas).
-function timeScore(diffHours) {
-  const d = Math.abs(diffHours);
-  if (d <= 6)  return 1.00;
-  if (d <= 12) return 0.95;
-  if (d <= 24) return 0.90;
-  if (d <= 36) return 0.85;
-  if (d <= 48) return 0.80;
-  if (d <= 60) return 0.75;
-  return 0.60;
-}
-
-function leagueSimilarity(a, b) {
-  if (!a || !b) return 0;
-  return nameSimilarity(a, b);
-}
-
-function countryEq(a, b) {
-  if (!a || !b) return false;
-  const na = normalizeName(a);
-  const nb = normalizeName(b);
-  return !!na && !!nb && na === nb;
+if (!KEY) {
+  // No lanzamos excepción para no romper el flujo; el caller puede manejar nulls.
+  // eslint-disable-next-line no-console
+  console.warn('[AF-RESOLVER] Falta API_FOOTBALL_KEY en entorno');
 }
 
 /**
- * Calcula el mejor fixture de API-FOOTBALL para el partido OddsAPI.
- * @param {Object} partido  { home, away, liga, pais, commence_time }
- * @param {Array} afList    data.response de AF (fixtures)
- * @returns {Object|null}   fixture { league, fixture, teams, ... } o null
+ * GET helper con headers de API-FOOTBALL.
+ * @param {string} url
+ * @returns {Promise<any>}
  */
-function resolveFixtureFromList(partido, afList) {
-  if (!Array.isArray(afList) || afList.length === 0) return null;
-  const tKick = Date.parse(partido?.commence_time || '') || Date.now();
-
-  let best = null;
-
-  for (const x of afList) {
-    const tFx = Date.parse(x?.fixture?.date || '') || 0;
-    const diffH = (tFx && tKick) ? Math.abs(tFx - tKick) / 3600000 : 999;
-
-    const hAF = x?.teams?.home?.name || '';
-    const aAF = x?.teams?.away?.name || '';
-
-    // Similitudes equipo↔equipo, en orientación directa y swap
-    const sHH = nameSimilarity(partido.home, hAF);
-    const sAA = nameSimilarity(partido.away, aAF);
-    const sHA = nameSimilarity(partido.home, aAF);
-    const sAH = nameSimilarity(partido.away, hAF);
-
-    const dirScore = (sHH + sAA) / 2;
-    const swapScore = (sHA + sAH) / 2;
-    const pairScore = Math.max(dirScore, swapScore);
-
-    const tScore = timeScore(diffH);
-    const lScore = leagueSimilarity(partido.liga || '', x?.league?.name || '');
-    const cBonus = countryEq(partido.pais, x?.league?.country) ? 0.05 : 0;
-
-    const finalScore = Math.min(1, 0.7 * pairScore + 0.2 * tScore + 0.1 * lScore + cBonus);
-
-    const item = {
-      x,
-      pairScore,
-      tScore,
-      lScore,
-      cBonus,
-      finalScore,
-      diffH
-    };
-
-    if (!best || item.finalScore > best.finalScore) {
-      best = item;
-    }
+async function getAF(url) {
+  const res = await maybeFetch(url, { headers: { 'x-apisports-key': KEY } });
+  if (!res.ok) {
+    const txt = await res.text().catch(()=> '');
+    throw new Error(`[AF-RESOLVER] HTTP ${res.status}: ${txt.slice(0,200)}`);
   }
-
-  if (!best) return null;
-
-  // Filtros de seguridad: exigir un mínimo de match por equipos y score global.
-  if (best.pairScore < MATCH_MIN_TEAM_SCORE) return null;
-  if (best.finalScore < MATCH_MIN_SCORE) return null;
-
-  return best.x || null;
+  return res.json();
 }
 
-module.exports = { resolveFixtureFromList };
+/**
+ * Devuelve lista deduplicada de fixtures candidatos para una ventana temporal.
+ * Estructura mínima de cada item:
+ * { fixtureId, leagueId, league, country, season, kickoff, home, away }
+ * @param {{home:string, away:string, from:string, to:string}} args
+ * @returns {Promise<Array>}
+ */
+async function searchFixturesByNames({ home, away, from, to }) {
+  try {
+    if (!KEY) return [];
+    const hq = encodeURIComponent(String(home||'').trim());
+    const aq = encodeURIComponent(String(away||'').trim());
+
+    // 1) Buscar IDs de equipo por nombre (search)
+    const [rh, ra] = await Promise.all([
+      getAF(`${BASE}/teams?search=${hq}`),
+      getAF(`${BASE}/teams?search=${aq}`)
+    ]);
+
+    const hIds = (rh?.response || []).map(t => t?.team?.id).filter(Boolean);
+    const aIds = (ra?.response || []).map(t => t?.team?.id).filter(Boolean);
+    if (!hIds.length || !aIds.length) return [];
+
+    // 2) Traer fixtures por equipo dentro de la ventana temporal y cruzar
+    const urlList = [];
+    const build = (id) => `${BASE}/fixtures?team=${id}&from=${from}&to=${to}`;
+    // Limitamos cada lista a 3 por seguridad (peor caso muchos equipos homónimos)
+    hIds.slice(0, 3).forEach(id => urlList.push(build(id)));
+    aIds.slice(0, 3).forEach(id => urlList.push(build(id)));
+    const uniq = Array.from(new Set(urlList));
+
+    const packs = await Promise.all(uniq.map(u => getAF(u).catch(() => ({ response: [] }))));
+
+    const rows = [];
+    for (const p of packs) {
+      for (const f of (p.response || [])) {
+        rows.push({
+          fixtureId: f?.fixture?.id,
+          leagueId:  f?.league?.id,
+          league:    f?.league?.name,
+          country:   f?.league?.country,
+          season:    f?.league?.season,
+          kickoff:   f?.fixture?.date,
+          home:      f?.teams?.home?.name,
+          away:      f?.teams?.away?.name
+        });
+      }
+    }
+
+    // 3) Deduplicar por fixtureId
+    const seen = new Set();
+    const out = [];
+    for (const r of rows) {
+      const k = String(r.fixtureId || '');
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(r);
+    }
+    return out;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[AF-RESOLVER] Error searchFixturesByNames:', err?.message || err);
+    return [];
+  }
+}
+
+module.exports = { searchFixturesByNames };
