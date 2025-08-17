@@ -15,6 +15,8 @@
 # Defaults para TODAS las funciones
 [functions]
   node_bundler = "esbuild"
+  # El bundler debe empacar la carpeta _lib con los helpers usados por las funciones
+  included_files = ["netlify/functions/_lib/**"]
 
 # -------------------------------
 # Diagnóstico (URL pública + cron)
@@ -61,7 +63,6 @@
 # [[scheduled.functions]]
 # path = "autopick-vip-nuevo-background"
 # schedule = "*/15 * * * *"
-
 
 # --------------------------------------
 # Outrights (menos frecuente por volumen)
@@ -152,11 +153,6 @@
     "openai"
   ]
   timeout = 60
-
-[functions]
-# El bundler debe empacar la carpeta _lib con los helpers usados por las funciones
-included_files = ["netlify/functions/_lib/**"]
-# (Si ya tienes 'timeout' u otras opciones aquí, déjalas; esta línea solo añade los helpers)
 
 # ----------------
 # Redirects útiles
