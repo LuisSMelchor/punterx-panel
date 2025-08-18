@@ -154,6 +154,10 @@
   ]
   timeout = 60
 
+[[scheduled.functions]]
+function = "check-expirados"
+cron = "0 6 * * *"
+
 # ----------------
 # Redirects útiles
 # ----------------
