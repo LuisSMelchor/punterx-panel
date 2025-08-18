@@ -146,7 +146,7 @@ async function _sendText(chatId, text, { pin=false } = {}) {
   const msg = await _tg("sendMessage", {
     chat_id: chatId,
     text,
-    parse_mode: "Markdown",
+    parse_mode: "HTML",
     disable_web_page_preview: true
   });
   if (pin) {
@@ -168,7 +168,7 @@ async function _editText(chatId, messageId, text) {
     chat_id: chatId,
     message_id: messageId,
     text,
-    parse_mode: "Markdown",
+    parse_mode: "HTML",
     disable_web_page_preview: true
   });
 }
