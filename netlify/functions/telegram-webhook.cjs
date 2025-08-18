@@ -8,41 +8,6 @@ function addDays(date, days) {
   return d;
 }
 
-// --- Extractores SEGUROS (no asumen que exista .from) ---
-function pickPrivateTextAndUser(update) {
-  // 1) Mensaje normal
-  if (update && update.message && update.message.chat && update.message.chat.type === 'private') {
-    const m = update.message;
-    if (typeof m.text === 'string' && m.from && m.from.id) {
-      return { text: m.text.trim(), userId: m.from.id, username: m.from.username || '' };
-    }
-  }
-  // 2) Mensaje editado
-  if (update && update.edited_message && update.edited_message.chat && update.edited_message.chat.type === 'private') {
-    const m = update.edited_message;
-    if (typeof m.text === 'string' && m.from && m.from.id) {
-      return { text: m.text.trim(), userId: m.from.id, username: m.from.username || '' };
-    }
-  }
-  // 3) Callback button (solo si proviene de chat privado)
-  if (
-    update && update.callback_query &&
-    update.callback_query.message &&
-    update.callback_query.message.chat &&
-    update.callback_query.message.chat.type === 'private' &&
-    typeof update.callback_query.data === 'string' &&
-    update.callback_query.from && update.callback_query.from.id
-  ) {
-    return {
-      text: update.callback_query.data.trim(),
-      userId: update.callback_query.from.id,
-      username: update.callback_query.from.username || ''
-    };
-  }
-  // 4) Inline query u otros → no procesamos trial aquí (se responde instruyendo a escribir /vip por DM)
-  return null;
-}
-
 exports.handler = async (event) => {
   try {
     if (event.httpMethod !== 'POST') {
@@ -57,19 +22,27 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'bad json' };
     }
 
-    // Toma SOLO texto + usuario de chat privado (o callback en privado)
-    const ctx = pickPrivateTextAndUser(update);
-    if (!ctx) {
-      // Ignora todo lo que no sea mensaje privado usable (evita tocar .from)
-      return { statusCode: 200, body: 'ignored' };
+    // SOLO aceptamos message o edited_message de chat PRIVADO
+    const msg = update.message || update.edited_message || null;
+    if (!msg) {
+      return { statusCode: 200, body: 'ignored: no message' };
+    }
+    const chat = msg.chat || {};
+    if (chat.type !== 'private') {
+      return { statusCode: 200, body: 'ignored: not private chat' };
+    }
+    if (!msg.from || typeof msg.text !== 'string' || !msg.text.trim()) {
+      return { statusCode: 200, body: 'ignored: missing from/text' };
     }
 
-    const { text, userId: tgId, username } = ctx;
+    const text = msg.text.trim();
+    const tgId = msg.from.id;
+    const username = msg.from.username || '';
     const trialDays = Number(process.env.TRIAL_DAYS) || 15;
 
     // Comandos válidos
-    const isStart = text.startsWith('/start'); // /start vip15
-    const isVip = text.startsWith('/vip');
+    const isStart = text.startsWith('/start');  // soporta /start vip15
+    const isVip   = text.startsWith('/vip');
     if (!isStart && !isVip) {
       await tgSendMessage(
         tgId,
@@ -78,7 +51,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'ok' };
     }
 
-    // 1) Consulta estado en Supabase
+    // 1) Consultar estado actual en Supabase
     const { data: existing, error: qErr } = await supabase
       .from('usuarios')
       .select('id_telegram, estado, fecha_expira')
@@ -108,7 +81,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'ok' };
     }
 
-    // 3) Activar trial 15 días + link de invitación de 1 uso
+    // 3) Activar trial 15 días + link de 1 uso
     const fecha_inicio = new Date();
     const fecha_expira = addDays(fecha_inicio, trialDays);
 
