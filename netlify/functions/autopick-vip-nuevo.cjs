@@ -13,6 +13,7 @@ const path = require('path');
 const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
 // Corazonada (tu módulo ya existente)
 const { computeCorazonada } = require('./_corazonada.cjs');
+const { createLogger } = require('./_logger.cjs');
 
 // Resolver de equipos/liga (coincidencias OddsAPI ↔ API-FOOTBALL) — carga segura
 let resolveTeamsAndLeague = null;
@@ -46,6 +47,8 @@ const {
 const ODDS_REGIONS = process.env.ODDS_REGIONS || process.env.LIVE_REGIONS || 'us,uk,eu,au';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
 const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5';
+const LOG_VERBOSE = process.env.LOG_VERBOSE === '1';
+const LOG_EVENTS_LIMIT = Number(process.env.LOG_EVENTS_LIMIT || '8'); // top N previos a kickoff en logs
 
 // Clave de deporte para OddsAPI (v4). Mantén global y sin listas fijas.
 const SPORT_KEY = process.env.ODDS_SPORT_KEY || 'soccer';
