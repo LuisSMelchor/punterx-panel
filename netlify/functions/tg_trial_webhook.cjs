@@ -199,9 +199,14 @@ exports.handler = async (event) => {
 
     const upsert = await supabase
       .from('usuarios')
-      .upsert({ id_telegram: chatId, username, estado: 'trial', ... })
+      .upsert(
+        {
+          id_telegram: chatId,
+          username,
+          estado: 'trial',
           fecha_inicio: fecha_inicio.toISOString(),
-          fecha_expira: fecha_expira.toISOString() },
+          fecha_expira: fecha_expira.toISOString(),
+        },
         { onConflict: 'id_telegram' }
       )
       .select()
