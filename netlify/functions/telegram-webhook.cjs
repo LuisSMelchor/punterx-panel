@@ -15,15 +15,13 @@ exports.handler = async (event) => {
     }
 
     const update = JSON.parse(event.body || '{}');
-
-    // Soportar /start con payload (t.me/TuBot?start=vip15)
+    // Aceptar solo mensajes de usuarios (no channel_post, etc.)
     const msg = update.message || update.edited_message;
-    if (!msg || !msg.text) {
-      return { statusCode: 200, body: 'No text' };
+    if (!msg || !msg.text || !msg.from) {
+      return { statusCode: 200, body: 'No valid user message' };
     }
-
     const text = String(msg.text || '').trim();
-    const from = msg.from || {};
+    const from = msg.from;
     const tgId = from.id;
     const username = from.username || '';
     const trialDays = Number(process.env.TRIAL_DAYS) || 15;
