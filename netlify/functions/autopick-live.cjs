@@ -36,7 +36,6 @@ const {
   LIVE_POLL_MS = "40000",              // 40s in-play (recomendado para featured) :contentReference[oaicite:1]{index=1}
   LIVE_COOLDOWN_MIN = "8",
   LIVE_MARKETS = "h2h,totals,spreads",
-  LIVE_REGIONS = (process.env.LIVE_ODDS_REGIONS || process.env.ODDS_REGIONS || "us,uk,eu,au"), // global sin hardcode
   LIVE_PREFILTER_GAP_PP = "5",         // gap consenso vs mejor (p.p.)
   RUN_WINDOW_MS = "60000"              // ventana interna (Netlify background)
 } = process.env;
