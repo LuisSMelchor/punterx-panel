@@ -14,12 +14,30 @@ exports.handler = async (event) => {
       return { statusCode: 405, body: 'Method Not Allowed' };
     }
 
-    const update = JSON.parse(event.body || '{}');
+    // Parse seguro
+    let update;
+    try {
+      update = JSON.parse(event.body || '{}');
+    } catch {
+      return { statusCode: 200, body: 'bad json' };
+    }
 
-    // Solo procesar mensajes de usuarios (ignora channel_post, etc.)
-    const msg = update.message || update.edited_message;
-    if (!msg || !msg.text || !msg.from) {
-      return { statusCode: 200, body: 'No valid user message' };
+    // Acepta SOLO mensajes de usuario (chat privado) con texto
+    const msg = update.message || update.edited_message || null;
+    if (!msg) {
+      // Ignora otros tipos: channel_post, my_chat_member, callback_query, etc.
+      return { statusCode: 200, body: 'ignored: no message' };
+    }
+
+    // Debe ser chat privado (evita canal/grupo)
+    const chat = msg.chat || {};
+    if (chat.type !== 'private') {
+      return { statusCode: 200, body: 'ignored: not private chat' };
+    }
+
+    // Debe existir from + texto
+    if (!msg.from || !msg.text) {
+      return { statusCode: 200, body: 'ignored: missing from/text' };
     }
 
     const text = String(msg.text).trim();
@@ -29,8 +47,9 @@ exports.handler = async (event) => {
     const trialDays = Number(process.env.TRIAL_DAYS) || 15;
 
     // Comandos válidos
-    const isStart = text.startsWith('/start');
+    const isStart = text.startsWith('/start');   // soporta /start vip15
     const isVip = text.startsWith('/vip');
+
     if (!isStart && !isVip) {
       await tgSendMessage(
         tgId,
@@ -39,7 +58,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'ok' };
     }
 
-    // 1) Consultar estado actual en Supabase
+    // 1) Consultar estado actual
     const { data: existing, error: qErr } = await supabase
       .from('usuarios')
       .select('id_telegram, estado, fecha_expira')
@@ -52,16 +71,14 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'error' };
     }
 
-    // 2) Reglas según estado
+    // 2) Reglas de estado
     if (existing?.estado === 'premium') {
       await tgSendMessage(tgId, '✅ Ya eres <b>Premium</b>. Revisa el grupo VIP en tu Telegram.');
       return { statusCode: 200, body: 'ok' };
     }
 
     if (existing?.estado === 'trial' && existing?.fecha_expira && new Date(existing.fecha_expira) > new Date()) {
-      const diasRest = Math.ceil(
-        (new Date(existing.fecha_expira) - new Date()) / (1000 * 60 * 60 * 24)
-      );
+      const diasRest = Math.ceil((new Date(existing.fecha_expira) - new Date()) / (1000 * 60 * 60 * 24));
       await tgSendMessage(tgId, `ℹ️ Tu prueba sigue activa. Te quedan <b>${diasRest} día(s)</b>.`);
       return { statusCode: 200, body: 'ok' };
     }
@@ -74,7 +91,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'ok' };
     }
 
-    // 3) Otorgar trial 15 días y devolver link de invitación de 1 uso
+    // 3) Activar trial 15 días + link de 1 uso
     const fecha_inicio = new Date();
     const fecha_expira = addDays(fecha_inicio, trialDays);
 
