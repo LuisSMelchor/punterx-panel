@@ -574,12 +574,13 @@ exports.handler = async (event, context) => {
             }));
           }
           
-          // ... tras intentar resolver el fixture AF:
-          if (STRICT_MATCH && !(fixtureAF && fixtureAF.fixture && fixtureAF.fixture.id)) {
-          logger && logger.warn && logger.warn(traceId, 'STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO');
-          continue; // o "return null" si estás en una función que procesa 1 evento
+          // STRICT_MATCH: descartar si AF no resolvió correctamente el fixture
+          if (STRICT_MATCH && !(info && info.fixture_id)) {
+            console.warn(traceId, 'STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO');
+            continue; // ← cortar flujo ANTES de IA/EV/enviar
           }
-          }
+
+        }
 
         // Propagar país/liga detectados
         if (info && typeof info === 'object') {
@@ -1561,7 +1562,11 @@ async function enviarFREE(text) {
   try {
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     const body = { chat_id: TELEGRAM_CHANNEL_ID, text, parse_mode: 'HTML', disable_web_page_preview:true };
-    const res = await fetchWithRetry(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) }, { retries:2, base:600 });
+    const res = await fetchWithRetry(
+      url,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      { retries: 2, base: 600 }
+    );
     if (!res.ok) { console.error('Telegram FREE error:', res.status, await safeText(res)); return false; }
     return true;
   } catch (e) { console.error('Telegram FREE net error:', e?.message || e); return false; }
@@ -1571,7 +1576,11 @@ async function enviarVIP(text) {
   try {
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     const body = { chat_id: Number(TELEGRAM_GROUP_ID), text, parse_mode: 'HTML', disable_web_page_preview:true };
-    const res = await fetchWithRetry(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) }, { retries:2, base:600 });
+    const res = await fetchWithRetry(
+      url,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      { retries: 2, base: 600 }
+    );
     if (!res.ok) { console.error('Telegram VIP error:', res.status, await safeText(res)); return false; }
     return true;
   } catch (e) { console.error('Telegram VIP net error:', e?.message || e); return false; }
