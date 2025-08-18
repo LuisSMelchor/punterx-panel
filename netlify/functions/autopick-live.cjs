@@ -22,6 +22,7 @@ const fetch = require("node-fetch");
 const { createClient } = require("@supabase/supabase-js");
 const OpenAI = require("openai");
 const path = require("path");
+const LIVE_REGIONS = process.env.LIVE_REGIONS || process.env.ODDS_REGIONS || 'us,uk,eu,au';
 
 /* ============ ENV ============ */
 const {
