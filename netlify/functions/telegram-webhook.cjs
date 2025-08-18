@@ -16,7 +16,7 @@ exports.handler = async (event) => {
 
     const update = JSON.parse(event.body || '{}');
 
-    // Asegurarnos de que sea texto de usuario (chat personal)
+    // Solo procesar mensajes de usuarios (ignora channel_post, etc.)
     const msg = update.message || update.edited_message;
     if (!msg || !msg.text || !msg.from) {
       return { statusCode: 200, body: 'No valid user message' };
@@ -26,19 +26,51 @@ exports.handler = async (event) => {
     const from = msg.from;
     const tgId = from.id;
     const username = from.username || '';
-    
+    const trialDays = Number(process.env.TRIAL_DAYS) || 15;
+
     // Comandos válidos
     const isStart = text.startsWith('/start');
     const isVip = text.startsWith('/vip');
     if (!isStart && !isVip) {
-      await tgSendMessage(tgId, 'Para comenzar, escribe /vip para activar tu prueba gratis de 15 días.');
+      await tgSendMessage(
+        tgId,
+        '👋 Bienvenido a PunterX.\nEscribe /vip para activar tu prueba gratis de 15 días en el grupo VIP.'
+      );
       return { statusCode: 200, body: 'ok' };
     }
 
-    // (Aquí va el resto del flujo: consulta/upsert en Supabase, creación de link de invitación, etc.)
+    // 1) Consultar estado actual en Supabase
+    const { data: existing, error: qErr } = await supabase
+      .from('usuarios')
+      .select('id_telegram, estado, fecha_expira')
+      .eq('id_telegram', tgId)
+      .maybeSingle();
+
+    if (qErr) {
+      console.error('Supabase select error', qErr);
+      await tgSendMessage(tgId, '⚠️ Error temporal. Intenta de nuevo en unos minutos.');
+      return { statusCode: 200, body: 'error' };
+    }
+
+    // 2) Reglas según estado
+    if (existing?.estado === 'premium') {
+      await tgSendMessage(tgId, '✅ Ya eres <b>Premium</b>. Revisa el grupo VIP en tu Telegram.');
+      return { statusCode: 200, body: 'ok' };
+    }
+
+    if (existing?.estado === 'trial' && existing?.fecha_expira && new Date(existing.fecha_expira) > new Date()) {
+      const diasRest = Math.ceil(
+        (new Date(existing.fecha_expira) - new Date()) / (1000 * 60 * 60 * 24)
+      );
+      await tgSendMessage(tgId, `ℹ️ Tu prueba sigue activa. Te quedan <b>${diasRest} día(s)</b>.`);
+      return { statusCode: 200, body: 'ok' };
+    }
+
     if (existing?.estado === 'expired') {
-      // Política: sin re-trial. Si quieres permitir reintentos, cambia esta rama.
-      await tgSendMessage(tgId, '⛔ Tu periodo de prueba ya expiró. Para continuar, contrata el plan Premium.');
+      await tgSendMessage(
+        tgId,
+        '⛔ Tu periodo de prueba ya expiró.\nPara continuar, contrata el plan Premium.'
+      );
       return { statusCode: 200, body: 'ok' };
     }
 
@@ -48,13 +80,16 @@ exports.handler = async (event) => {
 
     const upsert = await supabase
       .from('usuarios')
-      .upsert({
-        id_telegram: tgId,
-        username,
-        estado: 'trial',
-        fecha_inicio: fecha_inicio.toISOString(),
-        fecha_expira: fecha_expira.toISOString()
-      }, { onConflict: 'id_telegram' })
+      .upsert(
+        {
+          id_telegram: tgId,
+          username,
+          estado: 'trial',
+          fecha_inicio: fecha_inicio.toISOString(),
+          fecha_expira: fecha_expira.toISOString(),
+        },
+        { onConflict: 'id_telegram' }
+      )
       .select()
       .maybeSingle();
 
@@ -70,16 +105,18 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'error' };
     }
 
-    await tgSendMessage(tgId, [
-      '🎁 <b>Prueba VIP activada</b> (15 días).',
-      'Haz clic para unirte al grupo VIP:',
-      inviteLink,
-      '',
-      '🔔 Al finalizar tu prueba, podrás elegir continuar como <b>Premium</b>.',
-    ].join('\n'));
+    await tgSendMessage(
+      tgId,
+      [
+        '🎁 <b>Prueba VIP activada</b> (15 días).',
+        'Haz clic para unirte al grupo VIP:',
+        inviteLink,
+        '',
+        '🔔 Al finalizar tu prueba, podrás elegir continuar como <b>Premium</b>.',
+      ].join('\n')
+    );
 
     return { statusCode: 200, body: 'ok' };
-
   } catch (e) {
     console.error('webhook error', e);
     return { statusCode: 200, body: 'error' };
