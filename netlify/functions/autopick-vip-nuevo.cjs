@@ -414,8 +414,14 @@ exports.handler = async (event, context) => {
 
   try {
     // 1) Obtener partidos OddsAPI
-    const base = `https://api.the-odds-api.com/v4/sports/soccer/...&regions=${encodeURIComponent(ODDS_REGIONS)}&oddsFormat=decimal&markets=h2h,totals,spreads
-    const url = `${base}&apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
+    // Construcción sin template strings para evitar errores de comillas/backticks
+    const base = 'https://api.the-odds-api.com/v4/sports/' + sportKey + '/odds';
+    const url =
+      base +
+      '?apiKey=' + encodeURIComponent(ODDS_API_KEY) +
+      '&regions=' + encodeURIComponent(ODDS_REGIONS) +
+      '&oddsFormat=decimal' +
+      '&markets=h2h,totals,spreads';
     const tOdds = Date.now();
     const res = await fetchWithRetry(url, { method:'GET' }, { retries: 1, base: 400 });
     const tOddsMs = Date.now() - tOdds;
