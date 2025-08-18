@@ -1,7 +1,29 @@
 // netlify/functions/tg_trial_webhook.cjs
-const { supabase } = require('./_supabase-client.cjs');
+// v3.1 — self-contained + robust Supabase init + chat.id only
 
-const VERSION = 'tg_trial_webhook v3.0 (self-contained)';
+// 🔒 Supabase: intenta usar tu cliente local; si no, crea uno con ENV
+let supabase;
+try {
+  const mod = require('./_supabase-client.cjs');
+  supabase = mod.supabase || mod.client || mod.default || mod;
+} catch (e) {
+  // módulo no encontrado o sin export esperado
+}
+if (!supabase) {
+  const { createClient } = require('@supabase/supabase-js');
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_KEY =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_KEY; // por si usas otra var
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    console.error('[Supabase init] Faltan SUPABASE_URL / KEY en ENV');
+  } else {
+    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  }
+}
+
+const VERSION = 'tg_trial_webhook v3.1 (self-contained)';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const VIP_GROUP_ID = process.env.TELEGRAM_VIP_GROUP_ID;
 const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 15;
@@ -10,37 +32,19 @@ function addDays(date, days) { const d = new Date(date); d.setUTCDate(d.getUTCDa
 
 async function tgSendMessageLocal(chatId, text, extra = {}) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-  const body = {
-    chat_id: chatId,
-    text,
-    parse_mode: 'HTML',
-    disable_web_page_preview: true,
-    ...extra,
-  };
+  const body = { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...extra };
   const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const json = await res.json();
-  if (!json.ok) {
-    console.error('[tgSendMessageLocal] fail', json);
-    return false;
-  }
-  return true;
+  if (!json.ok) console.error('[tgSendMessageLocal] fail', json);
+  return !!json.ok;
 }
 
 async function tgCreateInviteLinkLocal() {
-  // El bot DEBE ser admin del grupo y tener permiso de invitar usuarios.
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/createChatInviteLink`;
-  const body = {
-    chat_id: VIP_GROUP_ID,
-    member_limit: 1,         // 1 uso
-    creates_join_request: false,
-  };
+  const body = { chat_id: VIP_GROUP_ID, member_limit: 1, creates_join_request: false };
   const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const json = await res.json();
-  if (!json.ok) {
-    console.error('[tgCreateInviteLinkLocal] fail', json);
-    return null;
-  }
-  // Devuelve la URL del objeto ChatInviteLink
+  if (!json.ok) { console.error('[tgCreateInviteLinkLocal] fail', json); return null; }
   return json.result && json.result.invite_link ? json.result.invite_link : null;
 }
 
@@ -49,7 +53,7 @@ exports.handler = async (event) => {
     console.log(`[${VERSION}] method=${event && event.httpMethod}`);
     if (!event || event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
 
-    // Parseo seguro + preview para debug
+    // Parseo seguro + preview
     let update = {};
     try {
       update = JSON.parse(event.body || '{}');
@@ -67,8 +71,7 @@ exports.handler = async (event) => {
     if (!chat || chat.type !== 'private') return { statusCode: 200, body: 'ignored' };
     if (!Object.prototype.hasOwnProperty.call(msg, 'text') || typeof msg.text !== 'string' || msg.text.trim() === '') return { statusCode: 200, body: 'ignored' };
 
-    // ⚡️ En privados, usamos SIEMPRE chat.id (sin tocar .from)
-    // (Coincidencia chat.id == user.id en privados es práctica común; ver docs/comunidad.)
+    // ⚡️ En privados usamos SIEMPRE chat.id (no tocamos msg.from)
     const chatId = chat.id;
     const text = msg.text.trim();
 
@@ -78,6 +81,13 @@ exports.handler = async (event) => {
     if (!isStart && !isVip) {
       await tgSendMessageLocal(chatId, '👋 Bienvenido a PunterX.\nEscribe /vip para activar tu prueba gratis de 15 días en el grupo VIP.');
       return { statusCode: 200, body: 'ok' };
+    }
+
+    // 🧪 Chequeo duro: ¿tenemos supabase?
+    if (!supabase || typeof supabase.from !== 'function') {
+      console.error('[Supabase] Cliente no inicializado. Revisa _supabase-client.cjs o ENV SUPABASE_URL/KEY.');
+      await tgSendMessageLocal(chatId, '⚠️ Configuración pendiente del servidor. Intenta de nuevo en unos minutos.');
+      return { statusCode: 200, body: 'no-supabase' };
     }
 
     // 1) Consulta estado del usuario
@@ -118,7 +128,7 @@ exports.handler = async (event) => {
       .upsert(
         {
           id_telegram: chatId,
-          username: '', // si luego quieres guardamos username
+          username: '', // si luego quieres guardar username, lo añadimos con guardias
           estado: 'trial',
           fecha_inicio: fecha_inicio.toISOString(),
           fecha_expira: fecha_expira.toISOString(),
