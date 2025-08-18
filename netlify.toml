@@ -156,7 +156,7 @@
 
 [[scheduled.functions]]
 function = "check-expirados"
-cron = "0 6 * * *"
+cron = "0 5 * * *"
 
 # ----------------
 # Redirects útiles
