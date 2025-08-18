@@ -161,3 +161,10 @@
   from = "/diag"
   to = "/.netlify/functions/diagnostico-total"
   status = 200
+
+# Webhook de Telegram
+[[redirects]]
+  from = "/telegram/webhook"
+  to = "/.netlify/functions/telegram-webhook"
+  status = 200
+  force = true
