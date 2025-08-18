@@ -47,6 +47,9 @@ const ODDS_REGIONS = process.env.ODDS_REGIONS || process.env.LIVE_REGIONS || 'us
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
 const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5';
 
+// Clave de deporte para OddsAPI (v4). Mantén global y sin listas fijas.
+const SPORT_KEY = process.env.ODDS_SPORT_KEY || 'soccer';
+
 // Flags de auditoría/estricto
 const STRICT_MATCH = Number(process.env.STRICT_MATCH || '0') === 1;
 const DEBUG_TRACE  = process.env.DEBUG_TRACE === '1';   // trazas detalladas por evento
@@ -98,6 +101,11 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // === Diagnóstico: helpers mínimos (in-file) ===
+function minutesUntilKickoff(ts) {
+  const t = (ts && new Date(ts).getTime()) || NaN;
+  return Math.round((t - Date.now()) / 60000);
+}
+
 async function upsertDiagnosticoEstado(status, details) {
   try {
     const payload = {
@@ -415,7 +423,7 @@ exports.handler = async (event, context) => {
   try {
     // 1) Obtener partidos OddsAPI
     // Construcción sin template strings para evitar errores de comillas/backticks
-    const base = 'https://api.the-odds-api.com/v4/sports/' + sportKey + '/odds';
+    const base = 'https://api.the-odds-api.com/v4/sports/' + SPORT_KEY + '/odds';
     const url =
       base +
       '?apiKey=' + encodeURIComponent(ODDS_API_KEY) +
@@ -432,7 +440,23 @@ exports.handler = async (event, context) => {
     const eventos = await safeJson(res) || [];
     resumen.recibidos = Array.isArray(eventos) ? eventos.length : 0;
     console.log(`ODDSAPI ok=true count=${resumen.recibidos} ms=${tOddsMs}`);
-
+    
+    // Vista previa de próximos eventos (solo si activas LOG_VERBOSE=1)
+    if (process.env.LOG_VERBOSE === '1') {
+      const near = (Array.isArray(eventos) ? eventos : [])
+        .map(ev => {
+          const t = Date.parse(ev.commence_time);
+          const mins = Math.round((t - Date.now()) / 60000);
+          const home = ev.home_team || (ev.teams && ev.teams.home && ev.teams.home.name) || '—';
+          const away = ev.away_team || (ev.teams && ev.teams.away && ev.teams.away.name) || '—';
+          return { mins, label: `${home} vs ${away}` };
+        })
+        .filter(x => Number.isFinite(x.mins))
+        .sort((a, b) => a.mins - b.mins)
+        .slice(0, 8);
+      near.forEach(n => console.log(`⏱️ ${n.mins}m → ${n.label}`));
+    }
+    
     // Filtrar ya iniciados
     const eventosUpcoming = (eventos || []).filter(ev => {
       const t = Date.parse(ev.commence_time);
