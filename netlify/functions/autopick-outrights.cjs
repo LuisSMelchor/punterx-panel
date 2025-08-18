@@ -167,7 +167,7 @@ async function fetchOutrights() {
   }
 
   // 2) Para cada sport con outrights, pedir mercado `outrights`
-  const REGIONS = process.env.ODDS_REGIONS || "us,uk,eu,au";
+  const REGIONS = process.env.ODDS_REGIONS || process.env.LIVE_REGIONS || "us,uk,eu,au";
   for (const s of soccerOutrights) {
     const oddsURL =
       `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(s.key)}/odds` +
@@ -247,7 +247,7 @@ function soonInDaysISO(d=7) {
  */
 
 // ---- Mapa OddsAPI sport_key → API-FOOTBALL league_id (outrights) ----
-const AF_LEAGUE_ID_BY_SPORTKEY = {}; // sin listas fijas, resolver por búsqueda textual
+const AF_LEAGUE_ID_BY_SPORTKEY = {}; // deprecado: resolver AF por búsqueda textual/season vigente
 
 function apiFootballResolveLeague(searchName, sportKey) {
   const out = { leagueName: null, season: null, country: null, start: null, end: null };
