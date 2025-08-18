@@ -172,3 +172,9 @@ cron = "0 6 * * *"
   to = "/.netlify/functions/telegram-webhook"
   status = 200
   force = true
+
+[[redirects]]
+  from = "/telegram/trial"
+  to = "/.netlify/functions/tg_trial_webhook"
+  status = 200
+  force = true
