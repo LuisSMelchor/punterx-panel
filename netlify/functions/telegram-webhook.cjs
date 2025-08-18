@@ -15,55 +15,27 @@ exports.handler = async (event) => {
     }
 
     const update = JSON.parse(event.body || '{}');
-    // Aceptar solo mensajes de usuarios (no channel_post, etc.)
+
+    // Asegurarnos de que sea texto de usuario (chat personal)
     const msg = update.message || update.edited_message;
     if (!msg || !msg.text || !msg.from) {
       return { statusCode: 200, body: 'No valid user message' };
     }
-    const text = String(msg.text || '').trim();
+
+    const text = String(msg.text).trim();
     const from = msg.from;
     const tgId = from.id;
     const username = from.username || '';
-    const trialDays = Number(process.env.TRIAL_DAYS) || 15;
-
-    // Comando de inicio de prueba
-    const isStartTrial = text.startsWith('/start') && (text.includes('vip') || text.includes('trial'));
-    const isVipCmd = text.startsWith('/vip'); // por si publicas /vip en el canal y el usuario te escribe al bot
-
-    if (!isStartTrial && !isVipCmd) {
-      // Respuesta default para que el usuario sepa qué hacer
-      await tgSendMessage(tgId, [
-        '👋 <b>Bienvenido a PunterX</b>',
-        'Escribe <b>/vip</b> para obtener tu acceso de <b>15 días GRATIS</b> al grupo VIP.',
-      ].join('\n'));
+    
+    // Comandos válidos
+    const isStart = text.startsWith('/start');
+    const isVip = text.startsWith('/vip');
+    if (!isStart && !isVip) {
+      await tgSendMessage(tgId, 'Para comenzar, escribe /vip para activar tu prueba gratis de 15 días.');
       return { statusCode: 200, body: 'ok' };
     }
 
-    // 1) Consulta estado actual
-    const { data: existing, error: qErr } = await supabase
-      .from('usuarios')
-      .select('id_telegram, estado, fecha_expira')
-      .eq('id_telegram', tgId)
-      .maybeSingle();
-
-    if (qErr) {
-      console.error('Supabase select error', qErr);
-      await tgSendMessage(tgId, '⚠️ Error temporal. Intenta de nuevo en unos minutos.');
-      return { statusCode: 200, body: 'error' };
-    }
-
-    // 2) Reglas de acceso
-    if (existing?.estado === 'premium') {
-      await tgSendMessage(tgId, '✅ Ya eres <b>Premium</b>. Revisa el grupo VIP en tu Telegram.');
-      return { statusCode: 200, body: 'ok' };
-    }
-
-    if (existing?.estado === 'trial' && existing?.fecha_expira && new Date(existing.fecha_expira) > new Date()) {
-      const diasRest = Math.ceil((new Date(existing.fecha_expira) - new Date()) / (1000 * 60 * 60 * 24));
-      await tgSendMessage(tgId, `ℹ️ Tu <b>prueba</b> sigue activa. Te quedan <b>${diasRest} día(s)</b>.`);
-      return { statusCode: 200, body: 'ok' };
-    }
-
+    // (Aquí va el resto del flujo: consulta/upsert en Supabase, creación de link de invitación, etc.)
     if (existing?.estado === 'expired') {
       // Política: sin re-trial. Si quieres permitir reintentos, cambia esta rama.
       await tgSendMessage(tgId, '⛔ Tu periodo de prueba ya expiró. Para continuar, contrata el plan Premium.');
