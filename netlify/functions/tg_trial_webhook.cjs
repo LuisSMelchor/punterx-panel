@@ -43,12 +43,24 @@ async function tgSendMessageLocal(chatId, text, extra = {}) {
 }
 
 async function tgCreateInviteLinkLocal() {
-  const url = `https://api.telegram.org/bot${BOT_TOKEN}/createChatInviteLink`;
-  const body = { chat_id: VIP_GROUP_ID, member_limit: 1, creates_join_request: false };
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/createChatInviteLink`;
+  const ttl = Number(process.env.TRIAL_INVITE_TTL_SECONDS || 0);
+  const expire_date = ttl > 0 ? Math.floor(Date.now() / 1000) + ttl : undefined;
+
+  const body = {
+    chat_id: process.env.TELEGRAM_VIP_GROUP_ID,
+    member_limit: 1,                // 1 uso
+    creates_join_request: false,    // acceso directo (si quieres revisión manual, pon true)
+    ...(expire_date ? { expire_date } : {})
+  };
+
+  const res = await fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
   const json = await res.json();
   if (!json.ok) { console.error('[tgCreateInviteLinkLocal] fail', json); return null; }
-  return json.result && json.result.invite_link ? json.result.invite_link : null;
+  return json.result?.invite_link ?? null;
 }
 
 exports.handler = async (event) => {
@@ -83,7 +95,60 @@ exports.handler = async (event) => {
     // En privados usamos chat.id (no tocamos msg.from)
     const chatId = chat.id;
     const text = msg.text.trim();
+    const username = (msg.from && typeof msg.from.username === 'string') ? msg.from.username : '';
 
+    // ------------------ COMANDOS BÁSICOS ------------------
+    if (text === '/ayuda') {
+      await tgSendMessageLocal(chatId,
+                               [
+                                 'ℹ️ <b>Ayuda PunterX</b>',
+                                 '• /vip – Activa tu prueba VIP de 15 días',
+                                 '• /status – Verifica el estado de tu prueba o suscripción',
+                                 '',
+                                 'En el VIP recibes picks EV≥15% con datos avanzados y formatos exclusivos.'
+                               ].join('\n')
+                              );
+      return { statusCode: 200, body: 'ok' };
+    }
+    if (text === '/status') {
+      const supabase = await getSupabase();
+      if (!supabase || typeof supabase.from !== 'function') {
+        await tgSendMessageLocal(chatId, '⚠️ No puedo consultar tu estado ahora. Intenta de nuevo en unos minutos.');
+        return { statusCode: 200, body: 'no-supabase' };
+      }
+
+  const { data: u, error } = await supabase
+    .from('usuarios')
+    .select('estado, fecha_expira')
+    .eq('id_telegram', chatId)
+    .maybeSingle();
+
+  if (error) {
+    await tgSendMessageLocal(chatId, '⚠️ Error temporal al consultar tu estado. Intenta de nuevo.');
+    return { statusCode: 200, body: 'error' };
+  }
+
+  if (!u) {
+    await tgSendMessageLocal(chatId, 'No encuentro registro. Escribe /vip para activar tu prueba.');
+    return { statusCode: 200, body: 'ok' };
+  }
+
+  if (u.estado === 'trial' && u.fecha_expira && new Date(u.fecha_expira) > new Date()) {
+    const diasRest = Math.ceil((new Date(u.fecha_expira) - new Date()) / (1000*60*60*24));
+    await tgSendMessageLocal(chatId, `🟡 Estatus: <b>Trial</b>. Te quedan <b>${diasRest} día(s)</b> de prueba.`);
+    return { statusCode: 200, body: 'ok' };
+  }
+
+  if (u.estado === 'premium') {
+    await tgSendMessageLocal(chatId, '🟢 Estatus: <b>Premium</b>. ¡Gracias por tu suscripción!');
+    return { statusCode: 200, body: 'ok' };
+  }
+
+  await tgSendMessageLocal(chatId, '🔴 Estatus: <b>Expirado</b>. Para continuar, contrata el plan Premium.');
+  return { statusCode: 200, body: 'ok' };
+}
+// ------------------------------------------------------
+    
     const isStart = text.startsWith('/start');
     const isVip   = text.startsWith('/vip');
     if (!isStart && !isVip) {
@@ -134,8 +199,7 @@ exports.handler = async (event) => {
 
     const upsert = await supabase
       .from('usuarios')
-      .upsert(
-        { id_telegram: chatId, username: '', estado: 'trial',
+      .upsert({ id_telegram: chatId, username, estado: 'trial', ... })
           fecha_inicio: fecha_inicio.toISOString(),
           fecha_expira: fecha_expira.toISOString() },
         { onConflict: 'id_telegram' }
