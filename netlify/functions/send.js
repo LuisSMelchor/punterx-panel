@@ -465,3 +465,60 @@ module.exports.sendVipOutright = async function sendVipOutright(p, { pin = false
   const text = _buildOutVipMessage(p);
   return _sendText(Number(_TG_VIP), text, { pin });
 };
+
+// === Helpers Telegram (ADD-ONLY) ===
+const TG_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+const VIP_CHAT_ID = process.env.TELEGRAM_VIP_GROUP_ID;
+
+async function tgSendMessage(chatId, text, extra = {}) {
+  const res = await fetch(`${TG_API}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', ...extra })
+  });
+  const j = await res.json();
+  if (!j.ok) console.error('tgSendMessage error', j);
+  return j;
+}
+
+async function tgCreateInviteLink(secondsValid = Number(process.env.TRIAL_INVITE_TTL_SECONDS) || 172800) {
+  const expire = Math.floor(Date.now() / 1000) + secondsValid;
+  const res = await fetch(`${TG_API}/createChatInviteLink`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: VIP_CHAT_ID,
+      expire_date: expire,
+      member_limit: 1
+      // creates_join_request: false  // si deseas aprobación manual, cámbialo a true y maneja approveJoinRequest
+    })
+  });
+  const j = await res.json();
+  if (!j.ok) console.error('tgCreateInviteLink error', j);
+  return j.result?.invite_link;
+}
+
+async function expulsarUsuarioVIP(userId) {
+  // Ban para expulsar (y opcional unban para permitir re-join solo por invitación)
+  const ban = await fetch(`${TG_API}/banChatMember`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: VIP_CHAT_ID, user_id: userId })
+  });
+  const bj = await ban.json();
+  if (!bj.ok) console.error('banChatMember error', bj);
+
+  // Unban opcional para limpiar estado (el reingreso sigue controlado por links de invitación de 1 uso)
+  await fetch(`${TG_API}/unbanChatMember`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: VIP_CHAT_ID, user_id: userId, only_if_banned: true })
+  });
+}
+
+module.exports = {
+  ...module.exports,
+  tgSendMessage,
+  tgCreateInviteLink,
+  expulsarUsuarioVIP
+};
