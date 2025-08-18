@@ -1,114 +1,127 @@
-PunterX — Configuración, Flujo y Libro de Ruta
+PunterX-Config.md
 
-Versión: 2025-08-17 · Responsable: Luis + Dev Senior PunterX
-Ámbito: Soccer global (pre-match y outrights). Live preparado pero en pausa por costos de OddsAPI.
+Versión: 2025-08-17
+Responsables: Luis Sánchez (owner) · Dev Senior PunterX
+Ámbito actual: Fútbol (soccer) global — pre-match y outrights. Live preparado pero en pausa por costos de OddsAPI.
 
 1) Propósito y principio rector
 
-Objetivo: detectar y publicar picks “mágicos” (alto EV real) en todos los partidos apostables del mundo, sin listas fijas, con enriquecimiento avanzado y guardrails de IA.
-Principio: cobertura 100% general (sin ligas/IDs hardcode), ventana principal 45–55 min antes del inicio (alineaciones y signals listas), y STRICT_MATCH=1: si OddsAPI y API-FOOTBALL no cuadran, no se publica.
+Objetivo: detectar y publicar picks “mágicos” (alto EV real) en todos los partidos apostables del mundo, sin listas fijas, con enriquecimiento avanzado (API-FOOTBALL PRO) y guardrails de IA.
+Principios innegociables:
+
+Cobertura 100% general: sin ligas/IDs hardcode ni whitelists.
+
+Ventana principal: 45–55 min antes del inicio (alineaciones, señales y contexto listos).
+
+STRICT_MATCH=1: si OddsAPI y API-FOOTBALL no cuadran con el fixture real en ventana principal, no se publica.
 
 2) Estado actual (resumen ejecutivo)
 
-✅ Cobertura global restaurada: sin hardcodes de ligas/IDs; regiones de OddsAPI ahora parametrizadas.
+✅ Corrección de rumbo aplicada (Resumen Ejecutivo #15): se eliminaron mapeos estáticos tipo AF_LEAGUE_ID_BY_TITLE y cualquier dependencia fija de liga/ID/país.
 
-✅ STRICT_MATCH=1 vigente: si AF no resuelve fixture/league limpio en ventana principal → descartado antes de IA.
+✅ Regiones OddsAPI parametrizadas: ahora con ODDS_REGIONS (default us,uk,eu,au) y fallback a LIVE_REGIONS si faltara.
 
-✅ Mensajería (canal & VIP) intacta con branding aprobado (liga con país, “Comienza en X minutos aprox”, Top-3 bookies, etc.).
+✅ STRICT_MATCH=1 activo: mismatch AF → descartado antes de IA y EV.
 
-✅ Live: código listo y coherente; pausado en Replit por costo de llamadas (se reactivará cuando suba el plan).
+✅ Fix de build/URLs: se reemplazaron template strings problemáticos por concatenación clásica o URL nativa al armar endpoints (evita “Unexpected identifier '$'”).
 
-✅ Corazonada IA integrada (pesos por disponibilidad, contexto, mercado, xG) y snapshots de cuotas.
+✅ Fix Live: una única declaración de LIVE_REGIONS y URLs live usando regions=${encodeURIComponent(LIVE_REGIONS)}.
 
-✅ Node y CommonJS consolidados; evitamos ESM y backticks problemáticos en URLs.
+✅ Nuevo ODDS_SPORT_KEY: control explícito del deporte (default soccer), evitando sportKey is not defined.
 
-🔄 Diagnóstico V2 (UI HTML): en avance.
+✅ Logs opcionales de cercanía a kickoff: LOG_VERBOSE=1 habilita vista previa de partidos próximos (minutos a inicio).
 
-🔄 Memoria IA (Supabase → prompt): activo y por optimizar (resumen compacto + relevancia por equipo/liga/mercado).
+✅ Mensajería (canal & VIP) intacta: liga con país, “Comienza en X minutos aprox”, Top-3 bookies (mejor en negritas) y frase final aprobada.
 
-🔄 Outrights: alineados conceptualmente; afinando coherencias y thresholds finales.
+🔄 Diagnóstico V2 (UI HTML) en progreso.
+
+🔄 Memoria IA → prompt (Supabase) activa y por compactar/optimizar.
+
+🔄 Outrights alineados conceptualmente; se afinan coherencias/umbral.
 
 3) Arquitectura (alto nivel)
 
 Netlify Functions (serverless)
 
-autopick-vip-nuevo.cjs → orquestador pre-match (cada 15 min).
+netlify/functions/autopick-vip-nuevo.cjs → orquestador pre-match (cada 15 min).
 
-autopick-outrights.cjs → outrights con mismas validaciones.
+netlify/functions/autopick-outrights.cjs → outrights con reglas espejo de pre-match.
 
-autopick-live.cjs → live preparado (pausado).
+netlify/functions/autopick-live.cjs → live preparado (pausado).
 
-_lib/* → resolvers y utilidades (resolver AF, normalizaciones, odds helpers, etc.).
+netlify/functions/send.js → formatos Telegram (canal & VIP).
 
-send.js → Telegram (canal & VIP).
+netlify/functions/diagnostico-total.js + _diag-core-v4.cjs → panel/estado.
 
-diagnostico-total.js (+ _diag-core-v4.cjs) → panel y métricas.
+Utilidades: _corazonada.cjs, _telemetry.cjs, _supabase-client.cjs, prompts_punterx.md, telegram_formatos.md.
 
-_corazonada.cjs, _telemetry.cjs, _supabase-client.cjs.
+Config: netlify.toml, package.json.
 
 Fuentes
 
-OddsAPI → mercados reales (h2h, totals, spreads).
+OddsAPI → cuotas/mercados reales (h2h, totales, spreads).
 
-API-FOOTBALL (PRO) → fixtures, alineaciones, árbitro, clima, forma, xG, lesiones, historial.
+API-FOOTBALL PRO → fixtures, alineaciones, árbitro, clima, forma, xG, lesiones, historial.
 
-OpenAI (GPT-5) → análisis y JSON final (una llamada / partido, con fallback).
+OpenAI (GPT-5) → análisis y JSON único por evento (1 llamada con fallback).
 
 Persistencia (Supabase)
 
-picks_historicos (+ memoria IA y diagnósticos), odds_snapshots, px_locks, diagnostico_estado, diagnostico_ejecuciones.
+picks_historicos, odds_snapshots, px_locks, diagnostico_estado, diagnostico_ejecuciones (+ tablas de memoria IA).
 
-4) Flujo maestro (pre-match)
+4) Flujo maestro (pre-match, 45–55 min)
 
-OddsAPI: obtener todos los eventos con cuotas (regiones parametrizadas).
+OddsAPI: obtener eventos con cuotas (regiones parametrizadas).
 
-Filtro temporal: ventana principal 45–55 min (fallback 35–70 min si aplica, sin violar STRICT_MATCH).
+Filtro temporal: ventana 45–55 (fallback 35–70 si procede).
 
-Resolver AF: matching completamente general (liga/país/equipos/fecha). STRICT_MATCH=1 → si no cuadra, descartado.
+Resolver AF (match 100% general): país/liga/equipos/fecha. Con STRICT_MATCH=1: si no cuadra fixture AF → descartar.
 
-Construcción del prompt: opciones apostables reales (lo que trae OddsAPI), + contexto AF (alineaciones, lesiones, clima, árbitro, forma, xG, historial), + memoria IA resumida si aplica.
+Prompt IA: sólo opciones apostables reales (de OddsAPI) + contexto AF (alineaciones, lesiones, clima, árbitro, forma, xG, historial) + memoria IA compacta.
 
-OpenAI: una llamada (con fallback) → un único JSON con: apuesta, probabilidad, analisis_free, analisis_vip, no_pick, frases, apuestas_extra, etc.
+OpenAI: 1 llamada (con fallback) → JSON con apuesta, probabilidad, analisis_free, analisis_vip, apuestas_extra, no_pick, frases, etc.
 
-Validaciones (ver §10): rango probabilidad, coherencia con probabilidad implícita, EV mínimo, outcome válido y top-3 bookies coherente.
+Validaciones (ver §10): rango prob., coherencia con implícita, EV mínimo, outcome válido, Top-3 coherente.
 
-Clasificación por EV → Canal FREE (10–14.9%) / VIP (≥15%) con niveles.
+Clasificación por EV → FREE (10–14.9%) / VIP (≥15%) por niveles.
 
-Mensajería Telegram (formato aprobado).
+Mensajería Telegram (branding aprobado).
 
-Guardado en Supabase (+ odds snapshots y memoria IA).
+Guardar en Supabase (+ snapshots de cuotas, memoria IA).
 
-Telemetría (locks, diagnósticos, contadores).
+Telemetría (locks, contadores, causas de descarte).
 
 5) Ventanas y tiempos
 
-Ventana principal pre-match: 45–55 min antes de inicio.
+Principal: 45–55 min antes del kickoff.
 
-Fallback: 35–70 min (solo si corresponde y sin saltarse STRICT_MATCH).
+Fallback: 35–70 min (sin romper STRICT_MATCH).
 
 Cron maestro: cada 15 min (Netlify).
 
-Zona horaria: America/Mexico_City (en ENV TZ).
+Zona horaria: America/Mexico_City (ENV TZ).
+
+Nota: Si tu log imprime “40–55”, ajusta WINDOW_MAIN_MIN=45 para alinearlo al estándar.
 
 6) IA y guardrails
 
-1 llamada a OpenAI por evento (con reintento corto).
+1 llamada por partido (con reintento corto).
 
-no_pick=true → corta el flujo.
+no_pick=true → corta.
 
-Probabilidad IA: 5%–85%.
+Prob. IA: 5%–85%.
 
-Coherencia con probabilidad implícita (cuota elegida) ≤ 15 p.p.
+Coherencia |P(IA) − P(implícita)| ≤ 15 p.p.
 
-Apuesta válida: debe existir en outcomes reales del evento (OddsAPI) y encontrarse la cuota exacta para el cálculo EV.
+Apuesta válida: debe existir en outcomes del evento; seleccionar cuota exacta.
 
-Top-3 bookies: ordenado por cuota; mejor en negritas (VIP).
+Top-3 bookies: orden por cuota; mejor en negritas (VIP).
 
-Corazonada IA: señal cualitativa basada en pesos ajustables (ver §13).
+Corazonada IA: señal cualitativa configurable (ver §13).
 
-7) Cálculo EV y clasificación
+7) Cálculo EV y niveles
 
-EV calculado con la probabilidad estimada por IA vs. probabilidad implícita de la cuota elegida.
+EV = función de P(IA) vs P(implícita) (cuota elegida).
 
 Umbrales:
 
@@ -124,76 +137,79 @@ VIP: EV ≥ 15%
 
 FREE (📄 Informativo): 10–14.9%
 
-No guardar picks con EV < 10% ni con datos incompletos.
+No guardar EV < 10% ni picks incompletos.
 
-8) Mensajería (formatos aprobados)
+8) Formatos de mensaje (Telegram)
 
 Canal gratuito (@punterxpicks)
 
 Encabezado: 📡 RADAR DE VALOR
 
-Incluye: liga (con país), equipos, hora (“Comienza en X minutos aprox”), análisis breve de IA, frase motivacional, CTA al VIP, disclaimer responsable.
+Contiene: liga (con país), equipos, hora “Comienza en X minutos aprox”, análisis breve IA, frase motivacional, CTA al VIP, disclaimer.
 
-No incluye la apuesta sugerida.
+Sin apuesta sugerida.
 
 Grupo VIP (-1002861902996)
 
 Encabezado: 🎯 PICK NIVEL: [Ultra/Élite/Avanzado/Competitivo]
 
-Incluye: liga (con país), equipos, hora de inicio, EV y probabilidad;
-Apuesta sugerida + Apuestas extra (Más de 2.5, Ambos anotan, Doble oportunidad, Goleador, Marcador exacto, HT result, Hándicap asiático);
-Top 3 bookies (mejor en negritas), Datos avanzados (clima, árbitro, lesiones, historial, xG), Corazonada IA (si aplica), disclaimer responsable.
+Contiene: liga (con país), equipos, hora de inicio, EV y prob.; Apuesta sugerida + Apuestas extra (O2.5, BTTS, Doble oportunidad, Goleador, Marcador exacto, HT result, Hándicap asiático); Top-3 bookies (mejor en negritas); Datos avanzados (clima/árbitro/lesiones/historial/xG); Corazonada IA si aplica; disclaimer.
 
 Frase final (todas las piezas):
 “🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.”
 
-9) Integraciones y variables de entorno
+9) Variables de entorno (Netlify)
 
-Ya definidas en Netlify (tus valores):
+Ya configuradas:
 API_FOOTBALL_KEY, AUTH_CODE, AWS_LAMBDA_JS_RUNTIME, CORAZONADA_ENABLED, CORAZONADA_W_AVAIL, CORAZONADA_W_CTX, CORAZONADA_W_MARKET, CORAZONADA_W_XG, ENABLE_OUTRIGHTS, ENABLE_OUTRIGHTS_INFO, LIVE_COOLDOWN_MIN, LIVE_MARKETS, LIVE_MIN_BOOKIES, LIVE_POLL_MS, LIVE_PREFILTER_GAP_PP, LIVE_REGIONS, MATCH_RESOLVE_CONFIDENCE, MAX_OAI_CALLS_PER_CYCLE, NODE_OPTIONS, NODE_VERSION, ODDS_API_KEY, OPENAI_API_KEY, OPENAI_MODEL, OPENAI_MODEL_FALLBACK, OUTRIGHTS_COHERENCE_MAX_PP, OUTRIGHTS_EV_MIN_VIP, OUTRIGHTS_EXCLUDE, OUTRIGHTS_MIN_BOOKIES, OUTRIGHTS_MIN_OUTCOMES, OUTRIGHTS_PROB_MAX, OUTRIGHTS_PROB_MIN, PANEL_ENDPOINT, PUNTERX_SECRET, RUN_WINDOW_MS, SUB_MAIN_MAX, SUB_MAIN_MIN, SUPABASE_KEY, SUPABASE_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, TELEGRAM_GROUP_ID, TZ, WINDOW_FALLBACK_MAX, WINDOW_FALLBACK_MIN, WINDOW_FB_MAX, WINDOW_FB_MIN, WINDOW_MAIN_MAX, WINDOW_MAIN_MIN, WINDOW_MAX, WINDOW_MIN.
 
-Agregadas / confirmadas (corrección de rumbo):
+Nuevas / confirmadas hoy (corrección de rumbo):
 
-ODDS_REGIONS=us,uk,eu,au ← nuevo (cobertura global por defecto).
+ODDS_REGIONS=us,uk,eu,au ← nuevo (default global)
 
-STRICT_MATCH=1 ← nuevo (descarta si AF no cuadra).
+STRICT_MATCH=1 ← nuevo (mismatch AF → descarta)
 
-LIVE_REGIONS ya existía; ahora no se redeclara y se usa como fallback si falta ODDS_REGIONS.
+ODDS_SPORT_KEY=soccer ← nuevo (control deporte; evita sportKey indefinido)
 
-Nota Live: Pese a tener LIVE_REGIONS, Live está pausado en Replit por costos. Este doc solo deja el código coherente y listo.
+LOG_VERBOSE=0|1 ← nuevo (logs de cercanía a kickoff)
 
-10) Reglas de guardado (validadas antes de insertar)
+Herencias y prioridades:
+LIVE_REGIONS no se redeclara; si falta ODDS_REGIONS, Live hereda de allí.
+ODDS_SPORT_KEY default soccer — se puede cambiar centralmente si ampliamos deportes.
+
+10) Reglas de validación y guardado
 
 no_pick === true → descartar.
 
-Integridad: apuesta, probabilidad, analisis_free, analisis_vip presentes.
+Integridad: apuesta, probabilidad, analisis_free, analisis_vip.
 
-Apuesta válida y cuota exacta encontrada en outcomes OddsAPI.
+Outcome válido y cuota exacta (OddsAPI) para ese mercado.
 
-Probabilidad IA en rango 5–85%.
+Prob. IA en [5%, 85%].
 
-Coherencia |P(IA) − P(implícita cuota)| ≤ 15 p.p.
+Coherencia ≤ 15 p.p. vs implícita de la cuota.
 
-EV ≥ 10% para guardar; VIP solo si EV ≥ 15%.
+EV ≥ 10% para guardar; VIP sólo si EV ≥ 15%.
 
 Anti-duplicado por evento (pre-match) y por torneo (outrights).
 
-Top-3 bookies adjunto (si existe la columna top3_json).
+Top-3 bookies adjunto si existe top3_json.
 
-Mensajes formateados según reglas (ver §8) y liga con país.
+Mensajes según formatos (liga con país, hora texto, frase final).
 
 11) Anti-duplicado y locks
 
-Anti-duplicado: búsqueda en picks_historicos por evento (y para outrights por torneo).
+Anti-duplicado en picks_historicos por evento (pre-match) / torneo (outrights).
 
-Lock distribuido (px_locks) con TTL por ciclo para evitar dobles envíos simultáneos (Netlify overlapping).
+Lock distribuido en px_locks con TTL para evitar dobles envíos por solapamiento de invocaciones.
 
-12) Supabase: tablas y esquema recomendado
-picks_historicos (base central de memoria y auditoría)
+12) Supabase — esquema recomendado
+
+picks_historicos (core memoria/auditoría)
 
 evento (text)
 
-analisis (text) → incluir FREE+VIP (o campos separados si ya migrado)
+analisis (text) ← puede concatenar FREE/VIP si no hay campos separados
 
 apuesta (text)
 
@@ -211,129 +227,104 @@ nivel (text: 🟣/🎯/🥈/🥉/📄)
 
 timestamp (timestamptz)
 
-top3_json (jsonb) ← recomendado
+top3_json (jsonb) (recomendado)
 
-SQL idempotente sugerido (si faltara top3_json):
-
+-- Idempotente (por si faltara top3_json)
 alter table if exists public.picks_historicos
   add column if not exists top3_json jsonb;
 
-Otras tablas
 
-odds_snapshots (historial de mejor cuota por evento/mercado para señales de mercado + corazonada).
-
-px_locks (key, ttl, created_at).
-
-diagnostico_estado (estado resumido para el panel).
-
-diagnostico_ejecuciones (contadores por etapa por ciclo).
+Otras tablas: odds_snapshots, px_locks, diagnostico_estado, diagnostico_ejecuciones (+ tablas de memoria IA).
 
 13) Corazonada IA (señal cualitativa)
 
-Variables:
+Flags/pesos:
 CORAZONADA_ENABLED (0/1),
-CORAZONADA_W_AVAIL, CORAZONADA_W_CTX, CORAZONADA_W_MARKET, CORAZONADA_W_XG (pesos).
+CORAZONADA_W_AVAIL, CORAZONADA_W_CTX, CORAZONADA_W_MARKET, CORAZONADA_W_XG.
 
-Inputs: disponibilidad de datos AF (alineaciones, lesiones), contexto matchup (forma, historial), señales de mercado (cambios en cuotas/snapshots), xG/estadísticas.
+Inputs: disponibilidad AF (alineaciones/lesiones), contexto (forma/historial), señales de mercado (cambios en mejores cuotas / odds_snapshots), métricas xG.
 
-Salida: texto breve + (opcional) score interno; se muestra en VIP si disponible.
+Salida: texto breve (+ score interno opcional). Se muestra en VIP si está activo.
 
-14) Outrights (alineado a pre-match)
+14) Outrights (misma filosofía)
 
-Misma filosofía: sin listas fijas de ligas/torneos; resolver AF por búsqueda textual/season vigente.
+Sin listas fijas; resolver AF por búsqueda textual/season vigente.
 
-Validaciones: outcomes reales; prob. IA 5–85%; coherencia ≤ 15 p.p.; EV ≥ umbral (OUTRIGHTS_EV_MIN_VIP para VIP).
+Validaciones espejo: outcome real, prob. IA 5–85%, coherencia ≤ 15 p.p., EV ≥ OUTRIGHTS_EV_MIN_VIP para VIP.
 
-Anti-duplicado por torneo; Top-3 bookies si aplica.
+Anti-duplicado por torneo; Top-3 si aplica.
 
 15) Live (preparado, en pausa)
 
-Motivo de pausa: alto consumo de llamadas a OddsAPI desde Replit (costos).
+Motivo: consumo alto de llamadas a OddsAPI en Replit (costos).
 
-Estado del código: coherente con regiones parametrizadas; sin redeclaraciones de LIVE_REGIONS; URLs usando regions=${encodeURIComponent(LIVE_REGIONS)}.
+Estado del código: coherente (una sola LIVE_REGIONS, URLs con ${encodeURIComponent(LIVE_REGIONS)}).
 
-Reactivación futura: aumentar plan en OddsAPI + (opcional) rate-limit y ENABLE_LIVE (switch simple).
+Re-activación planificada: subir plan de OddsAPI + (opcional) ENABLE_LIVE, LIVE_POLL_MS, LIVE_COOLDOWN_MIN, LIVE_MIN_BOOKIES, LIVE_PREFILTER_GAP_PP, LIVE_MARKETS.
 
 16) Diagnóstico y observabilidad
 
-Diagnóstico V2 (HTML): mostrar estado de APIs, locks, picks recientes, errores, consumo básico y señales de mercado.
+Diagnóstico V2 (HTML): estado de APIs, locks, picks recientes, causas de descarte (coherencia, rango prob., sin outcome, no_pick, etc.), consumo básico y señales de mercado.
 
-Telemetría mínima por ciclo:
-
-Consultas realizadas (OddsAPI/AF), picks candidatos, IA llamadas (OK/fallback), clasificados (FREE/VIP), descartados (causa), guardados y enviados.
+Telemetría de ciclo: totales por etapa (consultas, candidatos, IA OK/fallback, FREE/VIP, descartes y causa, guardados, enviados).
 
 17) Seguridad, estilo y despliegue
 
 CommonJS (.cjs) siempre; sin ESM ni top-level await.
 
-Variables sensibles solo por ENV (Netlify).
+Claves reales sólo por ENV (Netlify).
 
-Sin hardcodes de ligas/IDs/regiones.
+Cero hardcodes de ligas/IDs/regiones.
 
-Backups antes de cambios amplios; diffs mínimos cuando sean correcciones puntuales.
+Backups antes de cambios amplios; diffs mínimos para correcciones puntuales.
 
-Documentación sincronizada: cualquier cambio de lógica/vars debe reflejarse aquí y en PunterX-Config.md.
+Docs sincronizadas: cualquier cambio en lógica/vars debe reflejarse aquí y en punterx.md.
 
 18) Cambios aplicados hoy (2025-08-17)
 
-Corrección de rumbo (Resumen Ejecutivo #15):
+Eliminados hardcodes de ligas/IDs (e.g., AF_LEAGUE_ID_BY_TITLE).
 
-✅ Eliminados mapeos estáticos tipo AF_LEAGUE_ID_BY_TITLE y similares.
+Parametrizadas regiones vía ODDS_REGIONS (default global) con fallback a LIVE_REGIONS.
 
-✅ Parametrizadas regiones de OddsAPI: ODDS_REGIONS (default us,uk,eu,au) y uso de LIVE_REGIONS como fallback.
+STRICT_MATCH=1 reforzado (mismatch AF → no IA, no EV, no envío).
 
-✅ STRICT_MATCH=1 activado y reforzado: mismatch AF → no IA, no EV, no envío.
+Fix LIVE_REGIONS duplicado y reemplazo de literales regions=uk.
 
-✅ autopick-live.cjs: se eliminó la doble declaración de LIVE_REGIONS y se reemplazaron literales regions=uk por ${encodeURIComponent(LIVE_REGIONS)}.
+Fix URLs OddsAPI: concatenación clásica / URL nativa (evita errores por backticks).
 
-✅ autopick-vip-nuevo.cjs: reemplazo de construcción de URL con concatenación clásica para evitar errores de backticks; regions= ahora usa ODDS_REGIONS.
+Nuevas ENV: ODDS_SPORT_KEY, LOG_VERBOSE.
 
-✅ Env en Netlify: añadidos ODDS_REGIONS y STRICT_MATCH.
+Snippet de vista previa de próximos partidos (activable con LOG_VERBOSE=1).
 
-✅ Mensajería intacta y verificada (liga con país; “Comienza en X minutos aprox”; Top-3; frase final nueva).
+Mensajería verificada: liga+país, “Comienza en X minutos aprox”, Top-3, frase final.
 
 19) Roadmap inmediato (qué sigue)
 
-Diagnóstico V2 (UI HTML) con _diag-core-v4.cjs:
+Diagnóstico V2 (UI HTML) completo (errores, causas, consumo, señales).
 
-Estado de APIs, locks, picks recientes, causas de descarte (coherencia, rango prob., no outcome, no_pick, etc.).
+Memoria IA: relevancia por equipo/liga/mercado, resumen compacto al prompt, registro ex-post.
 
-Memoria IA:
+Outrights: afinar coherencia y umbral, anti-duplicado por torneo consolidado.
 
-Recuperación por equipo/liga/mercado últimos N picks; resumen compacto para el prompt (budget tokens).
+Costos: límites a OpenAI por ciclo (MAX_OAI_CALLS_PER_CYCLE), backoff si OddsAPI/AF fallan.
 
-Registro ex-post para realimentación (win/loss, error drivers).
-
-Outrights:
-
-Afinar coherencia y umbral EV VIP con las mismas reglas que pre-match; anti-duplicado por torneo.
-
-Costos:
-
-Límite de llamadas a OpenAI por ciclo (ya hay MAX_OAI_CALLS_PER_CYCLE), y backoff si OddsAPI/AF fallan.
-
-Live (cuando aumente el plan):
-
-Re-enable con rate-limit (LIVE_POLL_MS, LIVE_COOLDOWN_MIN) y switch opcional ENABLE_LIVE.
+Live (cuando suba el plan): ENABLE_LIVE, rate-limit con LIVE_POLL_MS/LIVE_COOLDOWN_MIN.
 
 20) Checklist de despliegue (cada cambio)
 
- ENV en Netlify actualizadas (ODDS_REGIONS, STRICT_MATCH, LIVE_REGIONS si aplica).
+ ODDS_REGIONS, STRICT_MATCH, ODDS_SPORT_KEY, LOG_VERBOSE en Netlify (sin claves en repo).
 
- Sin hardcodes en regions=; todo via ${encodeURIComponent(…REGIONS)}.
+ Sin regions= literales; usar ${encodeURIComponent(...REGIONS)}.
 
  STRICT_MATCH corta antes de IA/EV/enviar.
 
- Mensajes siguen el formato aprobado.
+ Mensajería mantiene formato y branding.
 
- Supabase: columnas presentes (incl. top3_json).
+ Supabase listo (incluye top3_json).
 
- Logs/diagnóstico sin errores (data.find is not a function, etc.).
+ Logs/diagnóstico limpios (sin data.find is not a function, etc.).
 
-21) secrets.env.example (plantilla)
-
-No poner valores reales.
-
+21) secrets.env.example (plantilla — no poner valores reales)
 # APIs
 ODDS_API_KEY=
 API_FOOTBALL_KEY=
@@ -354,22 +345,26 @@ TELEGRAM_GROUP_ID=
 PANEL_ENDPOINT=
 PUNTERX_SECRET=
 
-# Tiempo/ventanas (ejemplos)
+# Tiempo/ventanas
 TZ=America/Mexico_City
 WINDOW_MAIN_MIN=45
 WINDOW_MAIN_MAX=55
 WINDOW_FALLBACK_MIN=35
 WINDOW_FALLBACK_MAX=70
 
-# OddsAPI regiones (global por defecto)
+# OddsAPI – regiones y deporte
 ODDS_REGIONS=us,uk,eu,au
 LIVE_REGIONS=us,uk,eu,au
+ODDS_SPORT_KEY=soccer
 
 # Matching estricto
 STRICT_MATCH=1
 
 # IA
 MAX_OAI_CALLS_PER_CYCLE=20
+
+# Logs
+LOG_VERBOSE=0
 
 # Corazonada
 CORAZONADA_ENABLED=1
@@ -378,30 +373,18 @@ CORAZONADA_W_CTX=0.25
 CORAZONADA_W_MARKET=0.25
 CORAZONADA_W_XG=0.25
 
-22) Errores frecuentes y soluciones rápidas
+22) Errores frecuentes y soluciones
 
-“Identifier 'LIVE_REGIONS' has already been declared”
-→ Deja una sola declaración (const LIVE_REGIONS = process.env.LIVE_REGIONS || process.env.ODDS_REGIONS || 'us,uk,eu,au') y elimina cualquier reasignación.
+“Identifier 'LIVE_REGIONS' has already been declared” → Deja una declaración y elimina reasignaciones.
 
-“Unexpected identifier '$'” en URLs
-→ Evitar backticks; usar concatenación o new URL(...).
+“Unexpected identifier '$'” en URLs → Evita backticks; usa concatenación o new URL(...).
 
-data.find is not a function
-→ Normalizar entradas: const arr = Array.isArray(data) ? data : [];
+data.find is not a function → Normaliza: const arr = Array.isArray(data) ? data : [];.
 
-Pick con apuesta no válida
-→ Verificar apuesta ∈ outcomes y selección de cuota exacta via helper; si no existe, descartar.
+Outcome no válido / sin cuota exacta → Verifica mapping de mercados y existencia de la cuota elegida; si no, descarta.
 
-Coherencia > 15 p.p.
-→ Descartar; revisar que la cuota leída sea la del mercado exacto.
+Coherencia > 15 p.p. → Descarta; revisa que la cuota corresponda al mercado exacto.
 
-Duplicados
-→ Confirmar anti-duplicado por evento (pre-match) o torneo (outrights).
+Duplicados → Anti-duplicado por evento (pre-match) y torneo (outrights).
 
-23) Nota final (mantenimiento de doc)
-
-Cada cambio en código, variables o lógica debe reflejarse aquí y en PunterX-Config.md para mantener la documentación sincronizada.
-Estilo: Español; formato Resumen → Acción → Detalle; CommonJS; sin claves reales.
-Meta: fortalecer el sistema para encontrar picks de oro con valor real, listos para VIP.
-
-Fin de punterx.md.
+Fin de PunterX-Config.md.
