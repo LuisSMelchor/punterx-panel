@@ -48,6 +48,11 @@ async function tgCreateInviteLinkLocal() {
   return json.result && json.result.invite_link ? json.result.invite_link : null;
 }
 
+console.log('[env check] SUPABASE_URL?', !!process.env.SUPABASE_URL);
+console.log('[env check] SUPABASE_KEY?', !!process.env.SUPABASE_KEY || !!process.env.SUPABASE_SERVICE_ROLE_KEY || !!process.env.SUPABASE_ANON_KEY);
+console.log('[env check] TELEGRAM_BOT_TOKEN?', !!process.env.TELEGRAM_BOT_TOKEN);
+console.log('[env check] TELEGRAM_VIP_GROUP_ID?', !!process.env.TELEGRAM_VIP_GROUP_ID);
+
 exports.handler = async (event) => {
   try {
     console.log(`[${VERSION}] method=${event && event.httpMethod}`);
