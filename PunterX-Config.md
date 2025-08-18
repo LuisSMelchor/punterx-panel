@@ -11,7 +11,7 @@ Principios innegociables:
 
 Cobertura 100% general: sin ligas/IDs hardcode ni whitelists.
 
-Ventana principal: 45–55 min antes del inicio (alineaciones, señales y contexto listos).
+Ventana principal: 40–55 min antes del inicio (alineaciones, señales y contexto listos).
 
 STRICT_MATCH=1: si OddsAPI y API-FOOTBALL no cuadran con el fixture real en ventana principal, no se publica.
 
