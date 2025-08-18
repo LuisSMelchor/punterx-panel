@@ -8,48 +8,75 @@ function addDays(date, days) {
   return d;
 }
 
+// Helpers para extraer campos de forma segura
+function pickMessage(update) {
+  return (
+    update?.message ??
+    update?.edited_message ??
+    update?.callback_query?.message ??
+    null
+  );
+}
+function pickFrom(update) {
+  return (
+    update?.message?.from ??
+    update?.edited_message?.from ??
+    update?.callback_query?.from ??
+    update?.inline_query?.from ??
+    update?.chosen_inline_result?.from ??
+    null
+  );
+}
+function pickText(update) {
+  return (
+    update?.message?.text ??
+    update?.edited_message?.text ??
+    update?.callback_query?.data ??
+    update?.inline_query?.query ??
+    ''
+  );
+}
+function isPrivateChat(msg) {
+  return msg?.chat?.type === 'private';
+}
+
 exports.handler = async (event) => {
   try {
     if (event.httpMethod !== 'POST') {
       return { statusCode: 405, body: 'Method Not Allowed' };
     }
 
-    // Parse seguro
-    let update;
+    // Parse seguro del update
+    let update = {};
     try {
       update = JSON.parse(event.body || '{}');
     } catch {
       return { statusCode: 200, body: 'bad json' };
     }
 
-    // Acepta SOLO mensajes de usuario (chat privado) con texto
-    const msg = update.message || update.edited_message || null;
-    if (!msg) {
-      // Ignora otros tipos: channel_post, my_chat_member, callback_query, etc.
-      return { statusCode: 200, body: 'ignored: no message' };
-    }
+    // Extrae entidades de forma tolerante
+    const msg = pickMessage(update);
+    const from = pickFrom(update);
+    const textRaw = pickText(update);
 
-    // Debe ser chat privado (evita canal/grupo)
-    const chat = msg.chat || {};
-    if (chat.type !== 'private') {
-      return { statusCode: 200, body: 'ignored: not private chat' };
-    }
-
-    // Debe existir from + texto
-    if (!msg.from || !msg.text) {
+    // Si no hay from o no hay texto usable, ignorar
+    if (!from || typeof textRaw !== 'string' || textRaw.trim() === '') {
       return { statusCode: 200, body: 'ignored: missing from/text' };
     }
 
-    const text = String(msg.text).trim();
-    const from = msg.from;
+    // Si hay mensaje (no inline/callback sin message), exigir chat privado
+    if (msg && !isPrivateChat(msg)) {
+      return { statusCode: 200, body: 'ignored: not private chat' };
+    }
+
     const tgId = from.id;
     const username = from.username || '';
+    const text = textRaw.trim();
     const trialDays = Number(process.env.TRIAL_DAYS) || 15;
 
-    // Comandos válidos
-    const isStart = text.startsWith('/start');   // soporta /start vip15
+    // Comandos válidos: /vip o /start <payload>
+    const isStart = text.startsWith('/start');
     const isVip = text.startsWith('/vip');
-
     if (!isStart && !isVip) {
       await tgSendMessage(
         tgId,
@@ -71,7 +98,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'error' };
     }
 
-    // 2) Reglas de estado
+    // 2) Reglas según estado
     if (existing?.estado === 'premium') {
       await tgSendMessage(tgId, '✅ Ya eres <b>Premium</b>. Revisa el grupo VIP en tu Telegram.');
       return { statusCode: 200, body: 'ok' };
