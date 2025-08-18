@@ -42,12 +42,13 @@ const {
   AUTH_CODE
 } = process.env;
 
-const ODDS_REGIONS = process.env.ODDS_REGIONS || 'us,uk,eu,au';
+// Regiones para OddsAPI (globales). Prioridad: ODDS_REGIONS > LIVE_REGIONS > default
+const ODDS_REGIONS = process.env.ODDS_REGIONS || process.env.LIVE_REGIONS || 'us,uk,eu,au';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
 const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-5';
 
 // Flags de auditoría/estricto
-const STRICT_MATCH = process.env.STRICT_MATCH === '1';  // exige match AF para seguir con IA/Telegram
+const STRICT_MATCH = Number(process.env.STRICT_MATCH || '0') === 1;
 const DEBUG_TRACE  = process.env.DEBUG_TRACE === '1';   // trazas detalladas por evento
 
 // Ventanas por defecto: 45–55 (principal) y 35–70 (fallback)
@@ -413,7 +414,7 @@ exports.handler = async (event, context) => {
 
   try {
     // 1) Obtener partidos OddsAPI
-    const base = `https://api.the-odds-api.com/v4/sports/soccer/...regions=${encodeURIComponent(ODDS_REGIONS)}&oddsFormat=decimal&markets=h2h,totals,spreads`;
+    const base = `https://api.the-odds-api.com/v4/sports/soccer/...&regions=${encodeURIComponent(ODDS_REGIONS)}&oddsFormat=decimal&markets=h2h,totals,spreads
     const url = `${base}&apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
     const tOdds = Date.now();
     const res = await fetchWithRetry(url, { method:'GET' }, { retries: 1, base: 400 });
@@ -542,11 +543,13 @@ exports.handler = async (event, context) => {
               home: P.home, away: P.away, liga: P.liga || null
             }));
           }
-          if (STRICT_MATCH) {
-            console.log(traceId, 'STRICT_MATCH activo → sin AF.fixture_id, descartado antes de IA');
-            continue;
+          
+          // ... tras intentar resolver el fixture AF:
+          if (STRICT_MATCH && !(fixtureAF && fixtureAF.fixture && fixtureAF.fixture.id)) {
+          logger && logger.warn && logger.warn(traceId, 'STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO');
+          continue; // o "return null" si estás en una función que procesa 1 evento
           }
-        }
+          }
 
         // Propagar país/liga detectados
         if (info && typeof info === 'object') {
