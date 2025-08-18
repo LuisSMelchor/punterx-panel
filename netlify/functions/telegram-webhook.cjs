@@ -8,36 +8,39 @@ function addDays(date, days) {
   return d;
 }
 
-// Helpers para extraer campos de forma segura
-function pickMessage(update) {
-  return (
-    update?.message ??
-    update?.edited_message ??
-    update?.callback_query?.message ??
-    null
-  );
-}
-function pickFrom(update) {
-  return (
-    update?.message?.from ??
-    update?.edited_message?.from ??
-    update?.callback_query?.from ??
-    update?.inline_query?.from ??
-    update?.chosen_inline_result?.from ??
-    null
-  );
-}
-function pickText(update) {
-  return (
-    update?.message?.text ??
-    update?.edited_message?.text ??
-    update?.callback_query?.data ??
-    update?.inline_query?.query ??
-    ''
-  );
-}
-function isPrivateChat(msg) {
-  return msg?.chat?.type === 'private';
+// --- Extractores SEGUROS (no asumen que exista .from) ---
+function pickPrivateTextAndUser(update) {
+  // 1) Mensaje normal
+  if (update && update.message && update.message.chat && update.message.chat.type === 'private') {
+    const m = update.message;
+    if (typeof m.text === 'string' && m.from && m.from.id) {
+      return { text: m.text.trim(), userId: m.from.id, username: m.from.username || '' };
+    }
+  }
+  // 2) Mensaje editado
+  if (update && update.edited_message && update.edited_message.chat && update.edited_message.chat.type === 'private') {
+    const m = update.edited_message;
+    if (typeof m.text === 'string' && m.from && m.from.id) {
+      return { text: m.text.trim(), userId: m.from.id, username: m.from.username || '' };
+    }
+  }
+  // 3) Callback button (solo si proviene de chat privado)
+  if (
+    update && update.callback_query &&
+    update.callback_query.message &&
+    update.callback_query.message.chat &&
+    update.callback_query.message.chat.type === 'private' &&
+    typeof update.callback_query.data === 'string' &&
+    update.callback_query.from && update.callback_query.from.id
+  ) {
+    return {
+      text: update.callback_query.data.trim(),
+      userId: update.callback_query.from.id,
+      username: update.callback_query.from.username || ''
+    };
+  }
+  // 4) Inline query u otros → no procesamos trial aquí (se responde instruyendo a escribir /vip por DM)
+  return null;
 }
 
 exports.handler = async (event) => {
@@ -46,7 +49,7 @@ exports.handler = async (event) => {
       return { statusCode: 405, body: 'Method Not Allowed' };
     }
 
-    // Parse seguro del update
+    // Parse JSON seguro
     let update = {};
     try {
       update = JSON.parse(event.body || '{}');
@@ -54,28 +57,18 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'bad json' };
     }
 
-    // Extrae entidades de forma tolerante
-    const msg = pickMessage(update);
-    const from = pickFrom(update);
-    const textRaw = pickText(update);
-
-    // Si no hay from o no hay texto usable, ignorar
-    if (!from || typeof textRaw !== 'string' || textRaw.trim() === '') {
-      return { statusCode: 200, body: 'ignored: missing from/text' };
+    // Toma SOLO texto + usuario de chat privado (o callback en privado)
+    const ctx = pickPrivateTextAndUser(update);
+    if (!ctx) {
+      // Ignora todo lo que no sea mensaje privado usable (evita tocar .from)
+      return { statusCode: 200, body: 'ignored' };
     }
 
-    // Si hay mensaje (no inline/callback sin message), exigir chat privado
-    if (msg && !isPrivateChat(msg)) {
-      return { statusCode: 200, body: 'ignored: not private chat' };
-    }
-
-    const tgId = from.id;
-    const username = from.username || '';
-    const text = textRaw.trim();
+    const { text, userId: tgId, username } = ctx;
     const trialDays = Number(process.env.TRIAL_DAYS) || 15;
 
-    // Comandos válidos: /vip o /start <payload>
-    const isStart = text.startsWith('/start');
+    // Comandos válidos
+    const isStart = text.startsWith('/start'); // /start vip15
     const isVip = text.startsWith('/vip');
     if (!isStart && !isVip) {
       await tgSendMessage(
@@ -85,7 +78,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'ok' };
     }
 
-    // 1) Consultar estado actual
+    // 1) Consulta estado en Supabase
     const { data: existing, error: qErr } = await supabase
       .from('usuarios')
       .select('id_telegram, estado, fecha_expira')
@@ -98,7 +91,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'error' };
     }
 
-    // 2) Reglas según estado
+    // 2) Reglas por estado
     if (existing?.estado === 'premium') {
       await tgSendMessage(tgId, '✅ Ya eres <b>Premium</b>. Revisa el grupo VIP en tu Telegram.');
       return { statusCode: 200, body: 'ok' };
@@ -111,14 +104,11 @@ exports.handler = async (event) => {
     }
 
     if (existing?.estado === 'expired') {
-      await tgSendMessage(
-        tgId,
-        '⛔ Tu periodo de prueba ya expiró.\nPara continuar, contrata el plan Premium.'
-      );
+      await tgSendMessage(tgId, '⛔ Tu periodo de prueba ya expiró.\nPara continuar, contrata el plan Premium.');
       return { statusCode: 200, body: 'ok' };
     }
 
-    // 3) Activar trial 15 días + link de 1 uso
+    // 3) Activar trial 15 días + link de invitación de 1 uso
     const fecha_inicio = new Date();
     const fecha_expira = addDays(fecha_inicio, trialDays);
 
