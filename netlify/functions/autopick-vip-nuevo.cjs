@@ -394,6 +394,11 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 // =============== NETLIFY HANDLER ===============
 exports.handler = async (event, context) => {
   assertEnv();
+  
+  const traceId = 'a' + Math.random().toString(36).slice(2,10);
+  const logger = createLogger(traceId);
+  logger.section('CICLO PunterX');
+  logger.info('▶️ Inicio ciclo; now(UTC)=', new Date().toISOString());
 
   const CICLO_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
   console.log(`▶️ CICLO ${CICLO_ID} start; now(UTC)= ${new Date().toISOString()}`);
@@ -422,7 +427,19 @@ exports.handler = async (event, context) => {
     guardados_ok: 0, guardados_fail: 0, oai_calls: 0,
     principal: 0, fallback: 0, af_hits: 0, af_fails: 0
   };
-
+  
+  const causas = {
+  strict_mismatch: 0,
+  no_pick_flag: 0,
+  outcome_invalido: 0,
+  prob_fuera_rango: 0,
+  incoherencia_pp: 0,
+  ev_insuficiente: 0,
+  ventana_fuera: 0,
+  duplicado: 0,
+  otros: 0
+  };
+  
   try {
     // 1) Obtener partidos OddsAPI
     // Construcción sin template strings para evitar errores de comillas/backticks
@@ -469,12 +486,14 @@ exports.handler = async (event, context) => {
     // 2) Normalizar
     const partidos = eventosUpcoming.map(normalizeOddsEvent).filter(Boolean);
 
-    // Filtrar por ventana
+    // Filtrar por ventana (contabilizando fuera de ventana)
     const inWindow = partidos.filter(p => {
       const mins = Math.round(p.minutosFaltantes);
       const principal = mins >= WINDOW_MAIN_MIN && mins <= WINDOW_MAIN_MAX;
       const fallback  = !principal && mins >= WINDOW_FB_MIN && mins <= WINDOW_FB_MAX;
-      return principal || fallback;
+      const dentro = principal || fallback;
+      if (!dentro) causas.ventana_fuera++;
+      return dentro;
     });
 
     const principalCount = inWindow.filter(p => {
@@ -579,8 +598,9 @@ exports.handler = async (event, context) => {
           
           // STRICT_MATCH: descartar si AF no resolvió correctamente el fixture
           if (STRICT_MATCH && !(info && info.fixture_id)) {
-            console.warn(traceId, 'STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO');
-            continue; // ← cortar flujo ANTES de IA/EV/enviar
+            causas.strict_mismatch++;
+            logger.warn('STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO');
+            continue;
           }
 
         }
@@ -604,7 +624,11 @@ exports.handler = async (event, context) => {
           pick = r.pick; modeloUsado = r.modeloUsado;
           console.log(traceId, '🔎 Modelo usado:', modeloUsado);
           resumen.oai_calls = (global.__px_oai_calls || 0);
-          if (esNoPick(pick)) { console.log(traceId, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d'); continue; }
+          if (esNoPick(pick)) {
+            causas.no_pick_flag++;
+            console.log(traceId, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d');
+            continue;
+          }
           if (!pickCompleto(pick)) { console.warn(traceId, 'Pick incompleto tras fallback'); continue; }
         } catch (e) {
           console.error(traceId, 'Error GPT:', e?.message || e); continue;
@@ -612,7 +636,12 @@ exports.handler = async (event, context) => {
 
         // Seleccionar cuota EXACTA del mercado pedido
         const cuotaSel = seleccionarCuotaSegunApuesta(P, pick.apuesta);
-        if (!cuotaSel || !cuotaSel.valor) { console.warn(traceId, '❌ No se encontró cuota del mercado solicitado → descartando'); continue; }
+        if (!cuotaSel || !cuotaSel.valor) {
+          causas.outcome_invalido++;
+          console.warn(traceId, 'No se encontró cuota del mercado solicitado → descartando');
+          continue;
+        }
+        
         const cuota = Number(cuotaSel.valor);
 
         // Coherencia apuesta/outcome
@@ -624,9 +653,15 @@ exports.handler = async (event, context) => {
         // Probabilidad + coherencia con implícita
         const probPct = estimarlaProbabilidadPct(pick);
         if (probPct == null) { console.warn(traceId, '❌ Probabilidad ausente → descartando pick'); continue; }
-        if (probPct < 5 || probPct > 85) { console.warn(traceId, '❌ Probabilidad fuera de rango [5–85] → descartando pick'); continue; }
+        if (probPct < 5 || probPct > 85) {
+          causas.prob_fuera_rango++;
+          console.warn(traceId, 'Probabilidad fuera de rango [5–85] → descartando');
+          continue;
+        }
+
         const imp = impliedProbPct(cuota);
         if (imp != null && Math.abs(probPct - imp) > 15) {
+          causas.incoherencia_pp++;
           console.warn(traceId, `❌ Probabilidad inconsistente (model=${probPct}%, implícita=${imp}%) → descartando`);
           continue;
         }
@@ -635,7 +670,12 @@ exports.handler = async (event, context) => {
         const ev = calcularEV(probPct, cuota);
         if (ev == null) { console.warn(traceId, 'EV nulo'); continue; }
         resumen.procesados++;
-        if (ev < 10) { resumen.descartados_ev++; console.log(traceId, `EV ${ev}% < 10% → descartado`); continue; }
+       if (ev < 10) {
+         causas.ev_insuficiente++;
+         resumen.descartados_ev++;
+         console.log(traceId, `EV ${ev}% < 10% → descartado`);
+         continue;
+       }
 
         // === Señal de mercado: snapshot NOW y lookup PREV ===
         try {
@@ -735,8 +775,14 @@ exports.handler = async (event, context) => {
     try { await releaseDistributedLock(); } catch(_) {}
     global.__punterx_lock = false;
     try { await upsertDiagnosticoEstado('idle', null); } catch(_) {}
+    logger.section('Resumen ciclo');
+logger.info('Conteos:', JSON.stringify(resumen));
+logger.info('Causas de descarte:', JSON.stringify(causas));
+const topCausas = Object.entries(causas).sort((a,b) => b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}:${v}`).join(' | ');
+logger.info('Top causas:', topCausas || 'sin descartes');
+    // (opcional) mantener los logs antiguos:
     console.log(`🏁 Resumen ciclo: ${JSON.stringify(resumen)}`);
-    console.log(`Duration: ${(Date.now()-started).toFixed(2)} ms\tMemory Usage: ${Math.round(process.memoryUsage().rss/1e6)} MB`);
+    console.log(`Duration: ${(Date.now()-started).toFixed(2)} ms...Memory Usage: ${Math.round(process.memoryUsage().rss/1e6)} MB`);
   }
 };
 
@@ -1642,8 +1688,10 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
         resumen.guardados_ok++;
       }
     } else {
+      try { if (global.__px_causas) global.__px_causas.duplicado++; } catch(_) {}
       console.log('Pick duplicado, no guardado');
     }
+  
   } catch (e) {
     console.error('Supabase insert exception:', e?.message || e);
     resumen.guardados_fail++;
