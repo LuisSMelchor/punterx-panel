@@ -1,15 +1,27 @@
 // netlify/functions/tg_trial_webhook.cjs
-// v3.2 — Supabase ESM via dynamic import + chat.id only + self-contained
+// v3.4 — Consolidado, bienvenida mejorada, enlace directo al VIP, sin borrar tu lógica
 
-const VERSION = 'tg_trial_webhook v3.2 (esm-init)';
-const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 15;
+'use strict';
+
+// (Polyfill) — Netlify en Node 20 ya trae fetch, pero si corrieras esto localmente en otra versión:
+try { if (typeof fetch === 'undefined') global.fetch = require('node-fetch'); } catch (_) {}
+
+const VERSION = 'tg_trial_webhook v3.4 (welcome+consolidated)';
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS || 15);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const VIP_GROUP_ID = process.env.TELEGRAM_VIP_GROUP_ID;
 
-// Utilidad
+// Acepta cualquiera de las dos envs para el grupo VIP
+const VIP_CHAT_ID = process.env.TELEGRAM_VIP_GROUP_ID || process.env.TELEGRAM_GROUP_ID;
+
+// ---------- Utils ----------
 function addDays(date, days) { const d = new Date(date); d.setUTCDate(d.getUTCDate() + days); return d; }
+function daysBetween(now, futureISO) {
+  const diff = new Date(futureISO).getTime() - now.getTime();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+}
+function safeStr(v, def = '') { return (typeof v === 'string' ? v : def); }
 
-// Inicializa Supabase usando import() (ESM)
+// ---------- Supabase (ESM dynamic import) ----------
 async function getSupabase() {
   const SUPABASE_URL = process.env.SUPABASE_URL;
   const SUPABASE_KEY =
@@ -23,8 +35,7 @@ async function getSupabase() {
   }
 
   try {
-    // ESM-only package → dynamic import en CJS
-    const { createClient } = await import('@supabase/supabase-js'); // ✅
+    const { createClient } = await import('@supabase/supabase-js');
     return createClient(SUPABASE_URL, SUPABASE_KEY);
   } catch (e) {
     console.error('[Supabase init] import/createClient falló', e);
@@ -32,25 +43,29 @@ async function getSupabase() {
   }
 }
 
-// Telegram helpers (HTTP directo, usando fetch global de Node 18+)
+// ---------- Telegram helpers ----------
 async function tgSendMessageLocal(chatId, text, extra = {}) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
   const body = { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...extra };
   const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const json = await res.json();
+  const json = await res.json().catch(()=> ({}));
   if (!json.ok) console.error('[tgSendMessageLocal] fail', json);
   return !!json.ok;
 }
 
 async function tgCreateInviteLinkLocal() {
-  const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/createChatInviteLink`;
+  if (!VIP_CHAT_ID) {
+    console.error('[Invite] VIP_CHAT_ID ausente');
+    return null;
+  }
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/createChatInviteLink`;
   const ttl = Number(process.env.TRIAL_INVITE_TTL_SECONDS || 0);
   const expire_date = ttl > 0 ? Math.floor(Date.now() / 1000) + ttl : undefined;
 
   const body = {
-    chat_id: process.env.TELEGRAM_VIP_GROUP_ID,
+    chat_id: VIP_CHAT_ID,
     member_limit: 1,                // 1 uso
-    creates_join_request: false,    // acceso directo (si quieres revisión manual, pon true)
+    creates_join_request: false,    // acceso directo (si quieres aprobación manual, cambia a true y maneja approveJoinRequest)
     ...(expire_date ? { expire_date } : {})
   };
 
@@ -58,58 +73,98 @@ async function tgCreateInviteLinkLocal() {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
-  const json = await res.json();
+  const json = await res.json().catch(()=> ({}));
   if (!json.ok) { console.error('[tgCreateInviteLinkLocal] fail', json); return null; }
   return json.result?.invite_link ?? null;
 }
 
+// ---------- Mensajes (copy mejorado) ----------
+function buildWelcomeMessage(inviteLink) {
+  return [
+    '👋 <b>¡Bienvenido a PunterX!</b>',
+    '',
+    `Has activado tu periodo de <b>prueba VIP por ${TRIAL_DAYS} días</b>.`,
+    '',
+    'Nuestro <b>radar de IA Avanzada</b> escanea <b>todas las ligas del mundo en tiempo real</b> para detectar valor oculto:',
+    '',
+    '• <b>EV ≥ 15%</b> → Ventaja matemática real frente al mercado',
+    '   🥉 15–19% Competitivo',
+    '   🥈 20–29% Avanzado',
+    '   🎯 30–39% Élite Mundial',
+    '   🟣 40%+ Ultra Élite',
+    '',
+    '• <b>Apuesta sugerida</b> + Top 3 bookies',
+    '• <b>Apuestas extra</b> (Over/BTTS/Hándicap, etc.)',
+    '• <b>Contexto avanzado</b>: xG, árbitro, clima, historial',
+    '',
+    '<b>¿Qué es EV?</b>',
+    'La <i>expectativa matemática</i> de una apuesta. Si un pick tiene <b>EV +20%</b>, la combinación de probabilidad y momio está a tu favor.',
+    '',
+    '👉 Acceso directo al grupo VIP:',
+    `<a href="${inviteLink}">🔓 Entrar al VIP</a>`,
+    '',
+    '<i>Recibirás recordatorios cuando falten 3 días y el último día. Apuesta con responsabilidad.</i>'
+  ].join('\n');
+}
+
+function buildHelpMessage() {
+  return [
+    'ℹ️ <b>Ayuda PunterX</b>',
+    '• /vip — Activa tu prueba VIP de 15 días',
+    '• /status — Verifica tu estado (trial/premium/expirado)',
+    '',
+    'En el VIP recibes picks con EV≥15%, apuesta sugerida, top‑3 bookies y datos avanzados.'
+  ].join('\n');
+}
+
+function buildStatusMessage(u) {
+  if (!u) return 'No encuentro registro. Escribe /vip para activar tu prueba.';
+  if (u.estado === 'premium') return '🟢 Estatus: <b>Premium</b>. ¡Gracias por tu suscripción!';
+  if (u.estado === 'trial' && u.fecha_expira && new Date(u.fecha_expira) > new Date()) {
+    const dias = daysBetween(new Date(), u.fecha_expira);
+    return `🟡 Estatus: <b>Trial</b>. Te quedan <b>${dias} día(s)</b> de prueba.`;
+  }
+  return '🔴 Estatus: <b>Expirado</b>. Para continuar, contrata el plan Premium.';
+}
+
+// ---------- Handler ----------
 exports.handler = async (event) => {
   try {
     console.log(`[${VERSION}] method=${event && event.httpMethod}`);
     if (!event || event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
 
-    // Debug opcional (puedes comentar luego)
-    console.log('[env check] SUPABASE_URL?', !!process.env.SUPABASE_URL);
-    console.log('[env check] SUPABASE_KEY?', !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY));
-    console.log('[env check] TELEGRAM_BOT_TOKEN?', !!process.env.TELEGRAM_BOT_TOKEN);
-    console.log('[env check] TELEGRAM_VIP_GROUP_ID?', !!process.env.TELEGRAM_VIP_GROUP_ID);
+    // Debug mínimo (silencioso si ya está en prod; deja los console si te ayudan)
+    console.log('[env] SUPABASE_URL?', !!process.env.SUPABASE_URL);
+    console.log('[env] TELEGRAM_BOT_TOKEN?', !!process.env.TELEGRAM_BOT_TOKEN);
+    console.log('[env] VIP_CHAT_ID?', !!VIP_CHAT_ID);
 
     // Parse seguro
     let update = {};
     try {
       update = JSON.parse(event.body || '{}');
-      const preview = (event.body || '').slice(0, 160).replace(/\s+/g, ' ');
+      const preview = safeStr(event.body, '').slice(0, 160).replace(/\s+/g, ' ');
       console.log(`[${VERSION}] body[0..160]= ${preview}`);
     } catch {
       return { statusCode: 200, body: 'bad json' };
     }
 
-    // Solo message privado con texto
-    if (!update || !Object.prototype.hasOwnProperty.call(update, 'message')) return { statusCode: 200, body: 'ignored' };
-    const msg = update.message;
+    // Solo mensajes privados con texto
+    const msg = update && update.message;
     if (!msg || typeof msg !== 'object') return { statusCode: 200, body: 'ignored' };
     const chat = msg.chat;
     if (!chat || chat.type !== 'private') return { statusCode: 200, body: 'ignored' };
-    if (!Object.prototype.hasOwnProperty.call(msg, 'text') || typeof msg.text !== 'string' || msg.text.trim() === '') return { statusCode: 200, body: 'ignored' };
+    if (typeof msg.text !== 'string' || msg.text.trim() === '') return { statusCode: 200, body: 'ignored' };
 
-    // En privados usamos chat.id (no tocamos msg.from)
     const chatId = chat.id;
     const text = msg.text.trim();
     const username = (msg.from && typeof msg.from.username === 'string') ? msg.from.username : '';
 
-    // ------------------ COMANDOS BÁSICOS ------------------
+    // --------- Comandos básicos ----------
     if (text === '/ayuda') {
-      await tgSendMessageLocal(chatId,
-                               [
-                                 'ℹ️ <b>Ayuda PunterX</b>',
-                                 '• /vip – Activa tu prueba VIP de 15 días',
-                                 '• /status – Verifica el estado de tu prueba o suscripción',
-                                 '',
-                                 'En el VIP recibes picks EV≥15% con datos avanzados y formatos exclusivos.'
-                               ].join('\n')
-                              );
+      await tgSendMessageLocal(chatId, buildHelpMessage());
       return { statusCode: 200, body: 'ok' };
     }
+
     if (text === '/status') {
       const supabase = await getSupabase();
       if (!supabase || typeof supabase.from !== 'function') {
@@ -117,46 +172,31 @@ exports.handler = async (event) => {
         return { statusCode: 200, body: 'no-supabase' };
       }
 
-  const { data: u, error } = await supabase
-    .from('usuarios')
-    .select('estado, fecha_expira')
-    .eq('id_telegram', chatId)
-    .maybeSingle();
+      const { data: u, error } = await supabase
+        .from('usuarios')
+        .select('estado, fecha_expira')
+        .eq('id_telegram', chatId)
+        .maybeSingle();
 
-  if (error) {
-    await tgSendMessageLocal(chatId, '⚠️ Error temporal al consultar tu estado. Intenta de nuevo.');
-    return { statusCode: 200, body: 'error' };
-  }
+      if (error) {
+        await tgSendMessageLocal(chatId, '⚠️ Error temporal al consultar tu estado. Intenta de nuevo.');
+        return { statusCode: 200, body: 'error' };
+      }
 
-  if (!u) {
-    await tgSendMessageLocal(chatId, 'No encuentro registro. Escribe /vip para activar tu prueba.');
-    return { statusCode: 200, body: 'ok' };
-  }
-
-  if (u.estado === 'trial' && u.fecha_expira && new Date(u.fecha_expira) > new Date()) {
-    const diasRest = Math.ceil((new Date(u.fecha_expira) - new Date()) / (1000*60*60*24));
-    await tgSendMessageLocal(chatId, `🟡 Estatus: <b>Trial</b>. Te quedan <b>${diasRest} día(s)</b> de prueba.`);
-    return { statusCode: 200, body: 'ok' };
-  }
-
-  if (u.estado === 'premium') {
-    await tgSendMessageLocal(chatId, '🟢 Estatus: <b>Premium</b>. ¡Gracias por tu suscripción!');
-    return { statusCode: 200, body: 'ok' };
-  }
-
-  await tgSendMessageLocal(chatId, '🔴 Estatus: <b>Expirado</b>. Para continuar, contrata el plan Premium.');
-  return { statusCode: 200, body: 'ok' };
-}
-// ------------------------------------------------------
-    
-    const isStart = text.startsWith('/start');
-    const isVip   = text.startsWith('/vip');
-    if (!isStart && !isVip) {
-      await tgSendMessageLocal(chatId, '👋 Bienvenido a PunterX.\nEscribe /vip para activar tu prueba gratis de 15 días en el grupo VIP.');
+      await tgSendMessageLocal(chatId, buildStatusMessage(u));
       return { statusCode: 200, body: 'ok' };
     }
 
-    // Init Supabase (ESM)
+    // --------- Activación (start/vip) ----------
+    const isStart = text.startsWith('/start');  // Acepta "/start" y "/start vip15"
+    const isVip   = text.startsWith('/vip');
+
+    if (!isStart && !isVip) {
+      await tgSendMessageLocal(chatId, '👋 Bienvenido a PunterX.\nEscribe <b>/vip</b> para activar tu prueba gratis de 15 días en el grupo VIP.');
+      return { statusCode: 200, body: 'ok' };
+    }
+
+    // Init Supabase
     const supabase = await getSupabase();
     if (!supabase || typeof supabase.from !== 'function') {
       console.error('[Supabase] Cliente no inicializado (init falló).');
@@ -164,7 +204,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'no-supabase' };
     }
 
-    // 1) Consulta estado
+    // 1) Consulta estado actual
     const { data: existing, error: qErr } = await supabase
       .from('usuarios')
       .select('id_telegram, estado, fecha_expira')
@@ -177,23 +217,30 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'error' };
     }
 
+    // Si ya es premium → no reescribir ni crear link de prueba
     if (existing && existing.estado === 'premium') {
       await tgSendMessageLocal(chatId, '✅ Ya eres <b>Premium</b>. Revisa el grupo VIP en tu Telegram.');
       return { statusCode: 200, body: 'ok' };
     }
 
+    // Si está en trial activo → reenvía un link nuevo (para no bloquear su acceso)
     if (existing && existing.estado === 'trial' && existing.fecha_expira && new Date(existing.fecha_expira) > new Date()) {
-      const diasRest = Math.ceil((new Date(existing.fecha_expira) - new Date()) / (1000*60*60*24));
-      await tgSendMessageLocal(chatId, `ℹ️ Tu prueba sigue activa. Te quedan <b>${diasRest} día(s)</b>.`);
+      const inviteLinkActive = await tgCreateInviteLinkLocal();
+      if (inviteLinkActive) {
+        await tgSendMessageLocal(chatId, buildWelcomeMessage(inviteLinkActive));
+      } else {
+        await tgSendMessageLocal(chatId, 'ℹ️ Tu prueba sigue activa, pero no pude generar un enlace ahora. Intenta en unos minutos.');
+      }
       return { statusCode: 200, body: 'ok' };
     }
 
+    // Si expiró → informar
     if (existing && existing.estado === 'expired') {
       await tgSendMessageLocal(chatId, '⛔ Tu periodo de prueba ya expiró.\nPara continuar, contrata el plan Premium.');
       return { statusCode: 200, body: 'ok' };
     }
 
-    // 2) Activar trial
+    // 2) Activar trial (o crear si no existía)
     const fecha_inicio = new Date();
     const fecha_expira = addDays(fecha_inicio, TRIAL_DAYS);
 
@@ -218,24 +265,15 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'error' };
     }
 
-    // 3) Invite de 1 uso
+    // 3) Enlace de 1 uso al VIP
     const inviteLink = await tgCreateInviteLinkLocal();
     if (!inviteLink) {
       await tgSendMessageLocal(chatId, '⚠️ No pude generar el enlace de invitación. Intenta más tarde.');
       return { statusCode: 200, body: 'error' };
     }
 
-    await tgSendMessageLocal(
-      chatId,
-      [
-        '🎁 <b>Prueba VIP activada</b> (15 días).',
-        'Haz clic para unirte al grupo VIP:',
-        inviteLink,
-        '',
-        '🔔 Al finalizar tu prueba, podrás elegir continuar como <b>Premium</b>.',
-      ].join('\n')
-    );
-
+    // 4) Bienvenida con explicación (EV, niveles, etc.)
+    await tgSendMessageLocal(chatId, buildWelcomeMessage(inviteLink));
     console.log(`[${VERSION}] trial granted and link sent`);
     return { statusCode: 200, body: 'ok' };
 
@@ -244,108 +282,3 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: 'error' };
   }
 };
-
-// netlify/functions/tg_trial_webhook.cjs
-// v3.3 — Mejor bienvenida y enlace directo VIP
-
-const VERSION = 'tg_trial_webhook v3.3 (welcome)';
-const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 15;
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-
-// Utilidad
-function addDays(date, days) { const d = new Date(date); d.setUTCDate(d.getUTCDate() + days); return d; }
-
-// Supabase init (igual que antes)
-async function getSupabase() {
-  const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
-  if (!SUPABASE_URL || !SUPABASE_KEY) return null;
-  const { createClient } = await import('@supabase/supabase-js');
-  return createClient(SUPABASE_URL, SUPABASE_KEY);
-}
-
-// Telegram helpers
-async function tgSendMessageLocal(chatId, text, extra = {}) {
-  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-  const body = { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...extra };
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const json = await res.json();
-  return json.ok;
-}
-
-async function tgCreateInviteLinkLocal() {
-  const url = `https://api.telegram.org/bot${BOT_TOKEN}/createChatInviteLink`;
-  const ttl = Number(process.env.TRIAL_INVITE_TTL_SECONDS || 0);
-  const expire_date = ttl > 0 ? Math.floor(Date.now() / 1000) + ttl : undefined;
-  const body = { chat_id: process.env.TELEGRAM_VIP_GROUP_ID, member_limit: 1, creates_join_request: false, ...(expire_date ? { expire_date } : {}) };
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const json = await res.json();
-  return json.ok ? json.result?.invite_link : null;
-}
-
-exports.handler = async (event) => {
-  try {
-    if (!event || event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
-    let update = {};
-    try { update = JSON.parse(event.body || '{}'); } catch { return { statusCode: 200, body: 'bad json' }; }
-    if (!update.message || !update.message.text) return { statusCode: 200, body: 'ignored' };
-
-    const msg = update.message;
-    const chatId = msg.chat.id;
-    const text = msg.text.trim();
-    const username = msg.from?.username || '';
-
-    if (text.startsWith('/start') || text.startsWith('/vip')) {
-      const supabase = await getSupabase();
-      const fecha_inicio = new Date();
-      const fecha_expira = addDays(fecha_inicio, TRIAL_DAYS);
-      await supabase.from('usuarios').upsert({
-        id_telegram: chatId,
-        username,
-        estado: 'trial',
-        fecha_inicio: fecha_inicio.toISOString(),
-        fecha_expira: fecha_expira.toISOString()
-      });
-
-      const inviteLink = await tgCreateInviteLinkLocal();
-      if (!inviteLink) {
-        await tgSendMessageLocal(chatId, '⚠️ No pude generar el enlace VIP. Intenta más tarde.');
-        return { statusCode: 200, body: 'error' };
-      }
-
-      const welcome = `👋 <b>¡Bienvenido a PunterX!</b>
-
-Has activado tu periodo de <b>prueba VIP por ${TRIAL_DAYS} días</b>.
-
-Nuestra IA Avanzada rastrea <b>todas las ligas del mundo</b> para encontrar valor oculto:
-
-• <b>EV ≥ 15%</b> → Picks con ventaja matemática real  
-   🥉 15–19% Competitivo  
-   🥈 20–29% Avanzado  
-   🎯 30–39% Élite Mundial  
-   🟣 40%+ Ultra Élite  
-
-• <b>Apuesta sugerida</b> + Top 3 bookies  
-• <b>Apuestas extra</b> (Over/BTTS/Hándicap, etc.)  
-• Contexto avanzado: xG, árbitro, clima, historial  
-
-<b>¿Qué es EV?</b>  
-La expectativa matemática de una apuesta.  
-Si un pick tiene <b>EV +20%</b>, significa que tienes ventaja real frente al mercado.
-
-👉 Aquí tu acceso directo al grupo VIP:  
-<a href="${inviteLink}">🔓 Entrar al VIP</a>
-
-<i>Recibirás recordatorios cuando falten 3 días y el último día. Apuesta con responsabilidad.</i>`;
-
-      await tgSendMessageLocal(chatId, welcome);
-      return { statusCode: 200, body: 'ok' };
-    }
-
-    return { statusCode: 200, body: 'ignored' };
-  } catch (e) {
-    console.error(`[${VERSION}] error`, e);
-    return { statusCode: 200, body: 'error' };
-  }
-};
-
