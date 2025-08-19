@@ -15,7 +15,6 @@ const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
 const { computeCorazonada } = require('./_corazonada.cjs');
 const { createLogger } = require('./_logger.cjs');
 const { resolveTeamsAndLeague } = require('./_lib/match-helper.cjs');
-const { afApi } = require('./_lib/af-resolver.cjs'); // si ya existía otro wrapper, usa ese
 
 // =============== ENV ===============
 const {
@@ -873,17 +872,34 @@ async function enriquecerPartidoConAPIFootball(partido) {
       return Math.max(direct, swapped) + timeBoost;
     }
 
-    function selectBestFixture(arr, homeName, awayName, whyTag) {
-      if (!Array.isArray(arr) || !arr.length) return null;
-      const scored = arr.map(x => ({ x, score: fixtureScore(x, homeName, awayName) }))
-                        .sort((a, b) => b.score - a.score);
-      const best = scored[0];
-      if (!best || !best.x) return null;
-      if (best.score < 0.9) {
-        console.warn(`[evt:${partido?.id}] Puntaje bajo (${best.score.toFixed(2)}) para mejor candidato (${whyTag})`);
-      }
-      return best.x;
+    // Re-selección robusta del mejor fixture entre los devueltos por AF
+function selectBestFixture(arr, homeName, awayName, whyTag, evtId) {
+  let best = null;
+  let bestScore = -1;
+  for (const fx of Array.isArray(arr) ? arr : []) {
+    const s = (() => {
+      const h = fx?.teams?.home?.name || '';
+      const a = fx?.teams?.away?.name || '';
+      const H = h.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const A = a.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const hn = (homeName||'').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const an = (awayName||'').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const include = (x,y)=> x && y && (x.includes(y) || y.includes(x));
+      const hitDirect = (include(H,hn)?1:0) + (include(A,an)?1:0);
+      const hitSwap   = (include(H,an)?1:0) + (include(A,hn)?1:0);
+      return Math.max(hitDirect, hitSwap);
+    })();
+    if (s > bestScore) {
+      bestScore = s;
+      best = fx;
     }
+  }
+  if (bestScore < 2) {
+    // Solo aviso; no nombres de equipos fijos
+    console.warn(`[evt:${evtId||'?'}] selectBestFixture(${whyTag}) score bajo=${bestScore}`);
+  }
+  return { best, score: bestScore };
+}
 
     // === 1) PRIMARIO: fixtures por LIGA + FECHA exacta (UTC)
     try {
@@ -949,7 +965,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
         if (res?.ok) {
           const j = await safeJson(res);
           const arr = Array.isArray(j?.response) ? j.response : [];
-          const best = selectBestFixture(arr, partido.home, partido.away, `league+window±2d (id=${afLeagueId}, ${from}..${to})`);
+          const best = selectBestFixture(arr, partido.home, partido.away, `league+window±2d (id=${afLeagueId}, ${from}..${to})`, partido?.id);
           if (best) {
             return {
               liga: best?.league?.name || sportTitle || null,
@@ -1000,7 +1016,7 @@ async function enriquecerPartidoConAPIFootball(partido) {
           return diffH <= 48;
         });
 
-        const best = selectBestFixture(filtered, partido.home, partido.away, "search");
+        const best = selectBestFixture(filtered, partido.home, partido.away, "search", partido?.id);
         if (best) {
           return {
             liga: best?.league?.name || sportTitle || null,
