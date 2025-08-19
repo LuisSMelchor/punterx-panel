@@ -244,3 +244,108 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: 'error' };
   }
 };
+
+// netlify/functions/tg_trial_webhook.cjs
+// v3.3 — Mejor bienvenida y enlace directo VIP
+
+const VERSION = 'tg_trial_webhook v3.3 (welcome)';
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 15;
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+// Utilidad
+function addDays(date, days) { const d = new Date(date); d.setUTCDate(d.getUTCDate() + days); return d; }
+
+// Supabase init (igual que antes)
+async function getSupabase() {
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
+  if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+  const { createClient } = await import('@supabase/supabase-js');
+  return createClient(SUPABASE_URL, SUPABASE_KEY);
+}
+
+// Telegram helpers
+async function tgSendMessageLocal(chatId, text, extra = {}) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+  const body = { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...extra };
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const json = await res.json();
+  return json.ok;
+}
+
+async function tgCreateInviteLinkLocal() {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/createChatInviteLink`;
+  const ttl = Number(process.env.TRIAL_INVITE_TTL_SECONDS || 0);
+  const expire_date = ttl > 0 ? Math.floor(Date.now() / 1000) + ttl : undefined;
+  const body = { chat_id: process.env.TELEGRAM_VIP_GROUP_ID, member_limit: 1, creates_join_request: false, ...(expire_date ? { expire_date } : {}) };
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const json = await res.json();
+  return json.ok ? json.result?.invite_link : null;
+}
+
+exports.handler = async (event) => {
+  try {
+    if (!event || event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
+    let update = {};
+    try { update = JSON.parse(event.body || '{}'); } catch { return { statusCode: 200, body: 'bad json' }; }
+    if (!update.message || !update.message.text) return { statusCode: 200, body: 'ignored' };
+
+    const msg = update.message;
+    const chatId = msg.chat.id;
+    const text = msg.text.trim();
+    const username = msg.from?.username || '';
+
+    if (text.startsWith('/start') || text.startsWith('/vip')) {
+      const supabase = await getSupabase();
+      const fecha_inicio = new Date();
+      const fecha_expira = addDays(fecha_inicio, TRIAL_DAYS);
+      await supabase.from('usuarios').upsert({
+        id_telegram: chatId,
+        username,
+        estado: 'trial',
+        fecha_inicio: fecha_inicio.toISOString(),
+        fecha_expira: fecha_expira.toISOString()
+      });
+
+      const inviteLink = await tgCreateInviteLinkLocal();
+      if (!inviteLink) {
+        await tgSendMessageLocal(chatId, '⚠️ No pude generar el enlace VIP. Intenta más tarde.');
+        return { statusCode: 200, body: 'error' };
+      }
+
+      const welcome = `👋 <b>¡Bienvenido a PunterX!</b>
+
+Has activado tu periodo de <b>prueba VIP por ${TRIAL_DAYS} días</b>.
+
+Nuestra IA Avanzada rastrea <b>todas las ligas del mundo</b> para encontrar valor oculto:
+
+• <b>EV ≥ 15%</b> → Picks con ventaja matemática real  
+   🥉 15–19% Competitivo  
+   🥈 20–29% Avanzado  
+   🎯 30–39% Élite Mundial  
+   🟣 40%+ Ultra Élite  
+
+• <b>Apuesta sugerida</b> + Top 3 bookies  
+• <b>Apuestas extra</b> (Over/BTTS/Hándicap, etc.)  
+• Contexto avanzado: xG, árbitro, clima, historial  
+
+<b>¿Qué es EV?</b>  
+La expectativa matemática de una apuesta.  
+Si un pick tiene <b>EV +20%</b>, significa que tienes ventaja real frente al mercado.
+
+👉 Aquí tu acceso directo al grupo VIP:  
+<a href="${inviteLink}">🔓 Entrar al VIP</a>
+
+<i>Recibirás recordatorios cuando falten 3 días y el último día. Apuesta con responsabilidad.</i>`;
+
+      await tgSendMessageLocal(chatId, welcome);
+      return { statusCode: 200, body: 'ok' };
+    }
+
+    return { statusCode: 200, body: 'ignored' };
+  } catch (e) {
+    console.error(`[${VERSION}] error`, e);
+    return { statusCode: 200, body: 'error' };
+  }
+};
+
