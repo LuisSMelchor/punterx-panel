@@ -481,6 +481,49 @@ async function tgSendMessage(chatId, text, extra = {}) {
   return j;
 }
 
+// === DM directos a usuarios y broadcast simple ===
+
+// Enviar DM a un usuario por su tg_id
+async function tgSendDM(tgId, text, extra = {}) {
+  try {
+    const res = await fetch(`${TG_API}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: Number(tgId),
+        text,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        ...extra
+      })
+    });
+    const j = await res.json();
+    if (!j.ok) console.error('tgSendDM error', j);
+    return j;
+  } catch (e) {
+    console.error('tgSendDM exception', e?.message || e);
+    return { ok: false, error: e?.message || 'exception' };
+  }
+}
+
+// Broadcast DM a varios tg_id (throttle ligero para no golpear rate limits)
+async function tgBroadcastDM(tgIds = [], text, extra = {}) {
+  const out = [];
+  for (const id of Array.isArray(tgIds) ? tgIds : []) {
+    // throttle ~60ms entre envíos
+    /* eslint-disable no-await-in-loop */
+    out.push(await tgSendDM(id, text, extra));
+    await new Promise(r => setTimeout(r, 60));
+    /* eslint-enable no-await-in-loop */
+  }
+  return out;
+}
+
+// Exportaciones incrementales (sin romper exports existentes)
+exports.tgSendDM = tgSendDM;
+exports.tgBroadcastDM = tgBroadcastDM;
+
+
 async function tgCreateInviteLink(secondsValid = Number(process.env.TRIAL_INVITE_TTL_SECONDS) || 172800) {
   const expire = Math.floor(Date.now() / 1000) + secondsValid;
   const res = await fetch(`${TG_API}/createChatInviteLink`, {
