@@ -19,10 +19,6 @@ const { resolveTeamsAndLeague } = require('./_lib/match-helper.cjs');
 const { afApi } = require('./_lib/af-resolver.cjs'); // si ya existía otro wrapper, usa ese
 
 // Resolver de equipos/liga (coincidencias OddsAPI ↔ API-FOOTBALL) — carga segura
-let resolveTeamsAndLeague = null;
-try {
-  const mh = require('./_lib/match-helper.cjs');
-  resolveTeamsAndLeague = (typeof mh === 'function')
     ? mh
     : (mh && typeof mh.resolveTeamsAndLeague === 'function' ? mh.resolveTeamsAndLeague : null);
   if (!resolveTeamsAndLeague) {
