@@ -6,6 +6,7 @@
 
 'use strict';
 
+// netlify/functions/autopick-vip-nuevo.cjs
 const OpenAI = require('openai');
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
@@ -14,6 +15,8 @@ const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
 // Corazonada (tu módulo ya existente)
 const { computeCorazonada } = require('./_corazonada.cjs');
 const { createLogger } = require('./_logger.cjs');
+const { resolveTeamsAndLeague } = require('./_lib/match-helper.cjs');
+const { afApi } = require('./_lib/af-resolver.cjs'); // si ya existía otro wrapper, usa ese
 
 // Resolver de equipos/liga (coincidencias OddsAPI ↔ API-FOOTBALL) — carga segura
 let resolveTeamsAndLeague = null;
@@ -553,29 +556,38 @@ exports.handler = async (event, context) => {
       try {
         abortIfOverBudget();
 
-        // Resolver nombres/ligas antes de API-FOOTBALL
-        try {
-          const resolved = resolveTeamsAndLeague
-            ? await resolveTeamsAndLeague({
-                home: P.home,
-                away: P.away,
-                sport_title: P.liga || P.sport_title || ''
-              })
-            : null;
+        // Resolver fixture en API-FOOTBALL a partir de OddsAPI
+try {
+  const rsl = await resolveTeamsAndLeague(
+    {
+      home: P.home,
+      away: P.away,
+      commence_time: P.commence_time, // usamos hora UTC de OddsAPI
+      liga: P.liga || P.sport_title || ''
+    },
+    { afApi }
+  );
 
-          if (resolved) {
-            const prevHome = P.home, prevAway = P.away, prevLiga = P.liga;
-            if (resolved.home && resolved.home !== P.home) P.home = resolved.home;
-            if (resolved.away && resolved.away !== P.away) P.away = resolved.away;
-            if (!P.liga && resolved.league) P.liga = resolved.league;
-            if (resolved.aliases) P._aliases = resolved.aliases;
-            console.log(
-              `[evt:${P.id}] RESOLVE > home="${prevHome}"→"${P.home}" | away="${prevAway}"→"${P.away}" | liga="${prevLiga||'N/D'}"→"${P.liga||'N/D'}"`
-            );
-          }
-        } catch (er) {
-          console.warn(`[evt:${P.id}] ResolverTeams warning:`, er?.message || er);
-        }
+  if (!rsl.ok) {
+    causas.strict_mismatch++;
+    console.warn(
+      `[evt:${P.id}] STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO (${rsl.reason})`
+    );
+    return null; // saltamos este evento
+  }
+
+  // Si hay match correcto en AF → anexamos IDs
+  P.af_fixture_id = rsl.fixture_id;
+  P.af_league_id = rsl.league_id;
+  P.af_country = rsl.country;
+
+  console.log(
+    `[evt:${P.id}] MATCH OK → fixture_id=${rsl.fixture_id} | league=${rsl.league_id} | country=${rsl.country}`
+  );
+} catch (er) {
+  console.warn(`[evt:${P.id}] resolveTeamsAndLeague error:`, er?.message || er);
+  return null;
+}
 
         // A) Enriquecimiento API-FOOTBALL
         const info = await enriquecerPartidoConAPIFootball(P) || {};
