@@ -8,7 +8,6 @@
 
 // netlify/functions/autopick-vip-nuevo.cjs
 const OpenAI = require('openai');
-const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
 const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
@@ -89,8 +88,17 @@ function assertEnv() {
 }
 
 // =============== CLIENTES ===============
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// =============== CLIENTES (lazy init para evitar crash en import) ===============
+let supabase = null;
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+async function ensureSupabase() {
+  if (supabase) return supabase;
+  assertEnv(); // valida que existan SUPABASE_URL/KEY (y demás) con error entendible
+  const { createClient } = require('@supabase/supabase-js'); // require aquí, no en top-level
+  supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  return supabase;
+}
 
 // === Diagnóstico: helpers mínimos (in-file) ===
 function minutesUntilKickoff(ts) {
@@ -383,6 +391,7 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 // =============== NETLIFY HANDLER ===============
 exports.handler = async (event, context) => {
   assertEnv();
+  await ensureSupabase();
   
   const traceId = 'a' + Math.random().toString(36).slice(2,10);
   const logger = createLogger(traceId);
