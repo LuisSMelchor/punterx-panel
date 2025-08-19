@@ -18,16 +18,6 @@ const { createLogger } = require('./_logger.cjs');
 const { resolveTeamsAndLeague } = require('./_lib/match-helper.cjs');
 const { afApi } = require('./_lib/af-resolver.cjs'); // si ya existía otro wrapper, usa ese
 
-// Resolver de equipos/liga (coincidencias OddsAPI ↔ API-FOOTBALL) — carga segura
-    ? mh
-    : (mh && typeof mh.resolveTeamsAndLeague === 'function' ? mh.resolveTeamsAndLeague : null);
-  if (!resolveTeamsAndLeague) {
-    console.warn('[MATCH-HELPER] Módulo cargado pero sin resolveTeamsAndLeague válido');
-  }
-} catch (e) {
-  console.warn('[MATCH-HELPER] No se pudo cargar:', e?.message || e);
-}
-
 // =============== ENV ===============
 const {
   SUPABASE_URL,
