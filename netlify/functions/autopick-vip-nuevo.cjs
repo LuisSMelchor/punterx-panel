@@ -600,6 +600,14 @@ exports.handler = async (event, context) => {
 
     if (!inWindow.length) {
       console.log('OddsAPI: sin partidos en ventana');
+      try {
+        const nearest = (Array.isArray(eventos) ? eventos : [])
+          .map(ev => ({ t: Date.parse(ev.commence_time), home: ev.home_team || ev?.teams?.home?.name, away: ev.away_team || ev?.teams?.away?.name }))
+          .filter(x => Number.isFinite(x.t) && x.t > Date.now())
+          .map(x => ({ mins: Math.round((x.t - Date.now())/60000), label: `${x.home||'—'} vs ${x.away||'—'}` }))
+          .sort((a,b) => a.mins - b.mins)[0];
+        if (nearest) console.log(`[ventana] Próximo fuera de rango: ~${nearest.mins}m → ${nearest.label}`);
+      } catch {}
       return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
     }
 
@@ -1644,6 +1652,7 @@ async function enviarFREE(text) {
       { retries: 2, base: 600 }
     );
     if (!res.ok) { console.error('Telegram FREE error:', res.status, await safeText(res)); return false; }
+    console.log(`[telegram] FREE OK len=${(text||'').length}`);
     return true;
   } catch (e) { console.error('Telegram FREE net error:', e?.message || e); return false; }
 }
@@ -1658,6 +1667,7 @@ async function enviarVIP(text) {
       { retries: 2, base: 600 }
     );
     if (!res.ok) { console.error('Telegram VIP error:', res.status, await safeText(res)); return false; }
+    console.log(`[telegram] FREE OK len=${(text||'').length}`);
     return true;
   } catch (e) { console.error('Telegram VIP net error:', e?.message || e); return false; }
 }
@@ -1703,7 +1713,9 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
             delete entrada.top3_json;
             const { error: e2 } = await supabase.from(PICK_TABLE).insert([ entrada ]);
             if (e2) { console.error('Supabase insert (retry) error:', e2.message); resumen.guardados_fail++; }
-            else { resumen.guardados_ok++; }
+            else { resumen.guardados_ok++;
+                  try { console.log('[supabase] insert OK picks_historicos:', { evento }); } catch {}
+                 }
           } catch (e3) {
             console.error('Supabase insert (retry) exception:', e3?.message || e3);
             resumen.guardados_fail++;
@@ -1713,6 +1725,8 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
         }
       } else {
         resumen.guardados_ok++;
+        try { console.log('[supabase] insert OK (retry) picks_historicos:', { evento }); }
+        catch {}
       }
     } else {
       try { if (global.__px_causas) global.__px_causas.duplicado++; } catch(_) {}
