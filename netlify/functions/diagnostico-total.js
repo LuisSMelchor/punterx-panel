@@ -1,7 +1,7 @@
 // netlify/functions/diagnostico-total.js
 'use strict';
 
-const { fmtSecs } = require('./_logger.cjs');
+const { fmtSecs } = require('./_lib/_logger.cjs');
 
 function html(layout) {
   return {
