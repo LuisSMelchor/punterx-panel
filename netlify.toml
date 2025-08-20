@@ -57,6 +57,11 @@
     "node-fetch"
   ]
 
+[functions."autopick-vip-cron"]
+external_node_modules = [
+"@netlify/functions"
+]
+
   [[scheduled.functions]]
   path = "autopick-vip-cron"
   schedule = "*/15 * * * *"
