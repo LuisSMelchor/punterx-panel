@@ -80,13 +80,16 @@ function assertEnv() {
     'TELEGRAM_CHANNEL_ID','TELEGRAM_GROUP_ID','ODDS_API_KEY','API_FOOTBALL_KEY'
   ];
 
-  function isDebug(event) {
-  return (event?.queryStringParameters?.debug === '1') || (event?.headers?.['x-debug'] === '1');
+  function getHeaders(event) {
+  const h = (event && event.headers) || {};
+  const out = {};
+  for (const k of Object.keys(h)) out[k.toLowerCase()] = h[k];
+  return out;
 }
-function getHeaders(event) {
-  const h = {};
-  for (const [k, v] of Object.entries(event?.headers || {})) h[String(k).toLowerCase()] = v;
-  return h;
+function isDebug(event) {
+  const q = (event && event.queryStringParameters) || {};
+  const h = getHeaders(event);
+  return q.debug === '1' || h['x-debug'] === '1';
 }
   
   const missing = required.filter(k => !process.env[k]);
@@ -398,26 +401,25 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 
 // =============== NETLIFY HANDLER ===============
 exports.handler = async (event, context) => {
-  // --- IDs / modo debug ---
   const REQ_ID = (Math.random().toString(36).slice(2,10)).toUpperCase();
   const debug = isDebug(event);
   const headers = getHeaders(event);
 
-  // --- Auth (antes de cualquier otra cosa) ---
+  // Auth
   const hdrAuth = (headers['x-auth-code'] || headers['x-auth'] || '').trim();
   const expected = (process.env.AUTH_CODE || '').trim();
   if (expected && hdrAuth !== expected) {
-    if (debug) console.log(`[${REQ_ID}] 403 Forbidden (auth mismatch)`);
-    return {
-      statusCode: 403,
-      headers: { 'content-type': 'application/json' },
-      body: debug
-        ? JSON.stringify({ ok:false, req:REQ_ID, error:'forbidden', reason:'auth_mismatch' })
-        : 'Forbidden'
-    };
+    if (debug) {
+      return {
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ok:false, stage:'auth', req:REQ_ID, error:'forbidden', reason:'auth_mismatch' })
+      };
+    }
+    return { statusCode: 403, body: 'Forbidden' };
   }
 
-  // --- Boot: ENV + clientes (atrapado) ---
+  // Boot (ENV + clientes) atrapado
   try {
     assertEnv();
     await ensureSupabase();
@@ -748,11 +750,20 @@ exports.handler = async (event, context) => {
 
     return { statusCode: 200, body: JSON.stringify({ ok: true, resumen }) };
 
-  } catch (e) {
-    console.error('❌ Excepción en ciclo principal:', e?.stack || e?.message || e);
-    return { statusCode: 200, body: JSON.stringify({ ok: false, error: e?.message || 'exception' }) };
-
+    } catch (e) {
+    const msg = e && (e.message || e.toString());
+    const stack = e && e.stack;
+    console.error('❌ Excepción en ciclo principal:', msg, stack || '');
+    if (debug) {
+      return {
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ok:false, stage:'cycle', error: msg, stack })
+      };
+    }
+    return { statusCode: 200, body: JSON.stringify({ ok:false, error: msg || 'exception' }) };
   } finally {
+
     try { await releaseDistributedLock(); } catch(_) {}
     global.__punterx_lock = false;
     try { await upsertDiagnosticoEstado('idle', null); } catch(_) {}
