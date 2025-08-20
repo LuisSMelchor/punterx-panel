@@ -11,6 +11,7 @@
     "live": "node netlify/functions/autopick-live.cjs --loop"
   },
   "dependencies": {
+    "@netlify/functions": "^2.6.0",
     "@supabase/supabase-js": "^2.54.0",
     "dayjs": "^1.11.13",
     "dotenv": "^16.6.1",
