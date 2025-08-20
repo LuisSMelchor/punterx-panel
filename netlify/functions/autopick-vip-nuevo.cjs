@@ -81,9 +81,12 @@ function assertEnv() {
   ];
 
   function isDebug(event) {
-  const h = (event && event.headers) || {};
-  const v = String(h['x-debug'] || h['X-Debug'] || '').trim();
-  return v === '1' || v.toLowerCase() === 'true';
+  return (event?.queryStringParameters?.debug === '1') || (event?.headers?.['x-debug'] === '1');
+}
+function getHeaders(event) {
+  const h = {};
+  for (const [k, v] of Object.entries(event?.headers || {})) h[String(k).toLowerCase()] = v;
+  return h;
 }
   
   const missing = required.filter(k => !process.env[k]);
