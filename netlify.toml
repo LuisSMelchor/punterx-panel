@@ -197,6 +197,16 @@ cron = "0 5 * * *"
     "node-fetch"
   ]
 
+[functions."clv-settle"]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+[[scheduled.functions]]
+  path = "clv-settle"
+  schedule = "*/10 * * * *"
+
 
 # ----------------
 # Redirects útiles
