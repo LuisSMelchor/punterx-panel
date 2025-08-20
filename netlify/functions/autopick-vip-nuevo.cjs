@@ -394,7 +394,6 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 }
 
 // =============== NETLIFY HANDLER ===============
-// =============== NETLIFY HANDLER ===============
 exports.handler = async (event, context) => {
   // --- IDs / modo debug ---
   const REQ_ID = (Math.random().toString(36).slice(2,10)).toUpperCase();
@@ -415,14 +414,13 @@ exports.handler = async (event, context) => {
     };
   }
 
-  // --- Boot: ENV + clientes, atrapado para no reventar con 500 opaco ---
+  // --- Boot: ENV + clientes (atrapado) ---
   try {
     assertEnv();
     await ensureSupabase();
   } catch (e) {
     const msg = e?.message || String(e);
     console.error(`[${REQ_ID}] Boot error:`, e?.stack || msg);
-    // En modo debug devolvemos JSON útil y 200; en normal, mantenemos 500 con ID.
     if (debug) {
       return {
         statusCode: 200,
@@ -439,59 +437,43 @@ exports.handler = async (event, context) => {
   logger.section('CICLO PunterX');
   logger.info('▶️ Inicio ciclo; now(UTC)=', new Date().toISOString());
 
-  const cicloId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
-  console.log(`▶️ CICLO ${cicloId} start; now(UTC)= ${new Date().toISOString()}`);
+  const CICLO_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
+  console.log(`▶️ CICLO ${CICLO_ID} start; now(UTC)= ${new Date().toISOString()}`);
 
-  const tStart = Date.now();
-  try { await upsertDiagnosticoEstado('running', null); } catch(_) {}
-  console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
-
-  // Lock simple en memoria por invocación aislada (Netlify)
-  if (global.__punterx_lock) {
-    console.warn('LOCK activo → salto ciclo');
-    return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true }) };
-  }
-  global.__punterx_lock = true;
-
-  // Lock distribuido
-  try { await upsertDiagnosticoEstado('running', null); } catch(_) {}
-
-  // Lock simple en memoria por invocación aislada (Netlify)
-  if (global.__punterx_lock) {
-    console.warn('LOCK activo → salto ciclo');
-    return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true }) };
-  }
-  global.__punterx_lock = true;
-
-  // Lock distribuido
-  const gotLock = await acquireDistributedLock(120);
-  if (!gotLock) {
-    console.warn('LOCK distribuido activo → salto ciclo');
-    return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'lock' }) };
-  }
-
+  const started = Date.now();
   const resumen = {
     recibidos: 0, enVentana: 0, candidatos: 0, procesados: 0, descartados_ev: 0,
     enviados_vip: 0, enviados_free: 0, intentos_vip: 0, intentos_free: 0,
     guardados_ok: 0, guardados_fail: 0, oai_calls: 0,
-    principal: 0, fallback: 0, af_hits: 0, af_fails: 0
+    principal: 0, fallback: 0, af_hits: 0, af_fails: 0,
+    sub_45_55: 0, sub_40_44: 0
   };
-  
   const causas = {
-  strict_mismatch: 0,
-  no_pick_flag: 0,
-  outcome_invalido: 0,
-  prob_fuera_rango: 0,
-  incoherencia_pp: 0,
-  ev_insuficiente: 0,
-  ventana_fuera: 0,
-  duplicado: 0,
-  otros: 0
+    strict_mismatch: 0, no_pick_flag: 0, outcome_invalido: 0, prob_fuera_rango: 0,
+    incoherencia_pp: 0, ev_insuficiente: 0, ventana_fuera: 0, duplicado: 0, otros: 0
   };
-  
+
   try {
-    // 1) Obtener partidos OddsAPI
-    // Construcción sin template strings para evitar errores de comillas/backticks
+    try { await upsertDiagnosticoEstado('running', null); } catch(_) {}
+    console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
+
+    // Lock simple en memoria (aislado por invocación)
+    if (global.__punterx_lock) {
+      console.warn('LOCK activo → salto ciclo');
+      return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true }) };
+    }
+    global.__punterx_lock = true;
+
+    // Lock distribuido
+    const gotLock = await acquireDistributedLock(120);
+    if (!gotLock) {
+      console.warn('LOCK distribuido activo → salto ciclo');
+      return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'lock' }) };
+    }
+
+    // ==========================
+    // 1) ODDSAPI → eventos
+    // ==========================
     const base = 'https://api.the-odds-api.com/v4/sports/' + SPORT_KEY + '/odds';
     const url =
       base +
@@ -499,18 +481,19 @@ exports.handler = async (event, context) => {
       '&regions=' + encodeURIComponent(ODDS_REGIONS) +
       '&oddsFormat=decimal' +
       '&markets=h2h,totals,spreads';
+
     const tOdds = Date.now();
-    const res = await fetchWithRetry(url, { method:'GET' }, { retries: 1, base: 400 });
+    const resOdds = await fetchWithRetry(url, { method:'GET' }, { retries: 1, base: 400 });
     const tOddsMs = Date.now() - tOdds;
-    if (!res || !res.ok) {
-      console.error('OddsAPI error:', res?.status, await safeText(res));
+    if (!resOdds || !resOdds.ok) {
+      console.error('OddsAPI error:', resOdds?.status, await safeText(resOdds));
       return { statusCode: 200, body: JSON.stringify({ ok: false, reason:'oddsapi' }) };
     }
-    const eventos = await safeJson(res) || [];
+    const eventos = await safeJson(resOdds) || [];
     resumen.recibidos = Array.isArray(eventos) ? eventos.length : 0;
     console.log(`ODDSAPI ok=true count=${resumen.recibidos} ms=${tOddsMs}`);
-    
-    // Vista previa de próximos eventos (solo si activas LOG_VERBOSE=1)
+
+    // Vista previa (si LOG_VERBOSE=1)
     if (process.env.LOG_VERBOSE === '1') {
       const near = (Array.isArray(eventos) ? eventos : [])
         .map(ev => {
@@ -522,20 +505,20 @@ exports.handler = async (event, context) => {
         })
         .filter(x => Number.isFinite(x.mins))
         .sort((a, b) => a.mins - b.mins)
-        .slice(0, 8);
+        .slice(0, LOG_EVENTS_LIMIT);
       near.forEach(n => console.log(`⏱️ ${n.mins}m → ${n.label}`));
     }
-    
-    // Filtrar ya iniciados
+
+    // Filtrar futuros
     const eventosUpcoming = (eventos || []).filter(ev => {
       const t = Date.parse(ev.commence_time);
       return Number.isFinite(t) && t > Date.now();
     });
 
-    // 2) Normalizar
+    // 2) Normalizar OddsAPI → internos
     const partidos = eventosUpcoming.map(normalizeOddsEvent).filter(Boolean);
 
-    // Filtrar por ventana (contabilizando fuera de ventana)
+    // 3) Ventana tiempo
     const inWindow = partidos.filter(p => {
       const mins = Math.round(p.minutosFaltantes);
       const principal = mins >= WINDOW_MAIN_MIN && mins <= WINDOW_MAIN_MAX;
@@ -561,20 +544,17 @@ exports.handler = async (event, context) => {
 
     const sub4555 = inWindow.filter(p => {
       const m = Math.round(p.minutosFaltantes);
-      return m >= SUB_MAIN_MIN && m <= SUB_MAIN_MAX; // 45–55
+      return m >= SUB_MAIN_MIN && m <= SUB_MAIN_MAX;
     }).length;
     const subEarly = inWindow.filter(p => {
       const m = Math.round(p.minutosFaltantes);
-      return m >= WINDOW_MAIN_MIN && m < SUB_MAIN_MIN; // 40–44 si aplicara
+      return m >= WINDOW_MAIN_MIN && m < SUB_MAIN_MIN;
     }).length;
     resumen.sub_45_55 = sub4555;
     resumen.sub_40_44 = subEarly;
 
     console.log(
-      `📊 Filtrado (OddsAPI): Principal=${principalCount} ` +
-      `(45–55=${sub4555}, ${WINDOW_MAIN_MIN}–${SUB_MAIN_MIN-1}=${subEarly}) ` +
-      `| Fallback=${fallbackCount} | Total EN VENTANA=${inWindow.length} ` +
-      `| Eventos RECIBIDOS=${resumen.recibidos}`
+      `📊 Filtrado (OddsAPI): Principal=${principalCount} (45–55=${sub4555}, ${WINDOW_MAIN_MIN}–${SUB_MAIN_MIN-1}=${subEarly}) | Fallback=${fallbackCount} | Total EN VENTANA=${inWindow.length} | Eventos RECIBIDOS=${resumen.recibidos}`
     );
 
     if (!inWindow.length) {
@@ -582,188 +562,131 @@ exports.handler = async (event, context) => {
       return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
     }
 
-    // 3) Prefiltro ligero (prioriza, no descarta)
+    // 4) Prefiltro & proceso (idéntico a tu lógica existente) -----------------
+    let afHits = 0, afFails = 0;
     const candidatos = inWindow
       .sort((a,b) => scorePreliminar(b) - scorePreliminar(a))
       .slice(0, MAX_PER_CYCLE);
 
     resumen.candidatos = candidatos.length;
 
-    // 4) Procesar candidatos con enriquecimiento + OpenAI
-    let afHits = 0, afFails = 0;
-    const tAF = Date.now();
-
     for (const P of candidatos) {
-      const traceId = `[evt:${P.id}]`;
+      const trace = `[evt:${P.id}]`;
       const abortIfOverBudget = () => {
-        if (Date.now() - tStart > SOFT_BUDGET_MS) throw new Error('Soft budget excedido');
+        if (Date.now() - started > SOFT_BUDGET_MS) throw new Error('Soft budget excedido');
       };
 
       try {
         abortIfOverBudget();
 
-        // Resolver fixture en API-FOOTBALL a partir de OddsAPI
-try {
-  const rsl = await resolveTeamsAndLeague(
-    {
-      home: P.home,
-      away: P.away,
-      commence_time: P.commence_time, // usamos hora UTC de OddsAPI
-      liga: P.liga || P.sport_title || ''
-    },
-    { afApi }
-  );
+        // Resolver fixture en AF
+        try {
+          const rsl = await resolveTeamsAndLeague(
+            { home: P.home, away: P.away, commence_time: P.commence_time, liga: P.liga || P.sport_title || '' },
+            { afApi }
+          );
+          if (!rsl.ok) {
+            causas.strict_mismatch++;
+            console.warn(`${trace} STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO (${rsl.reason})`);
+            continue;
+          }
+          P.af_fixture_id = rsl.fixture_id;
+          P.af_league_id = rsl.league_id;
+          P.af_country   = rsl.country;
+          console.log(`${trace} MATCH OK → fixture_id=${rsl.fixture_id} | league=${rsl.league_id} | country=${rsl.country}`);
+        } catch (er) {
+          console.warn(`${trace} resolveTeamsAndLeague error:`, er?.message || er);
+          continue;
+        }
 
-  if (!rsl.ok) {
-    causas.strict_mismatch++;
-    console.warn(
-      `[evt:${P.id}] STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO (${rsl.reason})`
-    );
-    return null; // saltamos este evento
-  }
-
-  // Si hay match correcto en AF → anexamos IDs
-  P.af_fixture_id = rsl.fixture_id;
-  P.af_league_id = rsl.league_id;
-  P.af_country = rsl.country;
-
-  console.log(
-    `[evt:${P.id}] MATCH OK → fixture_id=${rsl.fixture_id} | league=${rsl.league_id} | country=${rsl.country}`
-  );
-} catch (er) {
-  console.warn(`[evt:${P.id}] resolveTeamsAndLeague error:`, er?.message || er);
-  return null;
-}
-
-        // A) Enriquecimiento API-FOOTBALL
+        // Enriquecimiento AF
         const info = await enriquecerPartidoConAPIFootball(P) || {};
         if (info && info.fixture_id) {
           afHits++;
-          if (DEBUG_TRACE) {
-            console.log('TRACE_MATCH', JSON.stringify({
-              ciclo: cicloId, odds_event_id: P.id, fixture_id: info.fixture_id,
-              liga: info.liga || P.liga || null, pais: info.pais || P.pais || null
-            }));
-          }
         } else {
           afFails++;
-          if (DEBUG_TRACE) {
-            console.log('TRACE_MATCH', JSON.stringify({
-              ciclo: cicloId, odds_event_id: P.id, _skip: 'af_no_match',
-              home: P.home, away: P.away, liga: P.liga || null
-            }));
-          }
-          
-          // STRICT_MATCH: descartar si AF no resolvió correctamente el fixture
-          if (STRICT_MATCH && !(info && info.fixture_id)) {
+          if (STRICT_MATCH) {
             causas.strict_mismatch++;
             logger.warn('STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO');
             continue;
           }
-
         }
-
-        // Propagar país/liga detectados
         if (info && typeof info === 'object') {
           if (info.pais) P.pais = info.pais;
           if (info.liga) P.liga = info.liga;
         }
 
-        // B) Memoria relevante (máx 5)
+        // Memoria + Prompt + OpenAI
         const memoria = await obtenerMemoriaSimilar(P);
+        const prompt  = construirPrompt(P, info, memoria);
 
-        // C) Prompt maestro con opciones apostables reales
-        const prompt = construirPrompt(P, info, memoria);
-
-        // D) OpenAI (fallback + retries defensivos)
         let pick, modeloUsado = MODEL;
         try {
           const r = await obtenerPickConFallback(prompt);
           pick = r.pick; modeloUsado = r.modeloUsado;
-          console.log(traceId, '🔎 Modelo usado:', modeloUsado);
+          console.log(trace, '🔎 Modelo usado:', modeloUsado);
           resumen.oai_calls = (global.__px_oai_calls || 0);
           if (esNoPick(pick)) {
             causas.no_pick_flag++;
-            console.log(traceId, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d');
+            console.log(trace, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d');
             continue;
           }
-          if (!pickCompleto(pick)) { console.warn(traceId, 'Pick incompleto tras fallback'); continue; }
+          if (!pickCompleto(pick)) { console.warn(trace, 'Pick incompleto tras fallback'); continue; }
         } catch (e) {
-          console.error(traceId, 'Error GPT:', e?.message || e); continue;
+          console.error(trace, 'Error GPT:', e?.message || e); continue;
         }
 
-        // Seleccionar cuota EXACTA del mercado pedido
+        // Selección cuota del mercado pedido
         const cuotaSel = seleccionarCuotaSegunApuesta(P, pick.apuesta);
         if (!cuotaSel || !cuotaSel.valor) {
           causas.outcome_invalido++;
-          console.warn(traceId, 'No se encontró cuota del mercado solicitado → descartando');
+          console.warn(trace, 'No se encontró cuota del mercado solicitado → descartando');
           continue;
         }
-        
         const cuota = Number(cuotaSel.valor);
 
         // Coherencia apuesta/outcome
         const outcomeTxt = String(cuotaSel.label || P?.marketsBest?.h2h?.label || '');
         if (!apuestaCoincideConOutcome(pick.apuesta, outcomeTxt, P.home, P.away)) {
-          console.warn(traceId, '❌ Inconsistencia apuesta/outcome → descartando'); continue;
+          console.warn(trace, '❌ Inconsistencia apuesta/outcome → descartando'); continue;
         }
 
-        // Probabilidad + coherencia con implícita
+        // Probabilidad & EV
         const probPct = estimarlaProbabilidadPct(pick);
-        if (probPct == null) { console.warn(traceId, '❌ Probabilidad ausente → descartando pick'); continue; }
-        if (probPct < 5 || probPct > 85) {
-          causas.prob_fuera_rango++;
-          console.warn(traceId, 'Probabilidad fuera de rango [5–85] → descartando');
-          continue;
-        }
+        if (probPct == null) { console.warn(trace, '❌ Probabilidad ausente → descartando pick'); continue; }
+        if (probPct < 5 || probPct > 85) { causas.prob_fuera_rango++; console.warn(trace, 'Probabilidad fuera de rango [5–85] → descartando'); continue; }
 
         const imp = impliedProbPct(cuota);
-        if (imp != null && Math.abs(probPct - imp) > 15) {
-          causas.incoherencia_pp++;
-          console.warn(traceId, `❌ Probabilidad inconsistente (model=${probPct}%, implícita=${imp}%) → descartando`);
-          continue;
-        }
+        if (imp != null && Math.abs(probPct - imp) > 15) { causas.incoherencia_pp++; console.warn(trace, `❌ Probabilidad inconsistente (model=${probPct}%, implícita=${imp}%) → descartando`); continue; }
 
-        // EV
         const ev = calcularEV(probPct, cuota);
-        if (ev == null) { console.warn(traceId, 'EV nulo'); continue; }
+        if (ev == null) { console.warn(trace, 'EV nulo'); continue; }
         resumen.procesados++;
-       if (ev < 10) {
-         causas.ev_insuficiente++;
-         resumen.descartados_ev++;
-         console.log(traceId, `EV ${ev}% < 10% → descartado`);
-         continue;
-       }
+        if (ev < 10) { causas.ev_insuficiente++; resumen.descartados_ev++; console.log(trace, `EV ${ev}% < 10% → descartado`); continue; }
 
-        // === Señal de mercado: snapshot NOW y lookup PREV ===
+        // Snapshots + Corazonada (tal como tenías)
         try {
           const marketForSnap = mapMarketKeyForSnapshotFromApuesta(pick.apuesta);
-          const outcomeLabelForSnap = String(pick.apuesta || '');
           const bestBookie = (Array.isArray(cuotaSel?.top3) && cuotaSel.top3[0]?.bookie) ? String(cuotaSel.top3[0].bookie) : null;
           await saveOddsSnapshot({
             event_key: P.id,
             fixture_id: info?.fixture_id || null,
             market: marketForSnap,
-            outcome_label: outcomeLabelForSnap,
+            outcome_label: String(pick.apuesta || ''),
             point: (cuotaSel.point != null) ? cuotaSel.point : null,
             best_price: cuota,
             best_bookie: bestBookie,
             top3_json: Array.isArray(cuotaSel?.top3) ? cuotaSel.top3 : null
           });
         } catch (e) {
-          console.warn(traceId, '[SNAPSHOT] NOW warn:', e?.message || e);
+          console.warn(trace, '[SNAPSHOT] NOW warn:', e?.message || e);
         }
 
-        // === Corazonada IA (si habilitada) ===
         let cz = { score: 0, motivo: '' };
         try {
           if (CORAZONADA_ENABLED) {
             const side = inferPickSideFromApuesta(pick.apuesta);
             const market = inferMarketFromApuesta(pick.apuesta);
-
-            // oddsNow (best), oddsPrev (best) vía snapshots:
-            const oddsNowBest = (cuotaSel && Number(cuotaSel.valor)) || null;
-
             const oddsPrevBest = await getPrevBestOdds({
               event_key: P.id,
               market: mapMarketKeyForSnapshotFromApuesta(pick.apuesta),
@@ -771,27 +694,22 @@ try {
               point: (cuotaSel.point != null) ? cuotaSel.point : null,
               lookbackMin: ODDS_PREV_LOOKBACK_MIN
             });
-
-            // Para computeCorazonada necesitamos xg/availability/contexto
-            const xgStats = buildXgStatsFromAF(info);           // ajusta si tu objeto AF difiere
+            const xgStats = buildXgStatsFromAF(info);
             const availability = buildAvailabilityFromAF(info);
             const context = buildContextFromAF(info);
-
             const cora = computeCorazonada({
               pick: { side, market },
-              oddsNow: { best: oddsNowBest },
+              oddsNow: { best: Number(cuotaSel.valor) || null },
               oddsPrev: { best: oddsPrevBest },
-              xgStats,
-              availability,
-              context
+              xgStats, availability, context
             });
             cz = { score: cora?.score || 0, motivo: String(cora?.motivo || '').trim() };
           }
         } catch (e) {
-          console.warn(traceId, '[Corazonada] excepción:', e?.message || e);
+          console.warn(trace, '[Corazonada] excepción:', e?.message || e);
         }
 
-        // Nivel y destino
+        // Destino VIP / FREE
         const nivel = clasificarPickPorEV(ev);
         const cuotaInfo = { ...cuotaSel, top3: top3ForSelectedMarket(P, pick.apuesta) };
         const destinoVIP = (ev >= 15);
@@ -805,7 +723,7 @@ try {
             await guardarPickSupabase(P, pick, probPct, ev, nivel, cuotaInfo, "VIP", cz);
           }
           const topBookie = (cuotaInfo.top3 && cuotaInfo.top3[0]?.bookie) ? `${cuotaInfo.top3[0].bookie}@${cuotaInfo.top3[0].price}` : `cuota=${cuotaSel.valor}`;
-          console.log(ok ? `${traceId} ✅ Enviado VIP | fixture=${info?.fixture_id || 'N/D'} | ${topBookie}` : `${traceId} ⚠️ Falló envío VIP`);
+          console.log(ok ? `${trace} ✅ Enviado VIP | fixture=${info?.fixture_id || 'N/D'} | ${topBookie}` : `${trace} ⚠️ Falló envío VIP`);
         } else {
           resumen.intentos_free++;
           const msg = construirMensajeFREE(P, pick, probPct, ev, nivel, cz);
@@ -814,38 +732,38 @@ try {
             resumen.enviados_free++;
             await guardarPickSupabase(P, pick, probPct, ev, nivel, null, "FREE", cz);
           }
-          console.log(ok ? `${traceId} ✅ Enviado FREE | fixture=${info?.fixture_id || 'N/D'} | cuota=${cuotaSel.valor}` : `${traceId} ⚠️ Falló envío FREE`);
+          console.log(ok ? `${trace} ✅ Enviado FREE | fixture=${info?.fixture_id || 'N/D'} | cuota=${cuotaSel.valor}` : `${trace} ⚠️ Falló envío FREE`);
         }
 
-        } catch (e) {
-    const msg = e && (e.message || e.toString());
-    const stack = e && e.stack;
-    console.error('❌ Excepción en handler:', msg, stack || '');
-    // Siempre 200 para que Netlify no tape el error; si quieres 500 fuera de debug, cambia statusCode según convenga
-    if (dbg) {
-      return {
-        statusCode: 200,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ok: false, stage: 'boot/handler', error: msg, stack })
-      };
-    } else {
-      return { statusCode: 200, body: JSON.stringify({ ok: false, error: msg || 'exception' }) };
+      } catch (e) {
+        console.error(trace, 'Error en loop de procesamiento:', e?.message || e);
+      }
     }
+
+    console.log(`AF enrich: hits=${afHits} fails=${afFails} ms=${Date.now()-started}`);
+    resumen.af_hits = afHits; resumen.af_fails = afFails;
+
+    return { statusCode: 200, body: JSON.stringify({ ok: true, resumen }) };
+
+  } catch (e) {
+    console.error('❌ Excepción en ciclo principal:', e?.stack || e?.message || e);
+    return { statusCode: 200, body: JSON.stringify({ ok: false, error: e?.message || 'exception' }) };
+
   } finally {
-    // tu finally actual tal cual (release lock, logs, etc.)
     try { await releaseDistributedLock(); } catch(_) {}
     global.__punterx_lock = false;
     try { await upsertDiagnosticoEstado('idle', null); } catch(_) {}
+
     logger.section('Resumen ciclo');
-logger.info('Conteos:', JSON.stringify(resumen));
-logger.info('Causas de descarte:', JSON.stringify(causas));
-const topCausas = Object.entries(causas).sort((a,b) => b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}:${v}`).join(' | ');
-logger.info('Top causas:', topCausas || 'sin descartes');
-    // (opcional) mantener los logs antiguos:
+    logger.info('Conteos:', JSON.stringify(resumen));
+    logger.info('Causas de descarte:', JSON.stringify(causas));
+    const topCausas = Object.entries(causas).sort((a,b) => b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}:${v}`).join(' | ');
+    logger.info('Top causas:', topCausas || 'sin descartes');
+
     console.log(`🏁 Resumen ciclo: ${JSON.stringify(resumen)}`);
-    console.log(`Duration: ${(Date.now()-tStart).toFixed(2)} ms...Memory Usage: ${Math.round(process.memoryUsage().rss/1e6)} MB`);
+    console.log(`Duration: ${(Date.now()-started).toFixed(2)} ms...Memory Usage: ${Math.round(process.memoryUsage().rss/1e6)} MB`);
   }
-};
+}; // <— cierre del handler
 
 // =============== PRE-FILTER & SCORING ===============
 function scorePreliminar(p) {
