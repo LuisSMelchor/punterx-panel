@@ -12,7 +12,7 @@ module.exports = async function getSupabase() {
     _promise = Promise.resolve(globalThis.__PX_SUPA__.client);
     return _promise;
   }
-
+  
   const mod = await import('@supabase/supabase-js'); // ESM dinámico, recomendado
   const createClient = mod.createClient || (mod.default && mod.default.createClient);
   if (typeof createClient !== 'function') {
