@@ -47,6 +47,8 @@
   schedule = "*/15 * * * *"
   included_files = [
     "netlify/functions/_supabase-client.cjs",
+    "netlify/functions/_logger.cjs",        # <— NUEVO
+    "netlify/functions/_corazonada.cjs",    # <— NUEVO
     "prompts_punterx.md",
     "netlify/functions/_lib/**"
   ]
@@ -157,6 +159,36 @@
 [[scheduled.functions]]
 function = "check-expirados"
 cron = "0 5 * * *"
+
+[functions."diag-require"]
+  included_files = [
+    "netlify/functions/_logger.cjs",
+    "netlify/functions/_diag-core-v4.cjs",
+    "netlify/functions/_supabase-client.cjs",
+    "netlify/functions/_telemetry.cjs",
+    "netlify/functions/_users.cjs",
+    "netlify/functions/_corazonada.cjs",
+    "netlify/functions/_lib/**"
+  ]
+  external_node_modules = [
+    "openai",
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+[functions."diag-env"]
+  included_files = [
+    "netlify/functions/_logger.cjs",
+    "netlify/functions/_supabase-client.cjs",
+    "netlify/functions/_diag-core-v4.cjs",
+    "netlify/functions/_lib/**"
+  ]
+  external_node_modules = [
+    "openai",
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
 
 # ----------------
 # Redirects útiles
