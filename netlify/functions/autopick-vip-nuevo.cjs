@@ -403,10 +403,10 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 exports.handler = async (event, context) => {
   // --- IDs / debug / headers ---
   const REQ_ID = (Math.random().toString(36).slice(2,10)).toUpperCase();
-  const debug = isDebug(event);          // tu helper existente
-  const headers = getHeaders(event);     // tu helper existente
+  const debug  = isDebug(event);       // helper tuyo
+  const headers = getHeaders(event);   // helper tuyo
 
-  // --- AUTH temprano (2.3) ---
+  // --- AUTH temprano ---
   const hdrAuth = (headers['x-auth-code'] || headers['x-auth'] || '').trim();
   const expected = (process.env.AUTH_CODE || '').trim();
   if (expected && hdrAuth !== expected) {
@@ -414,22 +414,16 @@ exports.handler = async (event, context) => {
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          ok: false,
-          stage: 'auth',
-          req: REQ_ID,
-          error: 'forbidden',
-          reason: 'auth_mismatch'
-        })
+        body: JSON.stringify({ ok:false, stage:'auth', req:REQ_ID, error:'forbidden', reason:'auth_mismatch' })
       };
     }
     return { statusCode: 403, body: 'Forbidden' };
   }
 
-  // --- BOOT protegido (2.1) ---
+  // --- BOOT protegido (ENV + clientes) ---
   try {
-    assertEnv();            // valida ENV requeridas
-    await ensureSupabase(); // inicializa cliente supabase
+    assertEnv();
+    await ensureSupabase();
   } catch (e) {
     const msg = e?.message || String(e);
     console.error(`[${REQ_ID}] Boot error:`, e?.stack || msg);
@@ -437,28 +431,18 @@ exports.handler = async (event, context) => {
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          ok: false,
-          stage: 'boot',
-          req: REQ_ID,
-          error: msg,
-          stack: e?.stack || null
-        })
+        body: JSON.stringify({ ok:false, stage:'boot', req:REQ_ID, error: msg, stack: e?.stack || null })
       };
     }
     return { statusCode: 500, body: `Internal Error. REQ:${REQ_ID}` };
   }
 
-  // --- A PARTIR DE AQUÍ SIGUE TU FLUJO (logger, cicloId, etc.) ---
-  const traceId = 'a' + Math.random().toString(36).slice(2,10);
-  const logger = createLogger(traceId);
-  logger.section('CICLO PunterX');
-  logger.info('▶️ Inicio ciclo; now(UTC)=', new Date().toISOString());
+  // --- RUNTIME protegido: TODO el ciclo bajo try/catch global ---
+  const tStart = Date.now();
+  const logger = createLogger('a' + Math.random().toString(36).slice(2,10));
+  const cicloId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
 
-  const CICLO_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
-  console.log(`▶️ CICLO ${CICLO_ID} start; now(UTC)= ${new Date().toISOString()}`);
-
-  const started = Date.now();
+  // Contadores
   const resumen = {
     recibidos: 0, enVentana: 0, candidatos: 0, procesados: 0, descartados_ev: 0,
     enviados_vip: 0, enviados_free: 0, intentos_vip: 0, intentos_free: 0,
@@ -471,42 +455,35 @@ exports.handler = async (event, context) => {
     incoherencia_pp: 0, ev_insuficiente: 0, ventana_fuera: 0, duplicado: 0, otros: 0
   };
 
+  let gotLock = false;
   try {
-    try { await upsertDiagnosticoEstado('running', null); } catch(_) {}
+    // === inicio ciclo (logs amigables) ===
+    logger.section('CICLO PunterX');
+    logger.info('▶️ Inicio ciclo; now(UTC)=', new Date().toISOString());
+    console.log(`▶️ CICLO ${cicloId} start; now(UTC)= ${new Date().toISOString()}`);
     console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
+    try { await upsertDiagnosticoEstado('running', null); } catch (_) {}
 
-    // Lock simple en memoria (aislado por invocación)
+    // === lock simple (no dupliques este bloque) ===
     if (global.__punterx_lock) {
       console.warn('LOCK activo → salto ciclo');
-      return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true }) };
+      return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'mem_lock' }) };
     }
     global.__punterx_lock = true;
 
-    // Lock distribuido
-      let gotLock = false;
-  try {
-    gotLock = await acquireDistributedLock(120);
-  } catch (e) {
-    const msg = e?.message || String(e);
-    if (debug) {
-      return {
-        statusCode: 200,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ok:false, stage:'lock/acquire', req: REQ_ID, error: msg })
-      };
+    // === lock distribuido ===
+    try {
+      gotLock = await acquireDistributedLock(120);
+    } catch (e) {
+      console.warn('acquireDistributedLock error:', e?.message || e);
+      gotLock = false;
     }
-    // en no-debug, no reventamos: marcamos ciclo saltado por error de lock
-    return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'lock_error' }) };
-  }
+    if (!gotLock) {
+      console.warn('LOCK distribuido activo → salto ciclo');
+      return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'dist_lock' }) };
+    }
 
-  if (!gotLock) {
-    console.warn('LOCK distribuido activo → salto ciclo');
-    return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'lock' }) };
-  }
-
-    // ==========================
-    // 1) ODDSAPI → eventos
-    // ==========================
+    // === 1) OddsAPI ===
     const base = 'https://api.the-odds-api.com/v4/sports/' + SPORT_KEY + '/odds';
     const url =
       base +
@@ -526,7 +503,6 @@ exports.handler = async (event, context) => {
     resumen.recibidos = Array.isArray(eventos) ? eventos.length : 0;
     console.log(`ODDSAPI ok=true count=${resumen.recibidos} ms=${tOddsMs}`);
 
-    // Vista previa (si LOG_VERBOSE=1)
     if (process.env.LOG_VERBOSE === '1') {
       const near = (Array.isArray(eventos) ? eventos : [])
         .map(ev => {
@@ -537,25 +513,22 @@ exports.handler = async (event, context) => {
           return { mins, label: `${home} vs ${away}` };
         })
         .filter(x => Number.isFinite(x.mins))
-        .sort((a, b) => a.mins - b.mins)
-        .slice(0, LOG_EVENTS_LIMIT);
+        .sort((a,b) => a.mins - b.mins)
+        .slice(0, 8);
       near.forEach(n => console.log(`⏱️ ${n.mins}m → ${n.label}`));
     }
 
-    // Filtrar futuros
+    // === 2) normalizar / filtrar ventana ===
     const eventosUpcoming = (eventos || []).filter(ev => {
       const t = Date.parse(ev.commence_time);
       return Number.isFinite(t) && t > Date.now();
     });
-
-    // 2) Normalizar OddsAPI → internos
     const partidos = eventosUpcoming.map(normalizeOddsEvent).filter(Boolean);
 
-    // 3) Ventana tiempo
     const inWindow = partidos.filter(p => {
-      const mins = Math.round(p.minutosFaltantes);
-      const principal = mins >= WINDOW_MAIN_MIN && mins <= WINDOW_MAIN_MAX;
-      const fallback  = !principal && mins >= WINDOW_FB_MIN && mins <= WINDOW_FB_MAX;
+      const m = Math.round(p.minutosFaltantes);
+      const principal = m >= WINDOW_MAIN_MIN && m <= WINDOW_MAIN_MAX;
+      const fallback  = !principal && m >= WINDOW_FB_MIN && m <= WINDOW_FB_MAX;
       const dentro = principal || fallback;
       if (!dentro) causas.ventana_fuera++;
       return dentro;
@@ -565,7 +538,6 @@ exports.handler = async (event, context) => {
       const m = Math.round(p.minutosFaltantes);
       return m >= WINDOW_MAIN_MIN && m <= WINDOW_MAIN_MAX;
     }).length;
-
     const fallbackCount = inWindow.filter(p => {
       const m = Math.round(p.minutosFaltantes);
       return !(m >= WINDOW_MAIN_MIN && m <= WINDOW_MAIN_MAX) && (m >= WINDOW_FB_MIN && m <= WINDOW_FB_MAX);
@@ -574,20 +546,18 @@ exports.handler = async (event, context) => {
     resumen.enVentana = inWindow.length;
     resumen.principal = principalCount;
     resumen.fallback  = fallbackCount;
-
-    const sub4555 = inWindow.filter(p => {
+    resumen.sub_45_55 = inWindow.filter(p => {
       const m = Math.round(p.minutosFaltantes);
       return m >= SUB_MAIN_MIN && m <= SUB_MAIN_MAX;
     }).length;
-    const subEarly = inWindow.filter(p => {
+    resumen.sub_40_44 = inWindow.filter(p => {
       const m = Math.round(p.minutosFaltantes);
       return m >= WINDOW_MAIN_MIN && m < SUB_MAIN_MIN;
     }).length;
-    resumen.sub_45_55 = sub4555;
-    resumen.sub_40_44 = subEarly;
 
     console.log(
-      `📊 Filtrado (OddsAPI): Principal=${principalCount} (45–55=${sub4555}, ${WINDOW_MAIN_MIN}–${SUB_MAIN_MIN-1}=${subEarly}) | Fallback=${fallbackCount} | Total EN VENTANA=${inWindow.length} | Eventos RECIBIDOS=${resumen.recibidos}`
+      `📊 Filtrado (OddsAPI): Principal=${principalCount} (45–55=${resumen.sub_45_55}, ${WINDOW_MAIN_MIN}–${SUB_MAIN_MIN-1}=${resumen.sub_40_44}) | ` +
+      `Fallback=${fallbackCount} | Total EN VENTANA=${inWindow.length} | Eventos RECIBIDOS=${resumen.recibidos}`
     );
 
     if (!inWindow.length) {
@@ -595,24 +565,18 @@ exports.handler = async (event, context) => {
       return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
     }
 
-    // 4) Prefiltro & proceso (idéntico a tu lógica existente) -----------------
-    let afHits = 0, afFails = 0;
-    const candidatos = inWindow
-      .sort((a,b) => scorePreliminar(b) - scorePreliminar(a))
-      .slice(0, MAX_PER_CYCLE);
-
+    // === 3) prefiltro y procesado ===
+    const candidatos = inWindow.sort((a,b) => scorePreliminar(b) - scorePreliminar(a)).slice(0, MAX_PER_CYCLE);
     resumen.candidatos = candidatos.length;
 
+    let afHits = 0, afFails = 0;
     for (const P of candidatos) {
-      const trace = `[evt:${P.id}]`;
-      const abortIfOverBudget = () => {
-        if (Date.now() - started > SOFT_BUDGET_MS) throw new Error('Soft budget excedido');
-      };
-
+      const traceEvt = `[evt:${P.id}]`;
+      const abortIfOverBudget = () => { if (Date.now() - tStart > SOFT_BUDGET_MS) throw new Error('Soft budget excedido'); };
       try {
         abortIfOverBudget();
 
-        // Resolver fixture en AF
+        // Resolver fixture
         try {
           const rsl = await resolveTeamsAndLeague(
             { home: P.home, away: P.away, commence_time: P.commence_time, liga: P.liga || P.sport_title || '' },
@@ -620,25 +584,31 @@ exports.handler = async (event, context) => {
           );
           if (!rsl.ok) {
             causas.strict_mismatch++;
-            console.warn(`${trace} STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO (${rsl.reason})`);
+            console.warn(`${traceEvt} STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO (${rsl.reason})`);
             continue;
           }
           P.af_fixture_id = rsl.fixture_id;
-          P.af_league_id = rsl.league_id;
-          P.af_country   = rsl.country;
-          console.log(`${trace} MATCH OK → fixture_id=${rsl.fixture_id} | league=${rsl.league_id} | country=${rsl.country}`);
+          P.af_league_id  = rsl.league_id;
+          P.af_country    = rsl.country;
+          console.log(`${traceEvt} MATCH OK → fixture_id=${rsl.fixture_id} | league=${rsl.league_id} | country=${rsl.country}`);
         } catch (er) {
-          console.warn(`${trace} resolveTeamsAndLeague error:`, er?.message || er);
+          console.warn(`${traceEvt} resolveTeamsAndLeague error:`, er?.message || er);
           continue;
         }
 
-        // Enriquecimiento AF
+        // Enriquecimiento
         const info = await enriquecerPartidoConAPIFootball(P) || {};
         if (info && info.fixture_id) {
           afHits++;
+          if (DEBUG_TRACE) {
+            console.log('TRACE_MATCH', JSON.stringify({ ciclo: cicloId, odds_event_id: P.id, fixture_id: info.fixture_id, liga: info.liga || P.liga || null, pais: info.pais || P.pais || null }));
+          }
         } else {
           afFails++;
-          if (STRICT_MATCH) {
+          if (DEBUG_TRACE) {
+            console.log('TRACE_MATCH', JSON.stringify({ ciclo: cicloId, odds_event_id: P.id, _skip: 'af_no_match', home: P.home, away: P.away, liga: P.liga || null }));
+          }
+          if (STRICT_MATCH && !(info && info.fixture_id)) {
             causas.strict_mismatch++;
             logger.warn('STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO');
             continue;
@@ -649,77 +619,67 @@ exports.handler = async (event, context) => {
           if (info.liga) P.liga = info.liga;
         }
 
-        // Memoria + Prompt + OpenAI
+        // Memoria + prompt + OpenAI
         const memoria = await obtenerMemoriaSimilar(P);
-        const prompt  = construirPrompt(P, info, memoria);
+        const prompt = construirPrompt(P, info, memoria);
 
-        let pick, modeloUsado = MODEL;
+        let pick, modeloUsado = OPENAI_MODEL;   // asegúrate de tener OPENAI_MODEL arriba
         try {
           const r = await obtenerPickConFallback(prompt);
           pick = r.pick; modeloUsado = r.modeloUsado;
-          console.log(trace, '🔎 Modelo usado:', modeloUsado);
+          console.log(traceEvt, '🔎 Modelo usado:', modeloUsado);
           resumen.oai_calls = (global.__px_oai_calls || 0);
-          if (esNoPick(pick)) {
-            causas.no_pick_flag++;
-            console.log(trace, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d');
-            continue;
-          }
-          if (!pickCompleto(pick)) { console.warn(trace, 'Pick incompleto tras fallback'); continue; }
+          if (esNoPick(pick)) { causas.no_pick_flag++; console.log(traceEvt, '🛑 no_pick=true →', pick?.motivo_no_pick || 's/d'); continue; }
+          if (!pickCompleto(pick)) { console.warn(traceEvt, 'Pick incompleto tras fallback'); continue; }
         } catch (e) {
-          console.error(trace, 'Error GPT:', e?.message || e); continue;
+          console.error(traceEvt, 'Error GPT:', e?.message || e); continue;
         }
 
-        // Selección cuota del mercado pedido
+        // Cuota del mercado seleccionado
         const cuotaSel = seleccionarCuotaSegunApuesta(P, pick.apuesta);
-        if (!cuotaSel || !cuotaSel.valor) {
-          causas.outcome_invalido++;
-          console.warn(trace, 'No se encontró cuota del mercado solicitado → descartando');
-          continue;
-        }
+        if (!cuotaSel || !cuotaSel.valor) { causas.outcome_invalido++; console.warn(traceEvt, 'No se encontró cuota del mercado solicitado → descartando'); continue; }
         const cuota = Number(cuotaSel.valor);
 
-        // Coherencia apuesta/outcome
+        // Coherencias y EV
         const outcomeTxt = String(cuotaSel.label || P?.marketsBest?.h2h?.label || '');
-        if (!apuestaCoincideConOutcome(pick.apuesta, outcomeTxt, P.home, P.away)) {
-          console.warn(trace, '❌ Inconsistencia apuesta/outcome → descartando'); continue;
-        }
+        if (!apuestaCoincideConOutcome(pick.apuesta, outcomeTxt, P.home, P.away)) { console.warn(traceEvt, '❌ Inconsistencia apuesta/outcome → descartando'); continue; }
 
-        // Probabilidad & EV
         const probPct = estimarlaProbabilidadPct(pick);
-        if (probPct == null) { console.warn(trace, '❌ Probabilidad ausente → descartando pick'); continue; }
-        if (probPct < 5 || probPct > 85) { causas.prob_fuera_rango++; console.warn(trace, 'Probabilidad fuera de rango [5–85] → descartando'); continue; }
+        if (probPct == null) { console.warn(traceEvt, '❌ Probabilidad ausente → descartando pick'); continue; }
+        if (probPct < 5 || probPct > 85) { causas.prob_fuera_rango++; console.warn(traceEvt, 'Probabilidad fuera de rango [5–85] → descartando'); continue; }
 
         const imp = impliedProbPct(cuota);
-        if (imp != null && Math.abs(probPct - imp) > 15) { causas.incoherencia_pp++; console.warn(trace, `❌ Probabilidad inconsistente (model=${probPct}%, implícita=${imp}%) → descartando`); continue; }
+        if (imp != null && Math.abs(probPct - imp) > 15) { causas.incoherencia_pp++; console.warn(traceEvt, `❌ Probabilidad inconsistente (model=${probPct}%, implícita=${imp}%) → descartando`); continue; }
 
         const ev = calcularEV(probPct, cuota);
-        if (ev == null) { console.warn(trace, 'EV nulo'); continue; }
+        if (ev == null) { console.warn(traceEvt, 'EV nulo'); continue; }
         resumen.procesados++;
-        if (ev < 10) { causas.ev_insuficiente++; resumen.descartados_ev++; console.log(trace, `EV ${ev}% < 10% → descartado`); continue; }
+        if (ev < 10) { causas.ev_insuficiente++; resumen.descartados_ev++; console.log(traceEvt, `EV ${ev}% < 10% → descartado`); continue; }
 
-        // Snapshots + Corazonada (tal como tenías)
+        // Snapshot NOW + prev
         try {
           const marketForSnap = mapMarketKeyForSnapshotFromApuesta(pick.apuesta);
+          const outcomeLabelForSnap = String(pick.apuesta || '');
           const bestBookie = (Array.isArray(cuotaSel?.top3) && cuotaSel.top3[0]?.bookie) ? String(cuotaSel.top3[0].bookie) : null;
           await saveOddsSnapshot({
             event_key: P.id,
             fixture_id: info?.fixture_id || null,
             market: marketForSnap,
-            outcome_label: String(pick.apuesta || ''),
+            outcome_label: outcomeLabelForSnap,
             point: (cuotaSel.point != null) ? cuotaSel.point : null,
             best_price: cuota,
             best_bookie: bestBookie,
             top3_json: Array.isArray(cuotaSel?.top3) ? cuotaSel.top3 : null
           });
-        } catch (e) {
-          console.warn(trace, '[SNAPSHOT] NOW warn:', e?.message || e);
-        }
+        } catch (e) { console.warn(traceEvt, '[SNAPSHOT] NOW warn:', e?.message || e); }
 
+        // Corazonada IA
         let cz = { score: 0, motivo: '' };
         try {
           if (CORAZONADA_ENABLED) {
             const side = inferPickSideFromApuesta(pick.apuesta);
             const market = inferMarketFromApuesta(pick.apuesta);
+            const oddsNowBest = (cuotaSel && Number(cuotaSel.valor)) || null;
             const oddsPrevBest = await getPrevBestOdds({
               event_key: P.id,
               market: mapMarketKeyForSnapshotFromApuesta(pick.apuesta),
@@ -732,17 +692,15 @@ exports.handler = async (event, context) => {
             const context = buildContextFromAF(info);
             const cora = computeCorazonada({
               pick: { side, market },
-              oddsNow: { best: Number(cuotaSel.valor) || null },
+              oddsNow: { best: oddsNowBest },
               oddsPrev: { best: oddsPrevBest },
               xgStats, availability, context
             });
             cz = { score: cora?.score || 0, motivo: String(cora?.motivo || '').trim() };
           }
-        } catch (e) {
-          console.warn(trace, '[Corazonada] excepción:', e?.message || e);
-        }
+        } catch (e) { console.warn(traceEvt, '[Corazonada] excepción:', e?.message || e); }
 
-        // Destino VIP / FREE
+        // Envío VIP/FREE
         const nivel = clasificarPickPorEV(ev);
         const cuotaInfo = { ...cuotaSel, top3: top3ForSelectedMarket(P, pick.apuesta) };
         const destinoVIP = (ev >= 15);
@@ -751,61 +709,50 @@ exports.handler = async (event, context) => {
           resumen.intentos_vip++;
           const msg = construirMensajeVIP(P, pick, probPct, ev, nivel, cuotaInfo, info, cz);
           const ok = await enviarVIP(msg);
-          if (ok) {
-            resumen.enviados_vip++;
-            await guardarPickSupabase(P, pick, probPct, ev, nivel, cuotaInfo, "VIP", cz);
-          }
+          if (ok) { resumen.enviados_vip++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuotaInfo, "VIP", cz); }
           const topBookie = (cuotaInfo.top3 && cuotaInfo.top3[0]?.bookie) ? `${cuotaInfo.top3[0].bookie}@${cuotaInfo.top3[0].price}` : `cuota=${cuotaSel.valor}`;
-          console.log(ok ? `${trace} ✅ Enviado VIP | fixture=${info?.fixture_id || 'N/D'} | ${topBookie}` : `${trace} ⚠️ Falló envío VIP`);
+          console.log(ok ? `${traceEvt} ✅ Enviado VIP | fixture=${info?.fixture_id || 'N/D'} | ${topBookie}` : `${traceEvt} ⚠️ Falló envío VIP`);
         } else {
           resumen.intentos_free++;
           const msg = construirMensajeFREE(P, pick, probPct, ev, nivel, cz);
           const ok = await enviarFREE(msg);
-          if (ok) {
-            resumen.enviados_free++;
-            await guardarPickSupabase(P, pick, probPct, ev, nivel, null, "FREE", cz);
-          }
-          console.log(ok ? `${trace} ✅ Enviado FREE | fixture=${info?.fixture_id || 'N/D'} | cuota=${cuotaSel.valor}` : `${trace} ⚠️ Falló envío FREE`);
+          if (ok) { resumen.enviados_free++; await guardarPickSupabase(P, pick, probPct, ev, nivel, null, "FREE", cz); }
+          console.log(ok ? `${traceEvt} ✅ Enviado FREE | fixture=${info?.fixture_id || 'N/D'} | cuota=${cuotaSel.valor}` : `${traceEvt} ⚠️ Falló envío FREE`);
         }
-
       } catch (e) {
-        console.error(trace, 'Error en loop de procesamiento:', e?.message || e);
+        console.error(traceEvt, 'Error en loop de procesamiento:', e?.message || e);
       }
     }
 
-    console.log(`AF enrich: hits=${afHits} fails=${afFails} ms=${Date.now()-started}`);
     resumen.af_hits = afHits; resumen.af_fails = afFails;
+    return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
 
-    return { statusCode: 200, body: JSON.stringify({ ok: true, resumen }) };
-
-    } catch (e) {
-    const msg = e && (e.message || e.toString());
-    const stack = e && e.stack;
-    console.error('❌ Excepción en ciclo principal:', msg, stack || '');
+  } catch (e) {
+    // <<< AQUÍ ATRAPAMOS CUALQUIER 500 DEL RUNTIME >>>
+    const msg = e?.message || String(e);
+    console.error(`[${REQ_ID}] Runtime error:`, e?.stack || msg);
     if (debug) {
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ok:false, stage:'cycle', error: msg, stack })
+        body: JSON.stringify({ ok:false, stage:'runtime', req:REQ_ID, error: msg, stack: e?.stack || null })
       };
     }
-    return { statusCode: 200, body: JSON.stringify({ ok:false, error: msg || 'exception' }) };
+    return { statusCode: 500, body: `Internal Error. REQ:${REQ_ID}` };
   } finally {
-
-    try { await releaseDistributedLock(); } catch(_) {}
+    // liberar lock / estado / logs
+    try { await releaseDistributedLock(); } catch (_) {}
     global.__punterx_lock = false;
-    try { await upsertDiagnosticoEstado('idle', null); } catch(_) {}
-
+    try { await upsertDiagnosticoEstado('idle', null); } catch (_) {}
     logger.section('Resumen ciclo');
     logger.info('Conteos:', JSON.stringify(resumen));
     logger.info('Causas de descarte:', JSON.stringify(causas));
-    const topCausas = Object.entries(causas).sort((a,b) => b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}:${v}`).join(' | ');
+    const topCausas = Object.entries(causas).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}:${v}`).join(' | ');
     logger.info('Top causas:', topCausas || 'sin descartes');
-
     console.log(`🏁 Resumen ciclo: ${JSON.stringify(resumen)}`);
-    console.log(`Duration: ${(Date.now()-started).toFixed(2)} ms...Memory Usage: ${Math.round(process.memoryUsage().rss/1e6)} MB`);
+    console.log(`Duration: ${(Date.now()-tStart).toFixed(2)} ms...Memory Usage: ${Math.round(process.memoryUsage().rss/1e6)} MB`);
   }
-}; // <— cierre del handler
+};
 
 // =============== PRE-FILTER & SCORING ===============
 function scorePreliminar(p) {
