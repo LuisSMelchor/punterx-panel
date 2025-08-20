@@ -107,6 +107,9 @@ function assertEnv() {
   }
 }
 
+process.on('unhandledRejection', r => console.error('UNHANDLED_REJECTION', r));
+process.on('uncaughtException',  e => console.error('UNCAUGHT_EXCEPTION', e));
+
 // =============== CLIENTES (lazy init para evitar crash en import) ===============
 let supabase = null;
 let openai = null;
