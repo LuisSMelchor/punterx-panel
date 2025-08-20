@@ -2,7 +2,7 @@
 'use strict';
 
 // Capa de usuarios (ya creada)
-const { grantVipByTgId, revokeVipByTgId } = require('./_users.cjs');
+const { grantVipByTgId, revokeVipByTgId } = require('./_lib/_users.cjs');
 // Envío DM directo (lo añadiste en send.js)
 const { tgSendDM } = require('./send.js');
 
