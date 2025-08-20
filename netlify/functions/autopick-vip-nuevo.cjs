@@ -102,7 +102,7 @@ function assertEnv() {
 
 // =============== CLIENTES (lazy init para evitar crash en import) ===============
 let supabase = null;
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+let openai = null;
 
 async function ensureSupabase() {
   if (supabase) return supabase;
@@ -110,6 +110,13 @@ async function ensureSupabase() {
   const { createClient } = require('@supabase/supabase-js'); // require aquí, no en top-level
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   return supabase;
+}
+
+async function ensureOpenAI() {
+  if (openai) return openai;
+  assertEnv(); // valida OPENAI_API_KEY antes de instanciar
+  openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+  return openai;
 }
 
 // === Diagnóstico: helpers mínimos (in-file) ===
@@ -425,6 +432,7 @@ exports.handler = async (event, context) => {
   try {
     assertEnv();
     await ensureSupabase();
+    await ensureOpenAI();
   } catch (e) {
     const msg = e?.message || String(e);
     console.error(`[${REQ_ID}] Boot error:`, e?.stack || msg);
