@@ -10,7 +10,7 @@ try {
 } catch (_) { /* no romper por el polyfill */ }
 
 // 2) Shim de Supabase (singleton, compatible ESM/CJS)
-const getSupabase = require('./_supabase-client.cjs');
+const getSupabase = require('./_lib/_supabase-client.cjs');
 
 // 3) ENV y utilidades
 const {

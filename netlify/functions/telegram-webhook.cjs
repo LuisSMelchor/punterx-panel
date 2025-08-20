@@ -1,5 +1,5 @@
 // netlify/functions/telegram-webhook.cjs
-const { supabase } = require('./_supabase-client.cjs');
+const { supabase } = require('./_lib/_supabase-client.cjs');
 const { tgSendMessage, tgCreateInviteLink } = require('./send.js');
 
 const VERSION = 'telegram-webhook v5.0-chatid-only';
