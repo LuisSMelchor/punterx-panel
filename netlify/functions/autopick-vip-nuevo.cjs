@@ -433,18 +433,7 @@ exports.handler = async (event, context) => {
   global.__punterx_lock = true;
 
   // Lock distribuido
-  const gotLock = await acquireDistributedLock(120);
-  if (!gotLock) {
-    console.warn('LOCK distribuido activo → salto ciclo');
-    return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'lock' }) };
-  }
-  logger.section('CICLO PunterX');
-  logger.info('▶️ Inicio ciclo; now(UTC)=', new Date().toISOString());
-  console.log(`▶️ CICLO ${CICLO_ID} start; now(UTC)= ${new Date().toISOString()}`);
-
-  const started = Date.now();
   try { await upsertDiagnosticoEstado('running', null); } catch(_) {}
-  console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
 
   // Lock simple en memoria por invocación aislada (Netlify)
   if (global.__punterx_lock) {
@@ -586,7 +575,7 @@ exports.handler = async (event, context) => {
     for (const P of candidatos) {
       const traceId = `[evt:${P.id}]`;
       const abortIfOverBudget = () => {
-        if (Date.now() - started > SOFT_BUDGET_MS) throw new Error('Soft budget excedido');
+        if (Date.now() - tStart > SOFT_BUDGET_MS) throw new Error('Soft budget excedido');
       };
 
       try {
@@ -631,7 +620,7 @@ try {
           afHits++;
           if (DEBUG_TRACE) {
             console.log('TRACE_MATCH', JSON.stringify({
-              ciclo: CICLO_ID, odds_event_id: P.id, fixture_id: info.fixture_id,
+              ciclo: cicloId, odds_event_id: P.id, fixture_id: info.fixture_id,
               liga: info.liga || P.liga || null, pais: info.pais || P.pais || null
             }));
           }
@@ -639,7 +628,7 @@ try {
           afFails++;
           if (DEBUG_TRACE) {
             console.log('TRACE_MATCH', JSON.stringify({
-              ciclo: CICLO_ID, odds_event_id: P.id, _skip: 'af_no_match',
+              ciclo: cicloId, odds_event_id: P.id, _skip: 'af_no_match',
               home: P.home, away: P.away, liga: P.liga || null
             }));
           }
@@ -832,7 +821,7 @@ const topCausas = Object.entries(causas).sort((a,b) => b[1]-a[1]).slice(0,3).map
 logger.info('Top causas:', topCausas || 'sin descartes');
     // (opcional) mantener los logs antiguos:
     console.log(`🏁 Resumen ciclo: ${JSON.stringify(resumen)}`);
-    console.log(`Duration: ${(Date.now()-started).toFixed(2)} ms...Memory Usage: ${Math.round(process.memoryUsage().rss/1e6)} MB`);
+    console.log(`Duration: ${(Date.now()-tStart).toFixed(2)} ms...Memory Usage: ${Math.round(process.memoryUsage().rss/1e6)} MB`);
   }
 };
 
