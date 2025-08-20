@@ -44,7 +44,6 @@
 # --------------------------------------
 [functions."autopick-vip-nuevo"]
   # CRON: cada 15 minutos (ajusta si usabas otro)
-  schedule = "*/15 * * * *"
   included_files = [
     "netlify/functions/_supabase-client.cjs",
     "netlify/functions/_logger.cjs",        # <— NUEVO
@@ -57,6 +56,10 @@
     "openai",
     "node-fetch"
   ]
+
+  [[scheduled.functions]]
+  path = "autopick-vip-cron"
+  schedule = "*/15 * * * *"
 
 # ---------------------------------------------------
 
