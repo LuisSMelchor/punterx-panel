@@ -418,7 +418,13 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 exports.handler = async (event, context) => {
   // --- IDs / debug / headers ---
   const REQ_ID = (Math.random().toString(36).slice(2,10)).toUpperCase();
-  const debug  = isDebug(event);       // helper tuyo
+  const debug = (() => {
+    try {
+      const q = (event && event.queryStringParameters) || {};
+      const h = getHeaders(event);
+      return q.debug === '1' || h['x-debug'] === '1';
+    } catch { return false; }
+  })();
   const headers = getHeaders(event);   // helper tuyo
 
   // --- AUTH temprano ---
