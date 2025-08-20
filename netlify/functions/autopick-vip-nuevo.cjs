@@ -418,14 +418,23 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 exports.handler = async (event, context) => {
   // --- IDs / debug / headers ---
   const REQ_ID = (Math.random().toString(36).slice(2,10)).toUpperCase();
-  const debug = (() => {
-    try {
-      const q = (event && event.queryStringParameters) || {};
-      const h = getHeaders(event);
-      return q.debug === '1' || h['x-debug'] === '1';
-    } catch { return false; }
-  })();
-  const headers = getHeaders(event);   // helper tuyo
+  // Blindaje total: no dependemos de helpers en el arranque
+  let headers = {};
+  let debug = false;
+  try {
+    const raw = (event && event.headers) ? event.headers : {};
+    // normaliza a minúsculas para acceso seguro
+    for (const k in raw) headers[k.toLowerCase()] = String(raw[k]);
+    const q = (event && event.queryStringParameters) ? event.queryStringParameters : {};
+    debug = (q.debug === '1') || (headers['x-debug'] === '1');
+  } catch (e) {
+    console.error(`[${REQ_ID}] early-headers-error`, e);
+    return {
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ok:false, stage:'early', req: REQ_ID, error: e?.message || String(e) })
+    };
+  }
 
   // --- AUTH temprano ---
   const hdrAuth = (headers['x-auth-code'] || headers['x-auth'] || '').trim();
@@ -456,7 +465,11 @@ exports.handler = async (event, context) => {
         body: JSON.stringify({ ok:false, stage:'boot', req:REQ_ID, error: msg, stack: e?.stack || null })
       };
     }
-    return { statusCode: 500, body: `Internal Error. REQ:${REQ_ID}` };
+    return {
+      statusCode: 500,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ok:false, stage:'runtime', req: REQ_ID })
+    };
   }
 
   // --- RUNTIME protegido: TODO el ciclo bajo try/catch global ---
@@ -760,7 +773,11 @@ exports.handler = async (event, context) => {
         body: JSON.stringify({ ok:false, stage:'runtime', req:REQ_ID, error: msg, stack: e?.stack || null })
       };
     }
-    return { statusCode: 500, body: `Internal Error. REQ:${REQ_ID}` };
+    return {
+      statusCode: 500,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ok:false, stage:'runtime', req: REQ_ID })
+    };
   } finally {
     // liberar lock / estado / logs
     try { await releaseDistributedLock(); } catch (_) {}
