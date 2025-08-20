@@ -755,14 +755,30 @@ exports.handler = async (event, context) => {
           resumen.intentos_vip++;
           const msg = construirMensajeVIP(P, pick, probPct, ev, nivel, cuotaInfo, info, cz);
           const ok = await enviarVIP(msg);
-          if (ok) { resumen.enviados_vip++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuotaInfo, "VIP", cz); }
+          // === SNAPSHOT ODDS (para CLV) ===
+          const snapshot_odds = {
+            ts_sent: Date.now(),
+            market: pick.market_key || pick.market || null,
+            selection: pick.selection_key || pick.selection || null,
+            bookmaker_best: pick.best_bookmaker || pick.bookmaker || null,
+            price_sent: Number(pick.best_price || pick.price || 0) || null
+          };
+          if (ok) { resumen.enviados_vip++; await guardarPickSupabase(P, pick, probPct, ev, nivel, cuotaInfo, "VIP", cz, snapshot_odds); }
           const topBookie = (cuotaInfo.top3 && cuotaInfo.top3[0]?.bookie) ? `${cuotaInfo.top3[0].bookie}@${cuotaInfo.top3[0].price}` : `cuota=${cuotaSel.valor}`;
           console.log(ok ? `${traceEvt} ✅ Enviado VIP | fixture=${info?.fixture_id || 'N/D'} | ${topBookie}` : `${traceEvt} ⚠️ Falló envío VIP`);
         } else {
           resumen.intentos_free++;
           const msg = construirMensajeFREE(P, pick, probPct, ev, nivel, cz);
           const ok = await enviarFREE(msg);
-          if (ok) { resumen.enviados_free++; await guardarPickSupabase(P, pick, probPct, ev, nivel, null, "FREE", cz); }
+          // === SNAPSHOT ODDS (para CLV) ===
+          const snapshot_odds = {
+            ts_sent: Date.now(),
+            market: pick.market_key || pick.market || null,
+            selection: pick.selection_key || pick.selection || null,
+            bookmaker_best: pick.best_bookmaker || pick.bookmaker || null,
+            price_sent: Number(pick.best_price || pick.price || 0) || null
+          };
+          if (ok) { resumen.enviados_free++; await guardarPickSupabase(P, pick, probPct, ev, nivel, null, "FREE", cz, snapshot_odds); }
           console.log(ok ? `${traceEvt} ✅ Enviado FREE | fixture=${info?.fixture_id || 'N/D'} | cuota=${cuotaSel.valor}` : `${traceEvt} ⚠️ Falló envío FREE`);
         }
       } catch (e) {
