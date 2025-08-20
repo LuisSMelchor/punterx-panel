@@ -6,6 +6,13 @@
 
 'use strict';
 
+/* ============ Blindaje runtime ============ */
+try { if (typeof fetch === 'undefined') global.fetch = require('node-fetch'); } catch (_) {}
+try {
+  process.on('uncaughtException', e => console.error('[UNCAUGHT]', e && (e.stack || e.message || e)));
+  process.on('unhandledRejection', e => console.error('[UNHANDLED]', e && (e.stack || e.message || e)));
+} catch {}
+
 // netlify/functions/autopick-vip-nuevo.cjs
 const OpenAI = require('openai');
 const fs = require('fs');
