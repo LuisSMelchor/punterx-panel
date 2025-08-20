@@ -417,11 +417,11 @@ exports.handler = async (event, context) => {
   const logger = createLogger(traceId);
   logger.section('CICLO PunterX');
   logger.info('▶️ Inicio ciclo; now(UTC)=', new Date().toISOString());
-
-  const CICLO_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
-  console.log(`▶️ CICLO ${CICLO_ID} start; now(UTC)= ${new Date().toISOString()}`);
-
-  const started = Date.now();
+  
+  const cicloId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
+  console.log(`▶️ CICLO ${cicloId} start; now(UTC)= ${new Date().toISOString()}`);
+  
+  const tStart = Date.now();
   try { await upsertDiagnosticoEstado('running', null); } catch(_) {}
   console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
 
