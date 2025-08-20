@@ -389,11 +389,55 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 
 // =============== NETLIFY HANDLER ===============
 exports.handler = async (event, context) => {
-  assertEnv();
-  await ensureSupabase();
-  
+  // --- IDs / modo debug ---
+  const REQ_ID = (Math.random().toString(36).slice(2,10)).toUpperCase();
+  const debug =
+    (event?.queryStringParameters?.debug === '1') ||
+    (event?.headers?.['x-debug'] === '1');
+
+  // --- Auth (antes de cualquier otra cosa) ---
+  const hdrAuth = (event?.headers?.['x-auth-code'] || event?.headers?.['x-auth'] || '').trim();
+  const expected = (process.env.AUTH_CODE || '').trim();
+  if (expected && hdrAuth !== expected) {
+    if (debug) console.log(`[${REQ_ID}] 403 Forbidden (auth mismatch)`);
+    return { statusCode: 403, body: 'Forbidden' };
+  }
+
+  // --- Boot: ENV + clientes, atrapado para no reventar con 500 opaco ---
+  try {
+    assertEnv();
+    await ensureSupabase();
+  } catch (e) {
+    console.error(`[${REQ_ID}] Boot error:`, e?.stack || e?.message || e);
+    const body = debug ? `BOOT ERROR: ${e?.message || e}` : `Internal Error. REQ:${REQ_ID}`;
+    return { statusCode: 500, body };
+  }
+
   const traceId = 'a' + Math.random().toString(36).slice(2,10);
   const logger = createLogger(traceId);
+  logger.section('CICLO PunterX');
+  logger.info('▶️ Inicio ciclo; now(UTC)=', new Date().toISOString());
+
+  const CICLO_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
+  console.log(`▶️ CICLO ${CICLO_ID} start; now(UTC)= ${new Date().toISOString()}`);
+
+  const started = Date.now();
+  try { await upsertDiagnosticoEstado('running', null); } catch(_) {}
+  console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
+
+  // Lock simple en memoria por invocación aislada (Netlify)
+  if (global.__punterx_lock) {
+    console.warn('LOCK activo → salto ciclo');
+    return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true }) };
+  }
+  global.__punterx_lock = true;
+
+  // Lock distribuido
+  const gotLock = await acquireDistributedLock(120);
+  if (!gotLock) {
+    console.warn('LOCK distribuido activo → salto ciclo');
+    return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'lock' }) };
+  }
   logger.section('CICLO PunterX');
   logger.info('▶️ Inicio ciclo; now(UTC)=', new Date().toISOString());
 
@@ -775,9 +819,11 @@ try {
 
     return { statusCode: 200, body: JSON.stringify({ ok: true, resumen }) };
   } catch (e) {
-    console.error('❌ Excepción en ciclo principal:', e?.message || e);
-    return { statusCode: 200, body: JSON.stringify({ ok: false, error: e?.message || 'exception' }) };
-  } finally {
+  console.error('❌ Excepción en ciclo principal:', e?.stack || e?.message || e);
+  const body = debug ? `ERROR: ${e?.message || e}` : `Internal Error. REQ:${REQ_ID}`;
+  return { statusCode: 500, body };
+}
+  finally {
     try { await releaseDistributedLock(); } catch(_) {}
     global.__punterx_lock = false;
     try { await upsertDiagnosticoEstado('idle', null); } catch(_) {}
