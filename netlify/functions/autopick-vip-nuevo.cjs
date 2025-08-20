@@ -401,11 +401,12 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 
 // =============== NETLIFY HANDLER ===============
 exports.handler = async (event, context) => {
+  // --- IDs / debug / headers ---
   const REQ_ID = (Math.random().toString(36).slice(2,10)).toUpperCase();
-  const debug = isDebug(event);
-  const headers = getHeaders(event);
+  const debug = isDebug(event);          // tu helper existente
+  const headers = getHeaders(event);     // tu helper existente
 
-  // Auth
+  // --- AUTH temprano (2.3) ---
   const hdrAuth = (headers['x-auth-code'] || headers['x-auth'] || '').trim();
   const expected = (process.env.AUTH_CODE || '').trim();
   if (expected && hdrAuth !== expected) {
@@ -413,16 +414,22 @@ exports.handler = async (event, context) => {
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ok:false, stage:'auth', req:REQ_ID, error:'forbidden', reason:'auth_mismatch' })
+        body: JSON.stringify({
+          ok: false,
+          stage: 'auth',
+          req: REQ_ID,
+          error: 'forbidden',
+          reason: 'auth_mismatch'
+        })
       };
     }
     return { statusCode: 403, body: 'Forbidden' };
   }
 
-  // Boot (ENV + clientes) atrapado
+  // --- BOOT protegido (2.1) ---
   try {
-    assertEnv();
-    await ensureSupabase();
+    assertEnv();            // valida ENV requeridas
+    await ensureSupabase(); // inicializa cliente supabase
   } catch (e) {
     const msg = e?.message || String(e);
     console.error(`[${REQ_ID}] Boot error:`, e?.stack || msg);
@@ -430,13 +437,19 @@ exports.handler = async (event, context) => {
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ok:false, stage:'boot', req:REQ_ID, error: msg, stack: e?.stack || null })
+        body: JSON.stringify({
+          ok: false,
+          stage: 'boot',
+          req: REQ_ID,
+          error: msg,
+          stack: e?.stack || null
+        })
       };
     }
     return { statusCode: 500, body: `Internal Error. REQ:${REQ_ID}` };
   }
 
-  // --- Logger de ciclo ---
+  // --- A PARTIR DE AQUÍ SIGUE TU FLUJO (logger, cicloId, etc.) ---
   const traceId = 'a' + Math.random().toString(36).slice(2,10);
   const logger = createLogger(traceId);
   logger.section('CICLO PunterX');
@@ -470,11 +483,26 @@ exports.handler = async (event, context) => {
     global.__punterx_lock = true;
 
     // Lock distribuido
-    const gotLock = await acquireDistributedLock(120);
-    if (!gotLock) {
-      console.warn('LOCK distribuido activo → salto ciclo');
-      return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'lock' }) };
+      let gotLock = false;
+  try {
+    gotLock = await acquireDistributedLock(120);
+  } catch (e) {
+    const msg = e?.message || String(e);
+    if (debug) {
+      return {
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ok:false, stage:'lock/acquire', req: REQ_ID, error: msg })
+      };
     }
+    // en no-debug, no reventamos: marcamos ciclo saltado por error de lock
+    return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'lock_error' }) };
+  }
+
+  if (!gotLock) {
+    console.warn('LOCK distribuido activo → salto ciclo');
+    return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'lock' }) };
+  }
 
     // ==========================
     // 1) ODDSAPI → eventos
