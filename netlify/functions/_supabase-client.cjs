@@ -1,30 +1,20 @@
 // netlify/functions/_supabase-client.cjs
-// Singleton seguro para CJS+ESM y esbuild, sin redeclaraciones.
-let _promise = null;
+'use strict';
 
-module.exports = async function getSupabase() {
-  if (_promise) return _promise;
+const { createClient } = require('@supabase/supabase-js');
 
-  // Cache global para contenedores “calientes”
-  if (!globalThis.__PX_SUPA__) globalThis.__PX_SUPA__ = {};
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
-  if (globalThis.__PX_SUPA__.client) {
-    _promise = Promise.resolve(globalThis.__PX_SUPA__.client);
-    return _promise;
-  }
-  
-  const mod = await import('@supabase/supabase-js'); // ESM dinámico, recomendado
-  const createClient = mod.createClient || (mod.default && mod.default.createClient);
-  if (typeof createClient !== 'function') {
-    throw new Error('No se encontró createClient en @supabase/supabase-js');
-  }
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  // Importante: fallar temprano para ver el error en logs
+  throw new Error('Falta SUPABASE_URL o SUPABASE_KEY en variables de entorno');
+}
 
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_KEY;
-  if (!url || !key) throw new Error('Faltan SUPABASE_URL / SUPABASE_KEY');
+// No persistimos sesión en Lambdas
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: false },
+  global: { headers: { 'x-px-runtime': 'netlify-fn' } },
+});
 
-  const client = createClient(url, key);
-  globalThis.__PX_SUPA__.client = client;
-  _promise = Promise.resolve(client);
-  return _promise;
-};
+module.exports = { supabase };
