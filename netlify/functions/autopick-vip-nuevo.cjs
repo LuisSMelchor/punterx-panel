@@ -79,6 +79,13 @@ function assertEnv() {
     'SUPABASE_URL','SUPABASE_KEY','OPENAI_API_KEY','TELEGRAM_BOT_TOKEN',
     'TELEGRAM_CHANNEL_ID','TELEGRAM_GROUP_ID','ODDS_API_KEY','API_FOOTBALL_KEY'
   ];
+
+  function isDebug(event) {
+  const h = (event && event.headers) || {};
+  const v = String(h['x-debug'] || h['X-Debug'] || '').trim();
+  return v === '1' || v.toLowerCase() === 'true';
+}
+  
   const missing = required.filter(k => !process.env[k]);
   if (missing.length) {
     console.error('❌ ENV faltantes:', missing.join(', '));
@@ -86,7 +93,6 @@ function assertEnv() {
   }
 }
 
-// =============== CLIENTES ===============
 // =============== CLIENTES (lazy init para evitar crash en import) ===============
 let supabase = null;
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -388,19 +394,25 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 }
 
 // =============== NETLIFY HANDLER ===============
+// =============== NETLIFY HANDLER ===============
 exports.handler = async (event, context) => {
   // --- IDs / modo debug ---
   const REQ_ID = (Math.random().toString(36).slice(2,10)).toUpperCase();
-  const debug =
-    (event?.queryStringParameters?.debug === '1') ||
-    (event?.headers?.['x-debug'] === '1');
+  const debug = isDebug(event);
+  const headers = getHeaders(event);
 
   // --- Auth (antes de cualquier otra cosa) ---
-  const hdrAuth = (event?.headers?.['x-auth-code'] || event?.headers?.['x-auth'] || '').trim();
+  const hdrAuth = (headers['x-auth-code'] || headers['x-auth'] || '').trim();
   const expected = (process.env.AUTH_CODE || '').trim();
   if (expected && hdrAuth !== expected) {
     if (debug) console.log(`[${REQ_ID}] 403 Forbidden (auth mismatch)`);
-    return { statusCode: 403, body: 'Forbidden' };
+    return {
+      statusCode: 403,
+      headers: { 'content-type': 'application/json' },
+      body: debug
+        ? JSON.stringify({ ok:false, req:REQ_ID, error:'forbidden', reason:'auth_mismatch' })
+        : 'Forbidden'
+    };
   }
 
   // --- Boot: ENV + clientes, atrapado para no reventar con 500 opaco ---
@@ -408,19 +420,28 @@ exports.handler = async (event, context) => {
     assertEnv();
     await ensureSupabase();
   } catch (e) {
-    console.error(`[${REQ_ID}] Boot error:`, e?.stack || e?.message || e);
-    const body = debug ? `BOOT ERROR: ${e?.message || e}` : `Internal Error. REQ:${REQ_ID}`;
-    return { statusCode: 500, body };
+    const msg = e?.message || String(e);
+    console.error(`[${REQ_ID}] Boot error:`, e?.stack || msg);
+    // En modo debug devolvemos JSON útil y 200; en normal, mantenemos 500 con ID.
+    if (debug) {
+      return {
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ok:false, stage:'boot', req:REQ_ID, error: msg, stack: e?.stack || null })
+      };
+    }
+    return { statusCode: 500, body: `Internal Error. REQ:${REQ_ID}` };
   }
 
+  // --- Logger de ciclo ---
   const traceId = 'a' + Math.random().toString(36).slice(2,10);
   const logger = createLogger(traceId);
   logger.section('CICLO PunterX');
   logger.info('▶️ Inicio ciclo; now(UTC)=', new Date().toISOString());
-  
+
   const cicloId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
   console.log(`▶️ CICLO ${cicloId} start; now(UTC)= ${new Date().toISOString()}`);
-  
+
   const tStart = Date.now();
   try { await upsertDiagnosticoEstado('running', null); } catch(_) {}
   console.log(`⚙️ Config ventana principal: ${WINDOW_MAIN_MIN}–${WINDOW_MAIN_MAX} min | Fallback: ${WINDOW_FB_MIN}–${WINDOW_FB_MAX} min`);
@@ -796,21 +817,22 @@ try {
           console.log(ok ? `${traceId} ✅ Enviado FREE | fixture=${info?.fixture_id || 'N/D'} | cuota=${cuotaSel.valor}` : `${traceId} ⚠️ Falló envío FREE`);
         }
 
-      } catch (e) {
-        console.error(traceId, 'Error en loop de procesamiento:', e?.message || e);
-      }
+        } catch (e) {
+    const msg = e && (e.message || e.toString());
+    const stack = e && e.stack;
+    console.error('❌ Excepción en handler:', msg, stack || '');
+    // Siempre 200 para que Netlify no tape el error; si quieres 500 fuera de debug, cambia statusCode según convenga
+    if (dbg) {
+      return {
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ok: false, stage: 'boot/handler', error: msg, stack })
+      };
+    } else {
+      return { statusCode: 200, body: JSON.stringify({ ok: false, error: msg || 'exception' }) };
     }
-
-    console.log(`AF enrich: hits=${afHits} fails=${afFails} ms=${Date.now()-tAF}`);
-    resumen.af_hits = afHits; resumen.af_fails = afFails;
-
-    return { statusCode: 200, body: JSON.stringify({ ok: true, resumen }) };
-  } catch (e) {
-  console.error('❌ Excepción en ciclo principal:', e?.stack || e?.message || e);
-  const body = debug ? `ERROR: ${e?.message || e}` : `Internal Error. REQ:${REQ_ID}`;
-  return { statusCode: 500, body };
-}
-  finally {
+  } finally {
+    // tu finally actual tal cual (release lock, logs, etc.)
     try { await releaseDistributedLock(); } catch(_) {}
     global.__punterx_lock = false;
     try { await upsertDiagnosticoEstado('idle', null); } catch(_) {}
