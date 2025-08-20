@@ -74,24 +74,25 @@ const LOCK_KEY_FN = 'autopick_vip_nuevo';
 const PICK_TABLE = 'picks_historicos';
 const ODDS_SNAPSHOTS_TABLE = 'odds_snapshots'; // nueva tabla para snapshots de cuotas
 
+function getHeaders(event) {
+  const h = (event && event.headers) || {};
+  const out = {};
+  for (const k of Object.keys(h)) out[k.toLowerCase()] = h[k];
+  return out;
+}
+
+function isDebug(event) {
+  const q = (event && event.queryStringParameters) || {};
+  const h = getHeaders(event);
+  return q.debug === '1' || h['x-debug'] === '1';
+}
+
 function assertEnv() {
   const required = [
     'SUPABASE_URL','SUPABASE_KEY','OPENAI_API_KEY','TELEGRAM_BOT_TOKEN',
     'TELEGRAM_CHANNEL_ID','TELEGRAM_GROUP_ID','ODDS_API_KEY','API_FOOTBALL_KEY'
   ];
 
-  function getHeaders(event) {
-  const h = (event && event.headers) || {};
-  const out = {};
-  for (const k of Object.keys(h)) out[k.toLowerCase()] = h[k];
-  return out;
-}
-function isDebug(event) {
-  const q = (event && event.queryStringParameters) || {};
-  const h = getHeaders(event);
-  return q.debug === '1' || h['x-debug'] === '1';
-}
-  
   const missing = required.filter(k => !process.env[k]);
   if (missing.length) {
     console.error('❌ ENV faltantes:', missing.join(', '));
