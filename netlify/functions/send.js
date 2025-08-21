@@ -116,7 +116,24 @@ exports.handler = async (event) => {
   try {
     const qs = event.queryStringParameters || {};
     if (event.httpMethod === "GET") {
+      // ping simple
       if (qs.ping) return { statusCode:200, headers:{'Content-Type':'text/plain; charset=utf-8'}, body:"pong" };
+      
+      // acción admin: re‑publicar y fijar el mensaje con botón al bot en el canal FREE
+      // uso: GET /.netlify/functions/send?pin=free  con header: x-auth-code: <AUTH_CODE>
+      if (qs.pin === 'free') {
+        const hdr = (event.headers && (event.headers['x-auth-code'] || event.headers['x-auth'])) || "";
+        const expected = (process.env.AUTH_CODE || "");
+        if (!expected || hdr !== expected) {
+          return { statusCode: 403, headers:{'Content-Type':'text/plain; charset=utf-8'}, body: 'Forbidden' };
+        }
+        try {
+          const msg = await sendPinnedFree({ pin: true });
+          return { statusCode:200, headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ok:true, message_id: msg?.message_id }) };
+        } catch (e) {
+          return { statusCode:500, headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ok:false, error: e?.message || String(e) }) };
+        }
+      }
       return { statusCode:200, headers:{'Content-Type':'text/html; charset=utf-8'}, body: html() };
     }
     if (event.httpMethod !== "POST") return ok({ ok:false, error:"Use POST" });
