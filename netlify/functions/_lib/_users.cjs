@@ -151,5 +151,6 @@ module.exports = {
   revokeVipByTgId,
   banByTgId,
   unbanByTgId,
-  logUserEvent
+  logUserEvent,
+  getUserIdByTgId,
 };
