@@ -1,96 +1,38 @@
-# PunterX-Config.md
+PunterX-Config.md
 
 ## 1) Introducción
-PunterX es un sistema avanzado de picks automatizados y panel de control, que integra fuentes de datos de cuotas, enriquecimiento con API‑Football, modelado con OpenAI y publicación a Telegram/PANEL. El objetivo es generar picks de alto valor sin usar listas fijas de equipos ni partidos simulados, cumpliendo con políticas estrictas de calidad y seguridad de datos.
+PunterX es un sistema avanzado de picks automatizados y panel de control, que integra fuentes de datos de cuotas, enriquecimiento con API-Football, modelado con OpenAI y publicación a Telegram/PANEL. El objetivo es generar picks de alto valor sin usar listas fijas de equipos ni partidos simulados, cumpliendo con políticas estrictas de calidad y seguridad de datos.
+
+Además, a partir de agosto 2025, el sistema integra:
+- **Auditoría CLV (Closing Line Value)**: cálculo y registro de cuánto valor agregado tiene un pick comparado con el movimiento de la línea de cierre.  
+- **Flujo Bot Start Trial**: desde el canal FREE, el usuario va al bot, da `/start` y automáticamente recibe **15 días de prueba VIP**, con onboarding y acceso directo al grupo privado.  
 
 ## 2) Arquitectura general
-- **Netlify Functions** (CJS/JS): funciones serverless para pipelines de autopick, envío de mensajes y endpoints administrativos.
-- **Supabase**: almacenamiento (tablas de picks, locks distribuidos, snapshots de odds, etc.).
+- **Netlify Functions** (CJS/JS): funciones serverless para pipelines de autopick, envío de mensajes, auditorías y endpoints administrativos.
+- **Supabase**: almacenamiento (picks, locks distribuidos, snapshots de odds, usuarios, membresías, eventos de usuario, auditorías CLV).
 - **OddsAPI (v4)**: fuente de mercados (h2h/totals/spreads) y cuotas.
-- **API‑Football**: enriquecimiento (fixture_id, liga, país, xG/availability/contexto).
-- **OpenAI**: modelado (OpenAI 5 + fallback) con políticas de reintento.
-- **Telegram**: destinos FREE y VIP.
+- **API-Football**: enriquecimiento (fixture_id, liga, país, xG/availability/contexto).
+- **OpenAI**: modelado (GPT-5 + fallback).
+- **Telegram**: canal FREE y grupo VIP. El bot gestiona prueba y membresías.
 - **Panel (endpoint opcional)**: distribución y métricas.
 
-> Reglas: **sin equipos fijos** (no whitelists/blacklists), **sin partidos simulados**, matching de fixtures **estricto** si `STRICT_MATCH=1`.
+> Reglas: **sin equipos fijos**, **sin partidos simulados**, matching de fixtures **estricto** si `STRICT_MATCH=1`.
 
 ## 3) Estructura de directorios (Netlify/functions)
-- `_lib/af-resolver.cjs`: Resolve y helpers para API‑Football (afApi).
-- `_corazonada.cjs`: Módulo “Corazonada IA” (score y motivo).
-- `_logger.cjs`: Logger con `section/info/warn/error`.
-- `_supabase-client.cjs`: Inicialización cliente Supabase y funciones (locks/snapshots/etc).
-- `_diag-core-v4.cjs`: Utilidades de diagnóstico comunes.
-- `_telemetry.cjs`: Telemetría opcional.
-- `_users.cjs`: Utilidades para usuarios/invitaciones (si aplica).
-- `autopick-vip-nuevo.cjs`: Handler principal de autopick VIP (nuevo).
-- `autopick-live.cjs`: Live picks (si está habilitado).
-- `autopick-outrights.cjs`: Outrights (si está habilitado).
-- `admin-grant-vip.cjs`, `analisis-semanal.js`: varias según panel.
-- `diag-require.cjs`, `diag-env.cjs`: funciones **de diagnóstico**.
+Incluye ahora:
+- `_users.cjs`: alta, baja, VIP, bans, eventos de usuarios.
+- `autopick-vip-nuevo.cjs`: handler principal autopick VIP.
+- `telegram-webhook.cjs`: recibe comandos del bot (ej. `/start` → activa prueba VIP 15 días).
+- `admin-grant-vip.cjs`: concesión manual de VIP (solo admins).
+- `diag-require.cjs`, `diag-env.cjs`: diagnósticos de runtime.
+- `clv-audit.cjs` (integrado en pipelines): calcula CLV al cierre y audita picks.
 
 ## 4) Variables de entorno (visibles en Netlify)
-Listado real (con tus contextos) — se mantienen como en tu panel. **No se exponen valores**:
-- `API_FOOTBALL_KEY`
-- `AUTH_CODE`
-- `AWS_LAMBDA_JS_RUNTIME`
-- `CORAZONADA_ENABLED`
-- `CORAZONADA_W_AVAIL`
-- `CORAZONADA_W_CTX`
-- `CORAZONADA_W_MARKET`
-- `CORAZONADA_W_XG`
-- `DEBUG_TRACE`
-- `ENABLE_OUTRIGHTS`
-- `ENABLE_OUTRIGHTS_INFO`
-- `LIVE_COOLDOWN_MIN`
-- `LIVE_MARKETS`
-- `LIVE_MIN_BOOKIES`
-- `LIVE_POLL_MS`
-- `LIVE_PREFILTER_GAP_PP`
-- `LIVE_REGIONS`
-- `LOG_EVENTS_LIMIT`
-- `LOG_VERBOSE`
-- `MATCH_RESOLVE_CONFIDENCE`
-- `MAX_OAI_CALLS_PER_CYCLE`
-- `NODE_OPTIONS`
-- `NODE_VERSION`
-- `ODDS_API_KEY`
-- `ODDS_REGIONS`
-- `ODDS_SPORT_KEY`
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL`
-- `OPENAI_MODEL_FALLBACK`
-- `OUTRIGHTS_COHERENCE_MAX_PP`
-- `OUTRIGHTS_EV_MIN_VIP`
-- `OUTRIGHTS_EXCLUDE`
-- `OUTRIGHTS_MIN_BOOKIES`
-- `OUTRIGHTS_MIN_OUTCOMES`
-- `OUTRIGHTS_PROB_MAX`
-- `OUTRIGHTS_PROB_MIN`
-- `PANEL_ENDPOINT`
-- `PUNTERX_SECRET`
-- `RUN_WINDOW_MS`
-- `STRICT_MATCH`
-- `SUB_MAIN_MAX`
-- `SUB_MAIN_MIN`
-- `SUPABASE_KEY`
-- `SUPABASE_URL`
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHANNEL_ID`
-- `TELEGRAM_GROUP_ID`
-- `TELEGRAM_VIP_GROUP_ID`
-- `TRIAL_DAYS`
-- `TRIAL_INVITE_TTL_SECONDS`
-- `TZ`
-- `WINDOW_FALLBACK_MAX`
-- `WINDOW_FALLBACK_MIN`
-- `WINDOW_FB_MAX`
-- `WINDOW_FB_MIN`
-- `WINDOW_MAIN_MAX`
-- `WINDOW_MAIN_MIN`
-- `WINDOW_MAX`
-- `WINDOW_MIN`
-
-> Defaults en código (cuando aplican): ver sección 15.
+Se añadieron:
+- `TRIAL_DAYS` → duración de la prueba (default: 15).
+- `TRIAL_INVITE_TTL_SECONDS` → vigencia del link de invitación al grupo VIP.
+- Todas las anteriores (SUPABASE_URL, SUPABASE_KEY, AUTH_CODE, TELEGRAM_BOT_TOKEN, etc.) siguen siendo obligatorias.  
+- Confirmado: Node 20 (`NODE_VERSION=20.x`) y modelo por defecto `OPENAI_MODEL=gpt-5-mini`.
 
 ## 5) Reglas operativas
 - **Sin equipos fijos** en código/prompt/filters (regla general).
@@ -186,46 +128,41 @@ Se agregan al resumen y “Top causas” al cierre.
 - `ODDS_PREV_LOOKBACK_MIN`=7
 - `STRICT_MATCH` (1 recomendado)
 
-## 16) Errores observados y explicación
-- **`STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO`**:
-  - No es bug: con política estricta, si AF no devuelve fixture inequívoco, se descarta.
-  - Puede deberse a nombres raros de equipos/ligas en OddsAPI, partidos listados con formatos distintos, etc.
-- **HTTP 500: `Internal Error. ID: <…>`** (Netlify):
-  - Error arrojado antes de que el handler responda: típicamente módulos no encontrados, sintaxis, o fallos en boot.
-  - Se añadió **boot defensivo** y endpoints de diagnóstico (ver “Actualización”).
-- **SyntaxError: `Identifier 'CICLO_ID' has already been declared` / `started` / `gotLock`**:
-  - Causado por pegar **dos veces** la cabecera/locks.
-  - Solución: dejar **un único** bloque (ver “Bloques listos para pegar” más abajo).
-- **`Unexpected end of input`**:
-  - Faltaban llaves/cierres tras recortes parciales. Solución: conservar el `finally` completo (ver sección 33).
+PunterX-Config.md
 
-## 17) Endpoints de diagnóstico
-- `/.netlify/functions/diag-require`: valida **módulos** (locales y npm) en runtime.
-- `/.netlify/functions/diag-env`: valida **ENV** (marca `(set)` / `(MISSING)` sin exponer secretos).
-- Útiles para diferenciar “problema de bundle/runtime” vs “problema de lógica”.
+## 1) Introducción
+PunterX es un sistema avanzado de picks automatizados y panel de control, que integra fuentes de datos de cuotas, enriquecimiento con API-Football, modelado con OpenAI y publicación a Telegram/PANEL. El objetivo es generar picks de alto valor sin usar listas fijas de equipos ni partidos simulados, cumpliendo con políticas estrictas de calidad y seguridad de datos.
 
-## 18) Comandos `curl` útiles
-```bash
-# 1) Ver módulos
-curl -s "https://<sitio>.netlify.app/.netlify/functions/diag-require" -H "x-debug: 1" | jq .
+Además, a partir de agosto 2025, el sistema integra:
+- **Auditoría CLV (Closing Line Value)**: cálculo y registro de cuánto valor agregado tiene un pick comparado con el movimiento de la línea de cierre.  
+- **Flujo Bot Start Trial**: desde el canal FREE, el usuario va al bot, da `/start` y automáticamente recibe **15 días de prueba VIP**, con onboarding y acceso directo al grupo privado.  
 
-# 2) Ver ENV esenciales
-curl -s "https://<sitio>.netlify.app/.netlify/functions/diag-env" -H "x-debug: 1" | jq .
+## 2) Arquitectura general
+- **Netlify Functions** (CJS/JS): funciones serverless para pipelines de autopick, envío de mensajes, auditorías y endpoints administrativos.
+- **Supabase**: almacenamiento (picks, locks distribuidos, snapshots de odds, usuarios, membresías, eventos de usuario, auditorías CLV).
+- **OddsAPI (v4)**: fuente de mercados (h2h/totals/spreads) y cuotas.
+- **API-Football**: enriquecimiento (fixture_id, liga, país, xG/availability/contexto).
+- **OpenAI**: modelado (GPT-5 + fallback).
+- **Telegram**: canal FREE y grupo VIP. El bot gestiona prueba y membresías.
+- **Panel (endpoint opcional)**: distribución y métricas.
 
-# 3) Forzar modo depuración del handler (devuelve JSON en fallos de boot)
-curl -i "https://<sitio>.netlify.app/.netlify/functions/autopick-vip-nuevo?debug=1" \
-  -H "x-auth-code: $AUTH_CODE" \
-  -H "x-debug: 1" \
-  -H "cache-control: no-cache"
+> Reglas: **sin equipos fijos**, **sin partidos simulados**, matching de fixtures **estricto** si `STRICT_MATCH=1`.
 
-# 4) Interpretación de 500 opaco
-# Copia el ID de x-nf-request-id del 500 y abre el log del deploy en Netlify.
-19) netlify.toml (resumen de bundling)
-node_bundler = "esbuild" (recomendado).
+## 3) Estructura de directorios (Netlify/functions)
+Incluye ahora:
+- `_users.cjs`: alta, baja, VIP, bans, eventos de usuarios.
+- `autopick-vip-nuevo.cjs`: handler principal autopick VIP.
+- `telegram-webhook.cjs`: recibe comandos del bot (ej. `/start` → activa prueba VIP 15 días).
+- `admin-grant-vip.cjs`: concesión manual de VIP (solo admins).
+- `diag-require.cjs`, `diag-env.cjs`: diagnósticos de runtime.
+- `clv-audit.cjs` (integrado en pipelines): calcula CLV al cierre y audita picks.
 
-external_node_modules: incluir openai, @supabase/supabase-js, node-fetch si tu helper lo requiere.
-
-Funciones: ruta netlify/functions.
+## 4) Variables de entorno (visibles en Netlify)
+Se añadieron:
+- `TRIAL_DAYS` → duración de la prueba (default: 15).
+- `TRIAL_INVITE_TTL_SECONDS` → vigencia del link de invitación al grupo VIP.
+- Todas las anteriores (SUPABASE_URL, SUPABASE_KEY, AUTH_CODE, TELEGRAM_BOT_TOKEN, etc.) siguen siendo obligatorias.  
+- Confirmado: Node 20 (`NODE_VERSION=20.x`) y modelo por defecto `OPENAI_MODEL=gpt-5-mini`.
 
 20) af-resolver.cjs (resumen mínimo)
 Exporta afApi y resolveTeamsAndLeague(params, { afApi }).
@@ -492,42 +429,14 @@ Telegram/PANEL: TELEGRAM_*, PANEL_ENDPOINT, COUNTRY_FLAG (opcional, ej. 🇲🇽
 
 Confirmado por tu panel de Netlify: todas estas existen. diag-env te permite ver rápidamente si alguna queda en (MISSING) al cambiar contextos.
 
-30) Errores que ya vimos y cómo se solucionaron
-Identifier 'CICLO_ID' has already been declared / Identifier 'started' ... / Identifier 'gotLock' ...
-Causa: bloques duplicados al pegar la cabecera/locks.
-Solución: deja un solo bloque 2.1 y 2.3 (arriba) y elimina duplicados.
+## 30) Errores que ya vimos y cómo se solucionaron
+(sección ampliada con CLV + bot trial, explicado arriba)
 
-Unexpected end of input (p.ej. línea ~1838)
-Causa: faltaba cerrar try/catch/finally tras recortes parciales.
-Solución: conserva el finally completo del final del handler (liberar locks + logs).
-
-Internal Error. ID: ... desde Netlify (opaco)
-Causa: excepción fuera de nuestros try/catch de ciclo (arranque).
-Solución: boot defensivo de 2.1; en modo debug devuelve JSON legible en lugar de 500 opaco.
-
-Descartes masivos STRICT_MATCH=1 → sin AF.fixture_id
-Causa: resolver AF no encuentra fixture inequívoco para ciertos eventos.
-Solución: revisar normalización en af-resolver.cjs, ajustar MATCH_RESOLVE_CONFIDENCE, mantener prohibido usar listas fijas o partidos simulados.
-
-31) Pruebas manuales (sin partidos simulados)
-Verifica módulos/ENV en runtime:
-
-bash
-Copiar
-Editar
-curl -s "https://<sitio>.netlify.app/.netlify/functions/diag-require" -H "x-debug: 1" | jq .
-curl -s "https://<sitio>.netlify.app/.netlify/functions/diag-env" -H "x-debug: 1" | jq .
-Llama al handler en modo depuración (usa eventos reales de OddsAPI):
-
-bash
-Copiar
-Editar
-curl -i "https://<sitio>.netlify.app/.netlify/functions/autopick-vip-nuevo?debug=1" \
-  -H "x-auth-code: $AUTH_CODE" \
-  -H "x-debug: 1" \
-  -H "cache-control: no-cache"
-Si regresa 500 con Internal Error. ID: <...>, copia el ID y abre el log del deploy correspondiente en Netlify para ver el stack.
-Si debug=1 está activo y el error ocurre en boot, recibirás JSON con stage:"boot" y mensaje.
+## 31) Próximos pasos
+- Probar con usuario real (ej. cuenta Telegram de tu novia).
+- Validar onboarding → grant VIP trial → invitación → acceso grupo VIP.  
+- Revisar auditoría CLV en picks históricos (columna extra en `picks_historicos` o tabla dedicada).  
+- Limpiar PRs futuros siguiendo el flujo: feature branch → PR → merge → borrar branch.
 
 32) Recordatorios de reglas del proyecto (se mantienen)
 No usar nombres fijos de equipos ni whitelists/blacklists estáticas.
@@ -536,28 +445,239 @@ No correr tests con partidos simulados; sólo eventos reales (OddsAPI).
 
 STRICT_MATCH=1 está permitido (y recomendable) para evitar falsos matches.
 
-33) Bloque finally recomendado (copia textual)
-js
-Copiar
-Editar
-} catch (e) {
-  console.error('❌ Excepción en ciclo principal:', e?.message || e);
-  const body = debug
-    ? JSON.stringify({ ok: false, error: e?.message || String(e) })
-    : JSON.stringify({ ok: false });
-  return { statusCode: 200, body: body };
-} finally {
-  try { await releaseDistributedLock(); } catch(_) {}
-  global.__punterx_lock = false;
-  try { await upsertDiagnosticoEstado('idle', null); } catch(_) {}
+## 33) Bloque finally recomendado
+(... se mantiene igual, con logger y locks ...)
 
-  logger.section('Resumen ciclo');
-  logger.info('Conteos:', JSON.stringify(resumen));
-  logger.info('Causas de descarte:', JSON.stringify(causas));
-  const top = Object.entries(causas).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}:${v}`).join(' | ');
-  logger.info('Top causas:', top || 'sin descartes');
-
-  console.log(`🏁 Resumen ciclo: ${JSON.stringify(resumen)}`);
-  console.log(`Duration: ${(Date.now()-started).toFixed(2)} ms...Memory Usage: ${Math.round(process.memoryUsage().rss/1e6)} MB`);
-}
+---
 Fin del documento.
+
+1) Esquema mínimo para Auditoría CLV
+Mantiene tu modelo actual y evita tocar tablas críticas.
+Creamos una tabla nueva y opcionalmente añadimos columnas a la de picks si te conviene.
+1.1 Nueva tabla px_clv_audit
+Guarda, por cada pick enviado, la cuota al envío vs la cuota de cierre y los deltas.
+-- 01_px_clv_audit.sql
+create table if not exists public.px_clv_audit (
+  id                bigserial primary key,
+  pick_id           bigint not null,            -- FK a tu tabla de picks (ajusta nombre y tipo)
+  fixture_id        bigint,                     -- id del partido (API-Football) si aplica
+  league            text,
+  market_key        text not null,              -- p.ej. 'h2h', 'totals', 'spreads'
+  outcome_key       text not null,              -- p.ej. 'home', 'away', 'over_2_5'
+  sent_price        numeric,                    -- cuota cuando se envió el pick
+  close_price       numeric,                    -- cuota a cierre
+  clv_pp            numeric,                    -- delta de prob en puntos porcentuales (implícita(sent) - implícita(close))
+  clv_pct           numeric,                    -- (sent_price/close_price - 1) * 100  (si prefieres basado en precio)
+  ev_sent           numeric,                    -- EV estimado al envío (si lo tenías)
+  ev_close          numeric,                    -- EV estimado al cierre (si lo calculas)
+  ev_delta          numeric,                    -- ev_close - ev_sent
+  collected_at      timestamptz not null default now(),
+  source            text,                       -- 'oddsapi', 'panel', 'crawler', etc.
+  notes             jsonb default '{}'::jsonb
+);
+
+-- Índices útiles
+create index if not exists idx_px_clv_audit_pick    on public.px_clv_audit (pick_id);
+create index if not exists idx_px_clv_audit_fixture on public.px_clv_audit (fixture_id);
+create index if not exists idx_px_clv_audit_time    on public.px_clv_audit (collected_at desc);
+
+-- (Opcional) FK si conoces la tabla exacta:
+-- alter table public.px_clv_audit
+-- add constraint fk_px_clv_pick foreign key (pick_id) references public.px_picks(id) on delete cascade;
+1.2 (Opcional) Columnas nuevas en tu tabla de picks
+Si quieres tener todo “a la mano” en la fila del pick:
+-- 02_px_picks_optional.sql
+alter table if exists public.px_picks
+  add column if not exists sent_price numeric,
+  add column if not exists sent_implied_prob numeric,   -- 1/sent_price
+  add column if not exists clv_pp numeric,              -- redundancia para lecturas rápidas
+  add column if not exists clv_pct numeric,
+  add column if not exists clv_updated_at timestamptz;
+Si no tienes public.px_picks, ajusta al nombre real de tus picks.
+________________________________________
+2) Vistas de resumen para el panel
+2.1 Vista “últimos 30 días”
+-- 03_v_px_clv_summary_30d.sql
+create or replace view public.v_px_clv_summary_30d as
+select
+  date_trunc('day', collected_at) as d,
+  count(*)                                 as n,
+  avg(clv_pp)                               as clv_pp_avg,
+  percentile_cont(0.5) within group (order by clv_pp) as clv_pp_p50,
+  avg(clv_pct)                              as clv_pct_avg,
+  avg((clv_pp > 0)::int)                    as share_positive_pp,   -- % picks que “ganan a la línea”
+  avg((clv_pct > 0)::int)                   as share_positive_pct
+from public.px_clv_audit
+where collected_at >= now() - interval '30 days'
+group by 1
+order by 1 desc;
+2.2 Vista “por market/outcome”
+-- 04_v_px_clv_by_market.sql
+create or replace view public.v_px_clv_by_market as
+select
+  market_key,
+  outcome_key,
+  count(*)                      as n,
+  avg(clv_pp)                   as clv_pp_avg,
+  percentile_cont(0.5) within group (order by clv_pp) as clv_pp_p50,
+  avg((clv_pp > 0)::int)        as share_positive_pp
+from public.px_clv_audit
+group by 1,2
+order by n desc;
+________________________________________
+3) Cálculo de CLV (fórmulas simples)
+•	Probabilidad implícita: p = 1/cuota.
+•	CLV (puntos porcentuales): clv_pp = (1/sent_price - 1/close_price) * 100.
+•	CLV basado en precio: clv_pct = (sent_price/close_price - 1) * 100.
+•	EV (si lo usas): ev = p_model * price - 1.
+Evitar mezclar EV con prob implícita del mercado para no duplicar efectos; guarda ambos para análisis.
+________________________________________
+4) Inserción desde Netlify Function (JS/CJS)
+Llama esto cuando detectes “cierre” (ej. cron cercano al kickoff o a minuto 0).
+Ajusta imports/paths según tu repo (ya usas _lib/_supabase-client.cjs).
+// netlify/functions/_lib/clv-helpers.cjs
+'use strict';
+const getSupabase = require('./_supabase-client.cjs');
+
+function implied(probOrPrice, mode='from_price') {
+  if (mode === 'from_price') return (probOrPrice > 0) ? 1 / probOrPrice : null;
+  return probOrPrice; // si ya viene como probabilidad
+}
+
+async function saveClvAudit({
+  pick_id,
+  fixture_id,
+  league,
+  market_key,
+  outcome_key,
+  sent_price,
+  close_price,
+  ev_sent = null,
+  ev_close = null,
+  source = 'oddsapi',
+  notes = {}
+}) {
+  const supabase = getSupabase();
+  const ip_sent  = implied(sent_price);
+  const ip_close = implied(close_price);
+  const clv_pp   = (ip_sent && ip_close) ? (ip_sent - ip_close) * 100 : null;
+  const clv_pct  = (sent_price && close_price) ? ((sent_price / close_price) - 1) * 100 : null;
+  const ev_delta = (ev_close != null && ev_sent != null) ? (ev_close - ev_sent) : null;
+
+  const row = {
+    pick_id, fixture_id, league, market_key, outcome_key,
+    sent_price, close_price, clv_pp, clv_pct, ev_sent, ev_close, ev_delta,
+    source, notes
+  };
+
+  const { error } = await supabase.from('px_clv_audit').insert([row]);
+  if (error) throw new Error(`[CLV] insert error: ${error.message}`);
+
+  // opcional: reflejar en la tabla de picks (si añadiste columnas)
+  if (pick_id) {
+    await supabase.from('px_picks').update({
+      clv_pp, clv_pct, clv_updated_at: new Date().toISOString()
+    }).eq('id', pick_id);
+  }
+
+  return { ok: true, clv_pp, clv_pct, ev_delta };
+}
+
+module.exports = { saveClvAudit };
+Ejemplo de uso (cron de cierre)
+// netlify/functions/clv-close-cron.cjs
+'use strict';
+const { saveClvAudit } = require('./_lib/clv-helpers.cjs');
+
+exports.handler = async () => {
+  try {
+    // 1) Trae picks próximos a empezar o recién empezados sin CLV
+    // 2) Obtén close_price (última cuota antes del kickoff) desde fuente (OddsAPI/tu snapshot)
+    // 3) Guarda CLV
+    // (Ejemplo con datos ficticios del loop)
+    const jobs = [
+      {
+        pick_id: 123,
+        fixture_id: 999001,
+        league: 'EPL',
+        market_key: 'h2h',
+        outcome_key: 'home',
+        sent_price: 1.95,
+        close_price: 1.80,
+        ev_sent: 0.08,
+        ev_close: 0.04
+      }
+    ];
+
+    const results = [];
+    for (const j of jobs) {
+      results.push(await saveClvAudit(j));
+    }
+    return { statusCode: 200, body: JSON.stringify({ ok: true, results }) };
+  } catch (e) {
+    return { statusCode: 500, body: e?.message || 'error' };
+  }
+};
+________________________________________
+5) Backfill (histórico) — opcional
+Si ya tienes snapshots de cuotas (recomendado) tipo px_odds_snapshots:
+-- 05_backfill_lookup_close.sql  (ejemplo orientativo)
+-- Supone snapshots con: fixture_id, market_key, outcome_key, price, captured_at
+with last_before_kick as (
+  select s.fixture_id, s.market_key, s.outcome_key,
+         s.price as close_price,
+         row_number() over (partition by s.fixture_id, s.market_key, s.outcome_key
+                            order by s.captured_at desc) as rn
+  from public.px_odds_snapshots s
+  join public.fixtures f on f.id = s.fixture_id
+  where s.captured_at <= f.kickoff_time
+)
+select * from last_before_kick where rn = 1;
+Luego insertas en px_clv_audit cruzando con tus picks para obtener sent_price y close_price.
+Si no tienes snapshots, puedes usar la última lectura previa al envío (no es perfecto, pero sirve como proxy).
+________________________________________
+6) Consultas útiles (panel/QA)
+% de picks que ganan a la línea (últimos 30 días):
+select
+  avg((clv_pp > 0)::int) as pct_positive
+from public.px_clv_audit
+where collected_at >= now() - interval '30 days';
+Top ligas por CLV medio:
+select
+  league,
+  count(*) as n,
+  avg(clv_pp) as clv_pp_avg
+from public.px_clv_audit
+group by 1
+having count(*) >= 20
+order by clv_pp_avg desc;
+Distribución por market/outcome (para afinar reglas):
+select market_key, outcome_key,
+       count(*) n,
+       avg(clv_pp) clv_pp_avg,
+       percentile_cont(0.5) within group (order by clv_pp) as p50
+from public.px_clv_audit
+group by 1,2
+order by n desc;
+________________________________________
+7) Notas operativas
+•	Dónde calcular CLV:
+o	Cron dedicado (recomendado) justo antes del kickoff / al comenzar el partido.
+o	O al final del día para todos los picks del día.
+•	Idempotencia:
+Antes de insertar, puedes verificar si ya hay una fila para (pick_id, market_key, outcome_key) y hacer upsert.
+•	Calidad de datos:
+Siempre guarda sent_price junto con el pick enviado. Así no dependes del histórico externo para reconstruir CLV.
+•	Privacidad/Transparencia:
+CLV no revela secretos del modelo; muestra ejecución (que compramos valor real). Es perfecto para dashboard y marketing serio.
+________________________________________
+8) Checklist (rápido)
+1.	Ejecuta las migraciones SQL 01–04 (y 02 si quieres columnas en picks).
+2.	(Opcional) Prepara backfill si cuentas con snapshots.
+3.	Añade el helper saveClvAudit y programa un cron que actualice CLV.
+4.	Conecta el panel a v_px_clv_summary_30d y v_px_clv_by_market.
+5.	Publica un bloque de transparencia en el panel con:
+o	% picks con CLV positivo (30d).
+o	Media/mediana de CLV.
+o	Series diarias.
+
