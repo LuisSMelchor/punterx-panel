@@ -5,7 +5,7 @@
 try {
   if (typeof fetch === 'undefined') {
     // node-fetch v2 en CJS
-    global.fetch = require('node-fetch');
+    global.fetch = require('global.fetch');
   }
 } catch (_) { /* no romper por el polyfill */ }
 
