@@ -1,27 +1,27 @@
 // netlify/functions/admin-grant-vip.cjs
 'use strict';
 
-// Capa de usuarios (ya creada)
-const { grantVipByTgId, revokeVipByTgId } = require('./_lib/_users.cjs');
-// Envío DM directo (lo añadiste en send.js)
+const { grantVipByTgId, revokeVipByTgId, getUserIdByTgId } = require('./_lib/_users.cjs');
 const { tgSendDM } = require('./send.js');
 
 exports.handler = async (event) => {
   try {
-    if (event.httpMethod !== 'POST') {
-      return { statusCode: 405, body: 'Method Not Allowed' };
-    }
+    if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
 
     const { AUTH_CODE } = process.env;
     const body = JSON.parse(event.body || '{}');
-
-    if (!AUTH_CODE || body.auth !== AUTH_CODE) {
-      return { statusCode: 401, body: 'Unauthorized' };
-    }
+    if (!AUTH_CODE || body.auth !== AUTH_CODE) return { statusCode: 401, body: 'Unauthorized' };
 
     const { tg_id, action, plan_code = 'VIP', days = 30, notify = true } = body;
-    if (!tg_id || !action) {
-      return { statusCode: 400, body: 'tg_id y action requeridos' };
+    if (!tg_id || !action) return { statusCode: 400, body: 'tg_id y action requeridos' };
+
+    // ✅ Política estricta: no crear si no existe
+    const userId = await getUserIdByTgId(tg_id);
+    if (!userId) {
+      return {
+        statusCode: 404,
+        body: JSON.stringify({ ok: false, error: 'user_not_found', tg_id })
+      };
     }
 
     if (action === 'grant') {
@@ -32,9 +32,7 @@ exports.handler = async (event) => {
           const msg = buildVipWelcomeMessage({ days, plan_code });
           const res = await tgSendDM(tg_id, msg);
           dm = !!res?.ok;
-        } catch (e) {
-          console.warn('[admin-grant-vip] DM welcome error:', e?.message || e);
-        }
+        } catch (e) {}
       }
       return { statusCode: 200, body: JSON.stringify({ ok, dm }) };
     }
@@ -47,9 +45,7 @@ exports.handler = async (event) => {
           const msg = buildVipGoodbyeMessage();
           const res = await tgSendDM(tg_id, msg);
           dm = !!res?.ok;
-        } catch (e) {
-          console.warn('[admin-grant-vip] DM revoke error:', e?.message || e);
-        }
+        } catch (e) {}
       }
       return { statusCode: 200, body: JSON.stringify({ ok, dm }) };
     }
@@ -59,6 +55,8 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: e?.message || 'error' };
   }
 };
+
+// … (deja tus funciones buildVipWelcomeMessage / buildVipGoodbyeMessage igual)
 
 /**
  * Mensaje de bienvenida VIP (HTML)
