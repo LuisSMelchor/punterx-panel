@@ -17,7 +17,7 @@ try {
 const OpenAI = require('openai');
 const fs = require('fs');
 const path = require('path');
-const { resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
+const { afApi, resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
 // Corazonada (tu módulo ya existente)
 const { computeCorazonada } = require('./_lib/_corazonada.cjs');
 const { createLogger } = require('./_lib/_logger.cjs');
