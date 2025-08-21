@@ -19,6 +19,7 @@ const {
   TELEGRAM_VIP_GROUP_ID    // VIP (grupo) preferente
 } = process.env;
 
+const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'PunterXBot';
 const VIP_CHAT_ID = TELEGRAM_VIP_GROUP_ID || TELEGRAM_GROUP_ID || null;
 const TG_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 const T_NET = 8000;
@@ -526,7 +527,7 @@ async function sendPinnedFree({ pin = true } = {}) {
   const text = buildPinnedFreeMessage();
   const msg = await tgSendText(TELEGRAM_CHANNEL_ID, text, {
     reply_markup: {
-      inline_keyboard: [[{ text: "🎯 Activar prueba VIP 15 días", url: "https://t.me/PunterXBot?start=vip15" }]]
+      inline_keyboard: [[{ text: "🎯 Activar prueba VIP 15 días", url: `https://t.me/${TELEGRAM_BOT_USERNAME}?start=vip15` }]]
     }
   });
   if (pin) await tgPin(TELEGRAM_CHANNEL_ID, msg.message_id, true);
