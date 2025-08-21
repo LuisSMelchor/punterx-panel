@@ -8,12 +8,12 @@ exports.handler = async () => {
   }
 
   // Requiere LOCALES (estáticos para que esbuild los detecte)
-  check('_logger',           () => require('./_logger.cjs'));
-  check('_diag_core',        () => require('./_diag-core-v4.cjs'));
-  check('_supabase_client',  () => require('./_supabase-client.cjs'));
-  check('_telemetry',        () => require('./_telemetry.cjs'));
-  check('_users',            () => require('./_users.cjs'));
-  check('corazonada',        () => require('./_corazonada.cjs'));
+  check('_logger',           () => require('./_lib/_logger.cjs'));
+  check('_diag_core',        () => require('./_lib/_diag-core-v4.cjs'));
+  check('_supabase_client',  () => require('./_lib/_supabase-client.cjs'));
+  check('_telemetry',        () => require('./_lib/_telemetry.cjs'));
+  check('_users',            () => require('./_lib/_users.cjs'));
+  check('corazonada',        () => require('./_lib/_corazonada.cjs'));
   check('af_resolver',       () => require('./_lib/af-resolver.cjs'));
 
   // Paquetes externos

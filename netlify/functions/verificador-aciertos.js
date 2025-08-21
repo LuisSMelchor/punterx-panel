@@ -22,7 +22,7 @@ try {
 } catch (_) { /* no-op */ }
 // --- FIN BLINDAJE RUNTIME ---
 
-const getSupabase = require('./_supabase-client.cjs');
+const getSupabase = require('./_lib/_supabase-client.cjs');
 
 const RESULTADOS_VALIDOS = new Set(['ganado', 'perdido', 'nulo', 'pendiente']);
 

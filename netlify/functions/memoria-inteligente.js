@@ -29,7 +29,7 @@ try {
 } catch (_) { /* no-op */ }
 // --- FIN BLINDAJE RUNTIME ---
 
-const getSupabase = require('./_supabase-client.cjs');
+const getSupabase = require('./_lib/_supabase-client.cjs');
 
 const TABLE = process.env.MEMORIA_TABLE || 'memoria_ia';
 const DEFAULT_LIMIT = 50;

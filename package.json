@@ -12,10 +12,10 @@
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
-    "@supabase/supabase-js": "^2.54.0",
+    "@supabase/supabase-js": "2.55.0",
     "dayjs": "^1.11.13",
     "dotenv": "^16.6.1",
-    "node-fetch": "^2.7.0",
-    "openai": "^5.12.0"
+    "node-fetch": "3.3.2",
+    "openai": "4.104.0"
   }
 }

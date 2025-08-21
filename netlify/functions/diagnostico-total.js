@@ -1,7 +1,7 @@
 // netlify/functions/diagnostico-total.js
 'use strict';
 
-const { fmtSecs } = require('./_logger.cjs');
+const { fmtSecs } = require('./_lib/_logger.cjs');
 
 function html(layout) {
   return {
@@ -26,7 +26,7 @@ function html(layout) {
 // Intenta obtener el cliente de Supabase tratando distintos exports
 function getSupabase() {
   try {
-    const mod = require('./_supabase-client.cjs');
+    const mod = require('./_lib/_supabase-client.cjs');
     if (!mod) return null;
     if (mod.supabase) return mod.supabase;
     if (mod.client) return mod.client;
