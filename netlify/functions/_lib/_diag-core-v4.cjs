@@ -10,7 +10,7 @@ try {
   }
 } catch (_) {}
 
-const getSupabase = require('./_lib/_supabase-client.cjs');
+const getSupabase = require('./_supabase-client.cjs');
 
 const {
   SUPABASE_URL,
