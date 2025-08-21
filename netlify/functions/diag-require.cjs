@@ -19,7 +19,7 @@ exports.handler = async () => {
   // Paquetes externos
   check('pkg_openai',   () => require('openai'));
   check('pkg_supabase', () => require('@supabase/supabase-js'));
-  check('pkg_fetch',    () => require('node-fetch'));
+  check('pkg_fetch',    () => require('global.fetch'));
 
   return {
     statusCode: 200,
