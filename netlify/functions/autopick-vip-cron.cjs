@@ -3,7 +3,7 @@ const { schedule } = require('@netlify/functions');
 
 async function tick() {
   const base = process.env.URL || process.env.DEPLOY_URL || '';
-  const url  = `${base}/.netlify/functions/autopick-vip-nuevo?cron=1`;
+  const url  = `${base}&tick=202508221958`;
   const headers = { 'x-auth-code': process.env.AUTH_CODE || '' };
 
   const res = await fetch(url, { headers, method: 'GET' });
