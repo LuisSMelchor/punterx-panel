@@ -117,7 +117,7 @@ let openai = null;
 async function ensureSupabase() {
   if (supabase) return supabase;
   assertEnv(); // valida que existan SUPABASE_URL/KEY (y demás) con error entendible
-  const { createClient } = require('@supabase/supabase-js'); // require aquí, no en top-level
+  const { createClient } = await import('@supabase/supabase-js'); // ESM safe dentro del handler
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   return supabase;
 }
