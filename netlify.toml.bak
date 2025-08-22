@@ -62,15 +62,15 @@ external_node_modules = [
 "@netlify/functions"
 ]
 
-# [[scheduled.functions]]
-#   path = "autopick-vip-cron"
-#   schedule = "*/15 * * * *"
+  [[scheduled.functions]]
+  path = "autopick-vip-cron"
+  schedule = "*/15 * * * *"
 
 # ---------------------------------------------------
 
 # Autopick en background (cron frecuente, mismo ritmo)
 # Deshabilitado: consolidamos PRE en una sola función para evitar duplicados
-
+# [[scheduled.functions]]
 # path = "autopick-vip-nuevo-background"
 # schedule = "*/15 * * * *"
 
@@ -164,7 +164,7 @@ external_node_modules = [
   ]
   timeout = 60
 
-
+[[scheduled.functions]]
 function = "check-expirados"
 cron = "0 5 * * *"
 
@@ -203,7 +203,7 @@ cron = "0 5 * * *"
     "node-fetch"
   ]
 
-
+[[scheduled.functions]]
   path = "clv-settle"
   schedule = "*/10 * * * *"
 
