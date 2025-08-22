@@ -14,7 +14,7 @@ try {
 } catch {}
 
 // netlify/functions/autopick-vip-nuevo.cjs
-const OpenAI = require('openai');
+let OpenAICtor = null; // se resuelve por import() cuando se necesite
 const fs = require('fs');
 const path = require('path');
 const { afApi, resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
@@ -125,7 +125,11 @@ async function ensureSupabase() {
 async function ensureOpenAI() {
   if (openai) return openai;
   assertEnv(); // valida OPENAI_API_KEY antes de instanciar
-  openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+  if (!OpenAICtor) {
+    const m = await import('openai'); // ESM → import dinámico
+    OpenAICtor = m.default || m.OpenAI;
+  }
+  openai = new OpenAICtor({ apiKey: OPENAI_API_KEY });
   return openai;
 }
 
