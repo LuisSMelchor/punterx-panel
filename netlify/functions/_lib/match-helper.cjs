@@ -140,8 +140,9 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
         try {
           const TIME_PAD_MIN = Number(process.env.AF_MATCH_TIME_PAD_MIN || 15); // ±15 min por defecto
           const THRESH = Number(process.env.AF_MATCH_SIM_THRESHOLD || 0.88);   // 0.88 por defecto
-          const rFx = await afApi('/fixtures', { date: dateYMD }); // Fixtures del día (UTC)
+          const rFx = await afApi('/fixtures', { date: dateYMD, timezone: 'UTC' }); // Fixtures del día (forzado a UTC)
           const list = Array.isArray(rFx?.response) ? rFx.response : [];
+
           if (list.length) {
             const t0 = commence.getTime();
             const padMs = TIME_PAD_MIN * 60 * 1000;
@@ -154,6 +155,7 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
               const dt = d.getTime();
               return Math.abs(dt - t0) <= padMs;
             });
+            console.log('[MATCH-HELPER] Fallback time+sim cand=', near.length, '±', TIME_PAD_MIN, 'min', 'date', dateYMD);
             
             // escoge por mayor score conjunto (home+away) bajo umbral mínimo por lado
             let best = null;
@@ -179,6 +181,13 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
             }
             if (best?.fx?.fixture?.id) {
               const hit = best.fx;
+              
+              try {
+                const hName = hit?.teams?.home?.name;
+                const aName = hit?.teams?.away?.name;
+                console.log('[MATCH-HELPER] Fallback time+sim HIT', { fixture: hit?.fixture?.id, h: hName, a: aName, sum: (typeof best.sum === 'number' ? best.sum.toFixed(3) : best.sum) });
+              } catch {}
+              
               return {
                 ok: true,
                 fixture_id: hit.fixture.id,
