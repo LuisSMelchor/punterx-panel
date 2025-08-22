@@ -12,12 +12,6 @@ async function tick() {
 }
 
 exports.handler = schedule('*/15 * * * *', async () => {
-    // Evita ejecuciones duplicadas en deploy previews / branch deploys
-    const ctx = (process.env.CONTEXT || '').toLowerCase();
-    if (ctx && ctx !== 'production') {
-      console.log('[cron] skip — CONTEXT=', ctx);
-      return;
-    }
-    try { await tick(); }
+  try { await tick(); }
   catch (e) { console.error('[cron error]', e && (e.stack || e.message || e)); }
 });
