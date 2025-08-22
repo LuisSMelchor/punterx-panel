@@ -165,8 +165,12 @@ external_node_modules = [
   timeout = 60
 
 
+
+[[scheduled.functions]]
 function = "check-expirados"
 cron = "0 5 * * *"
+
+
 
 [functions."diag-require"]
   included_files = [
@@ -197,15 +201,11 @@ cron = "0 5 * * *"
     "node-fetch"
   ]
 
-[functions."clv-settle"]
-  external_node_modules = [
-    "@supabase/supabase-js",
-    "node-fetch"
-  ]
 
 
-  path = "clv-settle"
-  schedule = "*/10 * * * *"
+[[scheduled.functions]]
+path = "clv-settle"
+schedule = "*/10 * * * *"
 
 
 # ----------------
