@@ -19,6 +19,74 @@ const ensureUtcDate = (v) => {
   return isNaN(+d) ? null : d;
 };
 
+// --- Helpers locales de similaridad (no exportados) ---
+
+// Jaro-Winkler (implementación compacta)
+function _jaro(a = '', b = '') {
+  if (!a || !b) return 0;
+  const s1 = a, s2 = b;
+  const mDist = Math.floor(Math.max(s1.length, s2.length) / 2) - 1;
+  const s1Match = new Array(s1.length).fill(false);
+  const s2Match = new Array(s2.length).fill(false);
+  let matches = 0, transpositions = 0;
+  for (let i = 0; i < s1.length; i++) {
+    const start = Math.max(0, i - mDist);
+    const end = Math.min(i + mDist + 1, s2.length);
+    for (let j = start; j < end; j++) {
+      if (s2Match[j] || s1[i] !== s2[j]) continue;
+      s1Match[i] = true; s2Match[j] = true; matches++; break;
+    }
+  }
+  if (!matches) return 0;
+  let k = 0;
+  for (let i = 0; i < s1.length; i++) {
+    if (!s1Match[i]) continue;
+    while (!s2Match[k]) k++;
+    if (s1[i] !== s2[k]) transpositions++;
+    k++;
+  }
+  const jaro = (matches / s1.length + matches / s2.length + (matches - transpositions / 2) / matches) / 3;
+  return jaro;
+}
+
+function _jaroWinkler(a = '', b = '', p = 0.1) {
+  const j = _jaro(a, b);
+  let l = 0;
+  for (let i = 0; i < Math.min(4, a.length, b.length); i++) {
+    if (a[i] === b[i]) l++; else break;
+  }
+  return j + l * p * (1 - j);
+}
+
+// Similaridad por bigramas (Dice)
+function _bigramDice(a = '', b = '') {
+  if (!a || !b) return 0;
+  const grams = s => {
+    const g = [];
+    for (let i = 0; i < s.length - 1; i++) g.push(s.slice(i, i + 2));
+    return g;
+  };
+  const A = grams(a), B = grams(b);
+  if (!A.length || !B.length) return 0;
+  const setB = new Map();
+  B.forEach(x => setB.set(x, (setB.get(x) || 0) + 1));
+  let overlap = 0;
+  for (const x of A) {
+    const c = setB.get(x);
+    if (c > 0) { overlap++; setB.set(x, c - 1); }
+  }
+  return (2 * overlap) / (A.length + B.length);
+}
+
+function _simScore(aRaw = '', bRaw = '') {
+  const a = strip((aRaw || '').toLowerCase());
+  const b = strip((bRaw || '').toLowerCase());
+  if (!a || !b) return 0;
+  const jw = _jaroWinkler(a, b);
+  const dice = _bigramDice(a, b);
+  return Math.max(jw, dice);
+}
+
 // Busca ID de equipo en API‑Football por nombre libre (global, sin listas fijas)
 async function fetchAFTeamId(afApi, rawName) {
   const q = strip(rawName || '');
@@ -63,12 +131,71 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
       fetchAFTeamId(afApi, home),
       fetchAFTeamId(afApi, away),
     ]);
-
+    
     if (!homeId || !awayId) {
       console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
+      
+      // --- Fallback opcional por tiempo + similaridad ---
+      if (String(process.env.AF_MATCH_TIME_SIM) === '1') {
+        try {
+          const TIME_PAD_MIN = Number(process.env.AF_MATCH_TIME_PAD_MIN || 15); // ±15 min por defecto
+          const THRESH = Number(process.env.AF_MATCH_SIM_THRESHOLD || 0.88);   // 0.88 por defecto
+          const rFx = await afApi('/fixtures', { date: dateYMD }); // Fixtures del día (UTC)
+          const list = Array.isArray(rFx?.response) ? rFx.response : [];
+          if (list.length) {
+            const t0 = commence.getTime();
+            const padMs = TIME_PAD_MIN * 60 * 1000;
+            
+            // filtra por ventana de tiempo
+            const near = list.filter(fx => {
+              const dStr = fx?.fixture?.date;
+              const d = ensureUtcDate(dStr);
+              if (!d) return false;
+              const dt = d.getTime();
+              return Math.abs(dt - t0) <= padMs;
+            });
+            
+            // escoge por mayor score conjunto (home+away) bajo umbral mínimo por lado
+            let best = null;
+            for (const fx of near) {
+              const h = fx?.teams?.home?.name || '';
+              const a = fx?.teams?.away?.name || '';
+              const scoreH = _simScore(home, h);
+              const scoreA = _simScore(away, a);
+              const scoreHrev = _simScore(home, a); // por si OddsAPI invirtió local/visita
+              const scoreArev = _simScore(away, h);
+              
+              // caso normal
+              let ok = (scoreH >= THRESH && scoreA >= THRESH);
+              let sum = scoreH + scoreA;
+              
+              // caso invertido
+              if (!ok && (scoreHrev >= THRESH && scoreArev >= THRESH)) {
+                ok = true;
+                sum = scoreHrev + scoreArev;
+              }
+              if (!ok) continue;
+              if (!best || sum > best.sum) best = { fx, sum };
+            }
+            if (best?.fx?.fixture?.id) {
+              const hit = best.fx;
+              return {
+                ok: true,
+                fixture_id: hit.fixture.id,
+                league_id: hit.league?.id || null,
+                country: hit.league?.country || null,
+              };
+            }
+          }
+        } catch (e) {
+          console.warn('[MATCH-HELPER] Fallback tiempo+similitud falló', e?.message || e);
+        }
+      }
+      
+      // si el fallback está apagado o no hubo match sólido:
       return { ok: false, reason: 'sin_team_id' };
     }
-
+    
     // 2) Fixtures del día para el homeId; cruzar rival
     const fx = await afApi('/fixtures', { date: dateYMD, team: homeId, timezone: 'UTC' });
     const list = Array.isArray(fx?.response) ? fx.response : [];
