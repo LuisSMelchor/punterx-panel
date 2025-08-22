@@ -43,11 +43,12 @@
 # Autopick pre-match (cron frecuente)
 # --------------------------------------
 [functions."autopick-vip-nuevo"]
-  # CRON: cada 15 minutos (ajusta si usabas otro)
+  # CRON: cada 15 minutos
+  schedule = "*/15 * * * *"
   included_files = [
     "netlify/functions/_supabase-client.cjs",
-    "netlify/functions/_logger.cjs",        # <— NUEVO
-    "netlify/functions/_corazonada.cjs",    # <— NUEVO
+    "netlify/functions/_logger.cjs",
+    "netlify/functions/_corazonada.cjs",
     "prompts_punterx.md",
     "netlify/functions/_lib/**"
   ]
@@ -57,11 +58,12 @@
     "node-fetch"
   ]
 
-[functions."autopick-vip-cron"]
-  external_node_modules = ["@netlify/functions"]
-[[scheduled.functions]]
-  path = "autopick-vip-cron"
-  schedule = "*/15 * * * *"
+
+#[functions."autopick-vip-cron"]
+  #external_node_modules = ["@netlify/functions"]
+#[[scheduled.functions]]
+#path = "autopick-vip-cron"
+#schedule = "*/15 * * * *"
 
 
 # ---------------------------------------------------
