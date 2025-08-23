@@ -423,7 +423,8 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 
 // =============== NETLIFY HANDLER ===============
 exports.handler = async (event, context) => {
-  try {
+  try { const q = (event && event.queryStringParameters) || {}; if (q.cron) { q.manual = "1"; delete q.cron; } } catch (e) {}
+try {
     const q = (event && event.queryStringParameters) || {};
     const h = (event && event.headers) || {};
     if ((q.debug === "1" || h["x-debug"] === "1") && q.ping === "1") {
