@@ -273,7 +273,7 @@ curl -s "https://<tu-sitio>.netlify.app/.netlify/functions/diag-require" -H "x-d
 curl -s "https://<tu-sitio>.netlify.app/.netlify/functions/diag-env" -H "x-debug: 1" | jq .
 
 # Forzar modo depuración del handler (cuerpo JSON en errores de boot)
-curl -i "https://<tu-sitio>.netlify.app/.netlify/functions/autopick-vip-nuevo?debug=1" \
+curl -i "https://<tu-sitio>.netlify.app/.netlify/functions/autopick-vip-run2?debug=1" \
   -H "x-auth-code: $AUTH_CODE" \
   -H "x-debug: 1" \
   -H "cache-control: no-cache"

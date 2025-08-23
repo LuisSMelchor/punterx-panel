@@ -1,4 +1,4 @@
-// netlify/functions/autopick-vip-nuevo.cjs
+// netlify/functions/autopick-vip-run2.cjs
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–55 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
 // + Corazonada IA integrada (helpers, cálculo, visualización y guardado en Supabase)
@@ -13,7 +13,7 @@ try {
   process.on('unhandledRejection', e => console.error('[UNHANDLED]', e && (e.stack || e.message || e)));
 } catch {}
 
-// netlify/functions/autopick-vip-nuevo.cjs
+// netlify/functions/autopick-vip-run2.cjs
 let OpenAICtor = null; // se resuelve por import() cuando se necesite
 const fs = require('fs');
 const path = require('path');
@@ -142,7 +142,7 @@ function minutesUntilKickoff(ts) {
 async function upsertDiagnosticoEstado(status, details) {
   try {
     const payload = {
-      fn_name: 'autopick-vip-nuevo',
+      fn_name: 'autopick-vip-run2',
       status,
       details: details || null,
       updated_at: new Date().toISOString()
@@ -159,7 +159,7 @@ async function upsertDiagnosticoEstado(status, details) {
 async function registrarEjecucion(data) {
   try {
     const row = Object.assign({
-      function_name: 'autopick-vip-nuevo',
+      function_name: 'autopick-vip-run2',
       created_at: new Date().toISOString()
     }, data);
     const { error } = await supabase

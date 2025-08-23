@@ -17,8 +17,8 @@ const TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15000);
 
 // Endpoints a probar
 const targets = [
-  { path: '/.netlify/functions/autopick-vip-nuevo', label: 'autopick-vip-nuevo', expectStatuses: [200, 204] },
-  { path: '/.netlify/functions/autopick-vip-nuevo-background', label: 'autopick-vip-nuevo-background', expectStatuses: [202, 200, 204] },
+  { path: '/.netlify/functions/autopick-vip-run2', label: 'autopick-vip-run2', expectStatuses: [200, 204] },
+  { path: '/.netlify/functions/autopick-vip-run2-background', label: 'autopick-vip-run2-background', expectStatuses: [202, 200, 204] },
 ];
 
 function timeout(ms) {
