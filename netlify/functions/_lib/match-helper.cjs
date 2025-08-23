@@ -120,7 +120,13 @@ async function resolveTeamsAndLeague(evt, {
 afApi } = {}) {
   const TIME_PAD_MIN = parseInt(process.env.AF_TIME_PAD_MIN || "10", 10);
   const SIM_THR = parseFloat(process.env.AF_MIN_SIM || "0.86");
-;try { if (process.env.DEBUG_TRACE === '1') console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR }); } catch {}
+;(()=>{ try { 
+  if (process.env.DEBUG_TRACE === '1') {
+    console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR });
+  }
+} catch(_){} })();
+;try { if (process.env.DEBUG_TRACE === '1')
+} catch {}
 
   try {
     const home = evt?.home_team || evt?.home || evt?.teams?.home?.name;
