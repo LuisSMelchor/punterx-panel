@@ -114,8 +114,9 @@ async function fetchAFTeamId(afApi, rawName) {
  * @returns {Object} { ok, fixture_id?, league_id?, country?, reason? }
  */
 async function resolveTeamsAndLeague(evt, {
-  if (typeof DEBUG_TRACE !== 'undefined' ? DEBUG_TRACE : process.env.DEBUG_TRACE === '1') {
-    try { console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR: SIM_THR }); } catch {}
+  /* log perillas (seguro para el bundler) */
+  try { if (process.env.DEBUG_TRACE === '1') { console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR: SIM_THR }); } } catch {}
+); } catch {}
   }
 
 afApi } = {}) {
