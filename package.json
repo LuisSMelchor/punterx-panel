@@ -9,7 +9,7 @@
     "pre": "node netlify/functions/autopick-vip-nuevo.cjs",
     "out": "node netlify/functions/autopick-outrights.cjs",
     "live": "node netlify/functions/autopick-live.cjs --loop",
-    "check:syntax": "node -e \"const fs=require('fs');const p='netlify/functions';(function walk(d){for(const f of fs.readdirSync(d)){const fp=d+'/'+f;const s=fs.statSync(fp);if(s.isDirectory()) walk(fp); else if(/\\.(cjs|js)$/.test(fp)) new Function(fs.readFileSync(fp,'utf8')); }})(p); console.log('Syntax OK');\""
+    "check:syntax": "node -e \"const fs=require('fs');const p='netlify/functions';(function walk(d){for(const f of fs.readdirSync(d)){const fp=d+'/'+f;const s=fs.statSync(fp);if(s.isDirectory()) walk(fp); else if(/\\.(cjs|js)$/.test(fp)){ try{ new Function(fs.readFileSync(fp,'utf8')); } catch(e){ if(e.code==='ENOENT') continue; throw e; } } }})(p); console.log('Syntax OK');\""
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
