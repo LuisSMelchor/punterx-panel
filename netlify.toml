@@ -218,3 +218,6 @@ schedule = "*/15 * * * *"
 [functions.environment]
 AF_MATCH_TIME_SIM = "1"
 DEBUG_TRACE = "1"
+
+[functions.environment]
+MATCH_RESOLVE_CONFIDENCE = "0.6"
