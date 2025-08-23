@@ -45,7 +45,7 @@
 [functions."autopick-vip-run3"]
 [functions."autopick-outrights"]
   # CRON: cada 1 hora (ajusta si usabas otro)
-#   schedule = "0 * * * *"
+  schedule = "0 * * * *"
   included_files = [
     "netlify/functions/_supabase-client.cjs",
     "prompts_punterx.md",
@@ -62,7 +62,7 @@
 # --------------------------------------
 [functions."analisis-semanal"]
   # CRON: lunes 12:00 (ajusta si usabas otro)
-#   schedule = "0 12 * * MON"
+  schedule = "0 12 * * MON"
   included_files = [
     "netlify/functions/_supabase-client.cjs"
   ]
@@ -76,7 +76,7 @@
 # --------------------------------------
 [functions."verificador-aciertos"]
   # CRON: cada 30 minutos (ajusta si usabas otro)
-#   schedule = "*/30 * * * *"
+  schedule = "*/30 * * * *"
   included_files = [
     "netlify/functions/_supabase-client.cjs"
   ]
@@ -90,7 +90,7 @@
 # --------------------------------------
 [functions."memoria-inteligente"]
   # CRON: a los 15 de cada hora (ajusta si usabas otro)
-#   schedule = "15 * * * *"
+  schedule = "15 * * * *"
   included_files = [
     "netlify/functions/_supabase-client.cjs"
   ]
@@ -104,7 +104,7 @@
 # --------------------------------------
 [functions."check-status"]
   # CRON: cada 10 minutos (ajusta si usabas otro)
-#   schedule = "*/10 * * * *"
+  schedule = "*/10 * * * *"
   included_files = [
     "netlify/functions/_supabase-client.cjs"
   ]
@@ -132,7 +132,7 @@
 
 
 
-# [[scheduled.functions]]
+[[scheduled.functions]]
 function = "check-expirados"
 cron = "0 5 * * *"
 
@@ -169,9 +169,9 @@ cron = "0 5 * * *"
 
 
 
-# [[scheduled.functions]]
+[[scheduled.functions]]
 path = "clv-settle"
-# schedule = "*/10 * * * *"
+schedule = "*/10 * * * *"
 
 
 # ----------------
@@ -211,6 +211,6 @@ path = "clv-settle"
     "node-fetch"
   ]
 
-# [[scheduled.functions]]
-# path = "autopick-vip-run2"
-# schedule = "*/15 * * * *"
+[[scheduled.functions]]
+path = "autopick-vip-run2"
+schedule = "*/15 * * * *"
