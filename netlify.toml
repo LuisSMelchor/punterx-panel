@@ -224,5 +224,8 @@ AF_TIME_PAD_MIN = "15"
 AF_MIN_SIM = "0.84"
 MATCH_RESOLVE_CONFIDENCE = "0.5"
 
-[functions.autopick-vip-scheduler]
-schedule = "*/15 * * * *"
+
+[functions.autopick_vip_scheduler]
+  schedule = "*/15 * * * *"
+
+
