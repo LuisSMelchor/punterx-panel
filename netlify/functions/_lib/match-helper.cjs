@@ -232,7 +232,31 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
       }
       
       // si el fallback está apagado o no hubo match sólido:
-      return { ok: false, reason: 'sin_team_id' };
+      
+// Fallback de normalización básica antes de descartar por sin_team_id
+try {
+  const __normalize = (s) => String(s || '')
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(club de futbol|club de fútbol|club deportivo|football club|futbol club|futebol clube|fc|cf|cd|sc|ac|afc|sfc|cfc)\b/g, "")
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+
+  const __byNorm = new Map((list || []).map(t => [__normalize(t.name), t.id]));
+  const __h = __byNorm.get(__normalize(home));
+  const __a = __byNorm.get(__normalize(away));
+
+  if (!homeId && __h) homeId = __h;
+  if (!awayId && __a) awayId = __a;
+
+  if (homeId && awayId) {
+    console.log('[MATCH-HELPER] Normalized match success (pre-return)', { home, away, homeId, awayId });
+    return { ok: true, homeId, awayId, reason: 'normalized' };
+  }
+} catch(e) {
+  console.warn('[MATCH-HELPER] normalize fallback error (pre-return):', e && e.message || e);
+}
+return { ok: false, reason: 'sin_team_id' };
     }
     
     // 2) Fixtures del día para el homeId; cruzar rival
