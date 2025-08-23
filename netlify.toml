@@ -228,7 +228,9 @@ MATCH_RESOLVE_CONFIDENCE = "0.5"
 [functions.autopick_vip_scheduler]
   schedule = "*/15 * * * *"
 
-
-
 [functions.scheduler_bridge_v2]
   schedule = "*/15 * * * *"
+
+[functions.scheduler_bridge_v3]
+  schedule = "*/15 * * * *"
+
