@@ -19,75 +19,44 @@ function httpsGet(u, headers = {}, timeoutMs = 8000) {
   });
 }
 
-function logChunk(label, str, max) {
-  if (!str) return console.log(label, '(sin cuerpo)');
-  const chunk = str.slice(0, max);
-  console.log(label, 'len=', str.length, '\n---8<---\n' + chunk + '\n---8<---');
-}
-
 exports.handler = async function (event) {
-  
-  // fast-path de salud: ?ping=1
-  const __qs = (event && event.queryStringParameters) || {};
-  if (__qs.ping === '1') {
+  try {
+    const qs = (event && event.queryStringParameters) || {};
+    // Fast path de salud
+    if (qs.ping === '1') {
+      return {
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ok: true, ping: "autopick_vip_scheduler (pong)", node: (typeof process!=='undefined'?process.version:undefined) })
+      };
+    }
+
+    const base = (process.env && (process.env.URL || process.env.DEPLOY_PRIME_URL)) || "https://punterx-panel-vip.netlify.app";
+    const u = new URL(`${base}/.netlify/functions/autopick-vip-run2`);
+    if (qs.manual === '1') u.searchParams.set('manual', '1');
+    if (qs.debug  === '1') u.searchParams.set('debug',  '1');
+
+    const r = await httpsGet(u.toString(), { 'x-nf-scheduled': '1' });
+    const raw = r.text || '';
+    let json = null;
+    try { json = JSON.parse(raw); } catch {}
+
+    // Pequeño resumen y un snippet por si no es JSON
     return {
       statusCode: 200,
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ok: true, ping: "scheduler alive (prod)", node: (typeof process!=='undefined'?process.version:undefined) })
-    };
-  }
-try {
-    const qs = (event && event.queryStringParameters) || {};
-    const wantFull = qs.full === '1';
-    const passDebug = qs.debug === '1';
-    const MAX = wantFull ? 10000 : 3000;
-
-    const base =
-      (typeof process !== 'undefined' && process.env && process.env.URL) ||
-      (typeof process !== 'undefined' && process.env && process.env.DEPLOY_PRIME_URL) ||
-      'https://punterx-panel-vip.netlify.app';
-
-    const run2Url = new URL(base + '/.netlify/functions/autopick-vip-run2');
-    run2Url.searchParams.set('from', 'scheduler');
-    // si quieres que SOLO en manual pase debug, usa: if (passDebug) if (passDebug) run2Url.searchParams.set("debug","1")
-    if (passDebug) run2Url.searchParams.set("debug","1");
-
-    const headers = { 'x-nf-scheduled': '1' };
-    let status, body;
-
-    if (globalThis.fetch) {
-      const r = await fetch(run2Url, { headers });
-      status = r.status;
-      body = await r.text();
-    } else {
-      const r = await httpsGet(run2Url.toString(), headers);
-      status = r.status;
-      body = r.text || '';
-    }
-
-    console.log('[scheduler] run2 status', { status });
-    logChunk('[scheduler] run2 body (trunc)', body, MAX);
-
-    let json = null;
-    try { json = JSON.parse(body); } catch {}
-
-    return {
-      statusCode: 200,
-      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         ok: true,
-        triggered: 'run2',
-        status,
+        triggered: "run2",
+        status: r.status,
         resumen: json && json.resumen ? json.resumen : null,
-        raw_snippet: body ? body.slice(0, MAX) : null,
-        trunc: body ? Math.max(0, body.length - MAX) : 0
+        raw_snippet: json ? undefined : raw.slice(0, 4000)
       })
     };
   } catch (e) {
-    console.error('[scheduler] error', e && e.stack || e);
     return {
       statusCode: 500,
-      headers: { 'content-type': 'application/json' },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ ok: false, error: (e && e.message) || String(e) })
     };
   }
