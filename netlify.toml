@@ -197,6 +197,7 @@ schedule = "*/10 * * * *"
 
 
 [functions."autopick-vip-run2"]
+  schedule = "*/15 * * * *"
   included_files = [
     "netlify/functions/_supabase-client.cjs",
     "netlify/functions/_logger.cjs",
@@ -207,8 +208,10 @@ schedule = "*/10 * * * *"
   external_node_modules = [
     "@supabase/supabase-js",
     "openai",
-    "node-fetch"
-  ]
+    ]
+
+
+
 
 [functions."autopick-vip-run2"]
   schedule = "*/15 * * * *"
