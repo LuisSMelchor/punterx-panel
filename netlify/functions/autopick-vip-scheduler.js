@@ -1,30 +1,60 @@
 // Scheduler robusto: siempre JSON, con trazas, y sin dependencias externas.
-exports.handler = async () => {
+// Intenta fetch si existe; si no, usa https nativo.
+const https = require('node:https');
+const { URL } = require('node:url');
+
+function httpsGet(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const opts = {
+      method: 'GET',
+      hostname: u.hostname,
+      path: u.pathname + (u.search || ''),
+      headers,
+    };
+    const req = https.request(opts, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => (data += c));
+      res.on('end', () => resolve({ status: res.statusCode, text: () => Promise.resolve(data) }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+exports.handler = async (event) => {
   try {
     const base =
       process.env.URL ||
       process.env.DEPLOY_PRIME_URL ||
       "https://punterx-panel-vip.netlify.app";
 
-    const url = `${base}/.netlify/functions/autopick-vip-run2?from=scheduler`;
-
-    // Traza temprana para ver si el handler siquiera arranca
-    console.log("[scheduler] start", { node: process.version, base });
-
-    // Usa fetch nativo si existe; si no, reporta claramente
-    const f = globalThis.fetch;
-    if (typeof f !== "function") {
-      console.error("[scheduler] fetch no disponible en runtime");
+    // modo ping para comprobar que el handler SI arranca en el runtime
+    if (event && event.queryStringParameters && event.queryStringParameters.ping === '1') {
+      console.log("[scheduler] ping ok", { node: process.version, base });
       return {
-        statusCode: 500,
+        statusCode: 200,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ok: false, error: "fetch no disponible (Node < 18?)" })
+        body: JSON.stringify({ ok: true, ping: true })
       };
     }
 
-    const res = await f(url, { headers: { "x-nf-scheduled": "1" } });
-    const text = await res.text();
+    const url = `${base}/.netlify/functions/autopick-vip-run2?from=scheduler`;
+    console.log("[scheduler] start", { node: process.version, base });
 
+    let res;
+    const f = globalThis && globalThis.fetch;
+    if (typeof f === 'function') {
+      res = await f(url, { headers: { "x-nf-scheduled": "1" } });
+      // normaliza a interfaz { status, text() }
+      res = { status: res.status, text: () => res.text() };
+    } else {
+      console.log("[scheduler] usando https fallback");
+      res = await httpsGet(url, { "x-nf-scheduled": "1" });
+    }
+
+    const text = await res.text();
     let json = null;
     try { json = JSON.parse(text); } catch {}
 
