@@ -26,7 +26,17 @@ function logChunk(label, str, max) {
 }
 
 exports.handler = async function (event) {
-  try {
+  
+  // fast-path de salud: ?ping=1
+  const __qs = (event && event.queryStringParameters) || {};
+  if (__qs.ping === '1') {
+    return {
+      statusCode: 200,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ok: true, ping: "scheduler alive (prod)", node: (typeof process!=='undefined'?process.version:undefined) })
+    };
+  }
+try {
     const qs = (event && event.queryStringParameters) || {};
     const wantFull = qs.full === '1';
     const passDebug = qs.debug === '1';
@@ -39,8 +49,8 @@ exports.handler = async function (event) {
 
     const run2Url = new URL(base + '/.netlify/functions/autopick-vip-run2');
     run2Url.searchParams.set('from', 'scheduler');
-    // si quieres que SOLO en manual pase debug, usa: if (passDebug) run2Url.searchParams.set('debug','1')
-    run2Url.searchParams.set('debug', passDebug ? '1' : '1');
+    // si quieres que SOLO en manual pase debug, usa: if (passDebug) if (passDebug) run2Url.searchParams.set("debug","1")
+    if (passDebug) run2Url.searchParams.set("debug","1");
 
     const headers = { 'x-nf-scheduled': '1' };
     let status, body;
