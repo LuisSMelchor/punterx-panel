@@ -1,15 +1,13 @@
 // netlify/functions/autopick-vip-scheduler.js
-// Wrapper programado que invoca run2 cada 15 minutos
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+// Wrapper programado en CommonJS que invoca run2 cada 15 minutos
 
-export const config = {
+const run2 = require('./autopick-vip-run2.cjs');
+
+exports.config = {
   schedule: "*/15 * * * *"
 };
 
-export default async (req) => {
-  const run2 = require('./autopick-vip-run2.cjs');
-
+exports.default = async (req) => {
   const event = {
     headers: { 'x-nf-scheduled': '1' },
     queryStringParameters: { manual: '1' }
