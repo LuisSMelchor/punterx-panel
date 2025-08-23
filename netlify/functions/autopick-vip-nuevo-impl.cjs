@@ -642,22 +642,42 @@ try {
             { home: P.home, away: P.away, commence_time: P.commence_time, liga: P.liga || P.sport_title || '' },
             { afApi }
           );
-          if (!rsl.ok) {
-            causas.strict_mismatch++;
-            console.warn(`${traceEvt} STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO (${rsl.reason})`);
-            continue;
-          }
-          P.af_fixture_id = rsl.fixture_id;
-          P.af_league_id  = rsl.league_id;
-          P.af_country    = rsl.country;
-          console.log(`${traceEvt} MATCH OK → fixture_id=${rsl.fixture_id} | league=${rsl.league_id} | country=${rsl.country}`);
+          let infoFromStrict = null;
+if (!rsl.ok) {
+  const infoTry = await enriquecerPartidoConAPIFootball(P);
+  if (infoTry && infoTry.fixture_id) {
+    infoFromStrict = infoTry; // usarlo más abajo
+    if (DEBUG_TRACE) console.log(`${traceEvt} STRICT_MATCH fallback OK`, JSON.stringify({ fixture_id: infoTry.fixture_id, conf: infoTry.confidence || null }));
+  } else {
+    causas.strict_mismatch++;
+    console.warn(`${traceEvt} STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO (${rsl.reason})`);
+    continue;
+  }
+} else {
+  infoFromStrict = {
+    fixture_id: rsl.fixture_id,
+    league_id: rsl.league_id,
+    country: rsl.country
+  };
+}
+
+          if (infoFromStrict) {
+  P.af_fixture_id = infoFromStrict.fixture_id;
+  P.af_league_id  = infoFromStrict.league_id;
+  P.af_country    = infoFromStrict.country;
+} else {
+  P.af_fixture_id = rsl.fixture_id;
+  P.af_league_id  = rsl.league_id;
+  P.af_country    = rsl.country;
+}
+console.log(`${traceEvt} MATCH OK → fixture_id=${rsl.fixture_id} | league=${rsl.league_id} | country=${rsl.country}`);
         } catch (er) {
           console.warn(`${traceEvt} resolveTeamsAndLeague error:`, er?.message || er);
           continue;
         }
 
         // Enriquecimiento
-        const info = await enriquecerPartidoConAPIFootball(P) || {};
+        const info = infoFromStrict || (await enriquecerPartidoConAPIFootball(P) || {});
         if (info && info.fixture_id) {
           afHits++;
           if (DEBUG_TRACE) {
