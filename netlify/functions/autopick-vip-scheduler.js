@@ -26,7 +26,7 @@ exports.handler = async () => {
     const text = await res.text();
 
     let json = null;
-    try { json = JSON.parse(text); } catch { /* texto no-JSON */ }
+    try { json = JSON.parse(text); } catch {}
 
     console.log("[scheduler] done", { status: res.status, hasJSON: !!json });
 
