@@ -43,40 +43,6 @@
 # Autopick pre-match (cron frecuente)
 # --------------------------------------
 [functions."autopick-vip-run3"]
-  # CRON: cada 15 minutos
-  schedule = "*/15 * * * *"
-  included_files = [
-    "netlify/functions/_supabase-client.cjs",
-    "netlify/functions/_logger.cjs",
-    "netlify/functions/_corazonada.cjs",
-    "prompts_punterx.md",
-    "netlify/functions/_lib/**"
-  ]
-  external_node_modules = [
-    "@supabase/supabase-js",
-    "openai",
-    "node-fetch"
-  ]
-
-
-#[functions."autopick-vip-cron"]
-  #external_node_modules = ["@netlify/functions"]
-#[[scheduled.functions]]
-#path = "autopick-vip-cron"
-#schedule = "*/15 * * * *"
-
-
-# ---------------------------------------------------
-
-# Autopick en background (cron frecuente, mismo ritmo)
-# Deshabilitado: consolidamos PRE en una sola función para evitar duplicados
-
-# path = "autopick-vip-nuevo-background"
-# schedule = "*/15 * * * *"
-
-# --------------------------------------
-# Outrights (menos frecuente por volumen)
-# --------------------------------------
 [functions."autopick-outrights"]
   # CRON: cada 1 hora (ajusta si usabas otro)
   schedule = "0 * * * *"
