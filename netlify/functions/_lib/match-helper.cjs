@@ -121,7 +121,7 @@ process.env.DEBUG_TRACE==='1' && console.log('[MATCH-HELPER] knobs', { TIME_PAD_
 }
 } catch(_){} })();
 ;try { if (process.env.DEBUG_TRACE === '1')
-} catch {}
+
 
   try {
     const home = evt?.home_team || evt?.home || evt?.teams?.home?.name;
@@ -225,8 +225,8 @@ process.env.DEBUG_TRACE==='1' && console.log('[MATCH-HELPER] knobs', { TIME_PAD_
                 const hName = hit?.teams?.home?.name;
                 const aName = hit?.teams?.away?.name;
                 console.log('[MATCH-HELPER] Fallback time+sim HIT', { fixture: hit?.fixture?.id, h: hName, a: aName, sum: (typeof best.sum === 'number' ? best.sum.toFixed(3) : best.sum) });
-              } catch {}
-              
+
+
               return {
                 ok: true,
                 fixture_id: hit.fixture.id,
