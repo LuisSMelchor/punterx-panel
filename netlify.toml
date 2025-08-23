@@ -214,3 +214,7 @@ schedule = "*/10 * * * *"
 [[scheduled.functions]]
 path = "autopick-vip-run2"
 schedule = "*/15 * * * *"
+
+[functions.environment]
+AF_MATCH_TIME_SIM = "1"
+DEBUG_TRACE = "1"
