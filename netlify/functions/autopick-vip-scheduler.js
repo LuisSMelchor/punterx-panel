@@ -1,20 +1,35 @@
 // netlify/functions/autopick-vip-scheduler.js
-// Wrapper programado en CommonJS que invoca run2 cada 15 minutos
+// Programado cada 15m: invoca run2 con header x-nf-scheduled y manual=1
 
 const run2 = require('./autopick-vip-run2.cjs');
 
-exports.config = {
-  schedule: "*/15 * * * *"
-};
+exports.config = { schedule: "*/15 * * * *" };
 
-exports.default = async (req) => {
-  const event = {
-    headers: { 'x-nf-scheduled': '1' },
-    queryStringParameters: { manual: '1' }
-  };
-  const context = {};
+exports.handler = async (event, context) => {
+  try {
+    const passthroughEvent = {
+      ...event,
+      headers: { ...(event && event.headers || {}), 'x-nf-scheduled': '1' },
+      queryStringParameters: { ...(event && event.queryStringParameters || {}), manual: '1' }
+    };
 
-  const res = await run2.handler(event, context);
-  const body = (res && res.body) ? res.body : JSON.stringify({ ok: true, via: 'autopick-vip-scheduler' });
-  return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+    const res = await run2.handler(passthroughEvent, context);
+
+    // Si run2 ya devuelve objeto Netlify, lo pasamos tal cual
+    if (res && typeof res.statusCode === 'number' && 'body' in res) {
+      return res;
+    }
+    // Sino, respondemos JSON mínimo
+    return {
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ok: true, via: 'scheduler', passthrough: !!res })
+    };
+  } catch (e) {
+    return {
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ok: false, stage: 'scheduler', error: e?.message || String(e) })
+    };
+  }
 };
