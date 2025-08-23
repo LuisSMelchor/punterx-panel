@@ -114,16 +114,17 @@ async function fetchAFTeamId(afApi, rawName) {
  * @returns {Object} { ok, fixture_id?, league_id?, country?, reason? }
  */
 async function resolveTeamsAndLeague(evt, {
-); } catch {}
+
+
   }
 
 afApi } = {}) {
   const TIME_PAD_MIN = parseInt(process.env.AF_TIME_PAD_MIN || "10", 10);
   const SIM_THR = parseFloat(process.env.AF_MIN_SIM || "0.86");
+;process.env.DEBUG_TRACE==='1' && console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR });
 ;(()=>{ try { 
   if (process.env.DEBUG_TRACE === '1') {
-    console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR });
-  }
+}
 } catch(_){} })();
 ;try { if (process.env.DEBUG_TRACE === '1')
 } catch {}
