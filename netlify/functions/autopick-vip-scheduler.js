@@ -1,4 +1,4 @@
-// Siempre responde JSON. Usa fetch global (Node 18+) y es tolerante a texto no-JSON.
+// Scheduler robusto: siempre JSON, con trazas, y sin dependencias externas.
 exports.handler = async () => {
   try {
     const base =
@@ -7,11 +7,28 @@ exports.handler = async () => {
       "https://punterx-panel-vip.netlify.app";
 
     const url = `${base}/.netlify/functions/autopick-vip-run2?from=scheduler`;
-    const res = await fetch(url, { headers: { "x-nf-scheduled": "1" } });
 
+    // Traza temprana para ver si el handler siquiera arranca
+    console.log("[scheduler] start", { node: process.version, base });
+
+    // Usa fetch nativo si existe; si no, reporta claramente
+    const f = globalThis.fetch;
+    if (typeof f !== "function") {
+      console.error("[scheduler] fetch no disponible en runtime");
+      return {
+        statusCode: 500,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ok: false, error: "fetch no disponible (Node < 18?)" })
+      };
+    }
+
+    const res = await f(url, { headers: { "x-nf-scheduled": "1" } });
     const text = await res.text();
+
     let json = null;
-    try { json = JSON.parse(text); } catch {}
+    try { json = JSON.parse(text); } catch { /* texto no-JSON */ }
+
+    console.log("[scheduler] done", { status: res.status, hasJSON: !!json });
 
     return {
       statusCode: 200,
@@ -25,6 +42,7 @@ exports.handler = async () => {
       })
     };
   } catch (e) {
+    console.error("[scheduler] error", e);
     return {
       statusCode: 500,
       headers: { "content-type": "application/json" },
