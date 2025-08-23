@@ -1,35 +1,34 @@
-// netlify/functions/autopick-vip-scheduler.js
-// Programado cada 15m: invoca run2 con header x-nf-scheduled y manual=1
-
-const run2 = require('./autopick-vip-run2.cjs');
-
-exports.config = { schedule: "*/15 * * * *" };
-
-exports.handler = async (event, context) => {
+// Handler robusto: usa fetch global (Node 18+) y siempre responde JSON
+exports.handler = async () => {
   try {
-    const passthroughEvent = {
-      ...event,
-      headers: { ...(event && event.headers || {}), 'x-nf-scheduled': '1' },
-      queryStringParameters: { ...(event && event.queryStringParameters || {}), manual: '1' }
-    };
+    const base =
+      process.env.URL ||
+      process.env.DEPLOY_PRIME_URL ||
+      "https://punterx-panel-vip.netlify.app";
 
-    const res = await run2.handler(passthroughEvent, context);
+    const url = `${base}/.netlify/functions/autopick-vip-run2?from=scheduler`;
+    const res = await fetch(url, { headers: { "x-nf-scheduled": "1" } });
 
-    // Si run2 ya devuelve objeto Netlify, lo pasamos tal cual
-    if (res && typeof res.statusCode === 'number' && 'body' in res) {
-      return res;
-    }
-    // Sino, respondemos JSON mínimo
+    const text = await res.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch {}
+
     return {
       statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok: true, via: 'scheduler', passthrough: !!res })
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ok: true,
+        triggered: "run2",
+        status: res.status,
+        resumen: json?.resumen ?? null,
+        raw: json ? undefined : text
+      })
     };
   } catch (e) {
     return {
-      statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok: false, stage: 'scheduler', error: e?.message || String(e) })
+      statusCode: 500,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ok: false, error: e?.message || String(e) })
     };
   }
 };
