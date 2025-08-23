@@ -1,4 +1,4 @@
-// Handler robusto: usa fetch global (Node 18+) y siempre responde JSON
+// Siempre responde JSON. Usa fetch global (Node 18+) y es tolerante a texto no-JSON.
 exports.handler = async () => {
   try {
     const base =
