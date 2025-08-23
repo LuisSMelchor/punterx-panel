@@ -1,1 +1,7 @@
 node_modules/
+
+# PunterX local tools & backups
+.netlify/
+netlify.toml.pre-scheduler-backup
+netlify/functions/autopick-vip-nuevo-impl.cjs.bak.*
+tools/*.js
