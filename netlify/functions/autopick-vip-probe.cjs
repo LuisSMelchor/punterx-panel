@@ -4,7 +4,7 @@ exports.handler = async (event) => {
   const q = (event && event.queryStringParameters) || {};
   const out = { ok: true, requires: {}, note: 'probe loads same deps as autopick-vip-nuevo (top-level)' };
 
-  // Lista de require() en el MISMO orden general que usa autopick-vip-nuevo
+  // Mismos requires top-level que usa autopick-vip-nuevo
   const tests = [
     ['fs',           () => require('fs')],
     ['path',         () => require('path')],
@@ -19,7 +19,6 @@ exports.handler = async (event) => {
     catch (e) {
       out.ok = false;
       out.requires[name] = { ok: false, err: String(e && (e.message || e)) };
-      // si piden stop al primer error: ?stop=1
       if (q.stop === '1') break;
     }
   }
