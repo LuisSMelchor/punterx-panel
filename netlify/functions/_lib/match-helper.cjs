@@ -133,7 +133,37 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
     ]);
     
     if (!homeId || !awayId) {
-      console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
+      
+// Fallback de normalización básica antes de avisar "Sin teamId AF"
+(() => {
+  try {
+    const __normalize = (s) => String(s || '')
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/\b(club de futbol|club de fútbol|club deportivo|football club|futbol club|futebol clube|fc|cf|cd|sc|ac|afc|sfc|cfc)\b/g, "")
+      .replace(/[^a-z0-9]/g, "")
+      .trim();
+
+    // list: catálogo AF; home/away: nombres de OddsAPI; homeId/awayId: ids encontrados (pueden venir null)
+    const __byNorm = new Map((list || []).map(t => [__normalize(t.name), t.id]));
+    const __h = __byNorm.get(__normalize(home));
+    const __a = __byNorm.get(__normalize(away));
+
+    if (!homeId && __h) homeId = __h;
+    if (!awayId && __a) awayId = __a;
+
+    if (homeId && awayId) {
+      console.log('[MATCH-HELPER] Normalized match success', { home, away, homeId, awayId });
+      return; // éxito: no emitir el warn
+    }
+  } catch (e) {
+    console.warn('[MATCH-HELPER] normalize fallback error:', e && e.message || e);
+  }
+
+  // Si no hubo éxito, dejamos el warn original
+  console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
+})();
+
       
       // --- Fallback opcional por tiempo + similaridad ---
       if (String(process.env.AF_MATCH_TIME_SIM) === '1') {
