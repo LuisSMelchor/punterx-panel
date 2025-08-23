@@ -42,7 +42,7 @@
 # --------------------------------------
 # Autopick pre-match (cron frecuente)
 # --------------------------------------
-[functions."autopick-vip-run2"]
+[functions."autopick-vip-run3"]
   # CRON: cada 15 minutos
   schedule = "*/15 * * * *"
   included_files = [
