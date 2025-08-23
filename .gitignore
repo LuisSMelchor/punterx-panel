@@ -5,3 +5,7 @@ node_modules/
 netlify.toml.pre-scheduler-backup
 netlify/functions/autopick-vip-nuevo-impl.cjs.bak.*
 tools/*.js
+
+# local backups/tools
+netlify/functions/_lib/match-helper.cjs.bak.*
+tools/*.js
