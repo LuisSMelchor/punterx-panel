@@ -1,132 +1,47 @@
-
 'use strict';
-exports._impl = async (event, context) => {
-  try {
-    const qs = (event && event.queryStringParameters) || {};
 
-    // smoke opcional
-    if (qs.smoke === '1') {
-      try {
-  const _r = (typeof resumen!=='undefined' && resumen) ? JSON.stringify(resumen) : null;
-  if (_r) console.log('[run2] resumen', _r);
-  if (resumen && resumen.debugLog) {
-    const chunk = String(resumen.debugLog).slice(0, 12000);
-    console.log('[run2] detalle', chunk);
-  }
-} catch(e){ console.log('[run2] log error', e && e.message); }
-try { console.log('[run2] end ok', { ts: new Date().toISOString() }); } catch {}
-  return {
-        statusCode: 200,
-        headers: { 'content-type':'application/json' },
-        body: JSON.stringify({ ok:true, stage:'run2.smoke', debug: qs.debug === '1' })
-      };
-    }
+// JSON helper (evita 500; siempre respondemos JSON)
+const __json = (code, obj) => ({
+  statusCode: code,
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(obj)
+});
 
-    // Cargar la implementación real
-    const mod = require('./autopick-vip-nuevo-impl.cjs');
-    if (!mod || typeof mod.handler !== 'function') {
-      return { statusCode:200, headers:{'content-type':'application/json'},
-        body: JSON.stringify({ ok:false, stage:'run2.wrapper', error:'handler no encontrado' }) };
-    }
-
-    // Inyecta AUTH si falta (para scheduled)
-    const expected = (process.env.AUTH_CODE || '').trim();
-    const inHeaders = (event && event.headers) ? { ...event.headers } : {};
-    if (expected && !inHeaders['x-auth-code'] && !inHeaders['x-auth']) {
-      inHeaders['x-auth-code'] = expected;
-    }
-
-    // Fuerza manual=1 (misma ruta de logs que usas) y preserva debug
-    const newQs = { manual:'1' };
-    if (qs.debug === '1') newQs.debug = '1';
-
-    const newEvent = { ...(event||{}), headers: inHeaders, queryStringParameters: newQs };
-
-    // Delegar
-    return await mod.handler(newEvent, context);
-
-  } catch (e) {
-    try { console.error('[run2] fail', { ts: new Date().toISOString(), err: (e && e.stack) || (e && e.message) || String(e) }); } catch {}
-    return { statusCode:200, headers:{'content-type':'application/json'},
-      body: JSON.stringify({ ok:false, stage:'run2.catch', error:String(e && (e.message||e)), stack: e && e.stack ? String(e.stack): null }) };
-  }
-};
-
-/* ---- wrapper robusto (no añade dependencias) ---- */
-exports._impl = async (event, context) => {
-  try {
-    // ping rápido para verificar que el archivo carga
-    const qs = (event && event.queryStringParameters) || {};
-    if (qs && qs.ping === '1') {
-      return { statusCode: 200, headers:{'content-type':'application/json'},
-               body: JSON.stringify({ ok:true, ping:'autopick-vip-run2 (pong)' }) };
-    }
-    return await exports._impl(event, context);
-  } catch (e) {
-    // si algo truena, devolvemos JSON (y no 500 con texto)
-    console.error('[run2][fatal]', e && e.stack || e);
-    return { statusCode: 200, headers:{'content-type':'application/json'},
-             body: JSON.stringify({ ok:false, fatal:true, error: String(e && e.message || e) }) };
-  }
-};
-
-/* ---- wrapper robusto (no añade dependencias) ---- */
+// Handler a prueba de fallos (sin requires arriba)
 exports.handler = async (event, context) => {
   try {
-    // ping rápido para verificar que el archivo carga
     const qs = (event && event.queryStringParameters) || {};
-    if (qs && qs.ping === '1') {
-      return { statusCode: 200, headers:{'content-type':'application/json'},
-               body: JSON.stringify({ ok:true, ping:'autopick-vip-run2 (pong)' }) };
+
+    // Ping temprano: confirma que el archivo carga
+    if (qs.ping === '1') {
+      return __json(200, { ok: true, ping: 'autopick-vip-run2 (pong)' });
     }
-    return await exports._impl(event, context);
-  } catch (e) {
-    // si algo truena, devolvemos JSON (y no 500 con texto)
-    console.error('[run2][fatal]', e && e.stack || e);
-    return { statusCode: 200, headers:{'content-type':'application/json'},
-             body: JSON.stringify({ ok:false, fatal:true, error: String(e && e.message || e) }) };
-  }
-};
 
-/* === run2: wrapper seguro (idempotente) === */
-if (!module.exports.__run2Wrapped) {
-  module.exports.__run2Wrapped = true;
-  const __orig = module.exports.handler;
-  const __json = (code, obj) => ({
-    statusCode: code,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(obj)
-  });
-
-  module.exports.handler = async (event, context) => {
+    // TODO real: carga perezosa de la implementación
+    // Si esto falla (ESM/ENV/etc), devolvemos JSON con error (NO 500)
+    let impl;
     try {
-      const qs = (event && event.queryStringParameters) || {};
-      // ping: evita ejecutar nada más
-      if (qs && qs.ping === '1') {
-        return __json(200, { ok: true, ping: 'autopick-vip-run2 (pong)' });
-      }
+      impl = require('./autopick-vip-nuevo-impl.cjs');
+    } catch (e) {
+      return __json(200, {
+        ok: false,
+        fatal: true,
+        stage: 'require(impl)',
+        error: String((e && e.message) || e)
+      });
+    }
 
-      if (typeof __orig !== 'function') {
-        console.error('[run2] handler original no definido');
-        return __json(200, { ok: false, fatal: true, error: 'handler original no definido' });
-      }
-
-      const res = await __orig(event, context);
-
-      // fuerza JSON para que NUNCA veas "Internal Error" en texto plano
+    if (impl && typeof impl.handler === 'function') {
+      const res = await impl.handler(event, context);
+      // Si la impl no devuelve formato Netlify, lo normalizamos
       if (!res || typeof res.statusCode !== 'number') {
-        return __json(200, { ok: false, error: 'Respuesta inválida del handler' });
-      }
-      const h = res.headers || {};
-      if (!(h['content-type'] || '').toLowerCase().includes('application/json')) {
-        res.headers = { ...h, 'content-type': 'application/json' };
-        if (res.body && typeof res.body !== 'string') res.body = JSON.stringify(res.body);
-        if (!res.body && res.statusCode === 200) res.body = JSON.stringify({ ok: true });
+        return __json(200, { ok: false, stage: 'impl', error: 'Respuesta inválida de impl' });
       }
       return res;
-    } catch (e) {
-      console.error('[run2] fatal:', e && e.stack || e);
-      return __json(200, { ok: false, fatal: true, error: String((e && e.message) || e) });
     }
-  };
-}
+
+    return __json(200, { ok: false, fatal: true, error: 'impl.handler no encontrado' });
+  } catch (e) {
+    return __json(200, { ok: false, fatal: true, stage: 'wrapper', error: String((e && e.message) || e) });
+  }
+};
