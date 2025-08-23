@@ -423,7 +423,16 @@ async function getPrevBestOdds({ event_key, market, outcome_label, point, lookba
 
 // =============== NETLIFY HANDLER ===============
 exports.handler = async (event, context) => {
-  // --- IDs / debug / headers ---
+  try {
+    const q = (event && event.queryStringParameters) || {};
+    const h = (event && event.headers) || {};
+    if ((q.debug === "1" || h["x-debug"] === "1") && q.ping === "1") {
+      return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok:true, stage:"early-ping" }) };
+    }
+  } catch (e) {
+    return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok:false, stage:"early-ping-error", err: String(e && (e.message || e)) }) };
+  }
+// --- IDs / debug / headers ---
   const REQ_ID = (Math.random().toString(36).slice(2,10)).toUpperCase();
   // Blindaje total: no dependemos de helpers en el arranque
   let headers = {};
