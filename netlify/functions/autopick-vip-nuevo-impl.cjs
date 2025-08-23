@@ -642,7 +642,24 @@ try {
             { home: P.home, away: P.away, commence_time: P.commence_time, liga: P.liga || P.sport_title || '' },
             { afApi }
           );
-          let infoFromStrict = null;
+          
+// __RSL_LOG_MARK__
+if (DEBUG_TRACE) console.log(`${traceEvt} rsl=`, {
+  ok: rsl.ok,
+  reason: rsl.reason || null,
+  confidence: (typeof rsl.confidence === "number" ? rsl.confidence : null),
+  home: P.home, away: P.away, liga: P.liga || P.sport_title || ""
+});
+
+// confidence gate (umbral configurable)
+{
+  const THRESH = parseFloat(process.env.MATCH_RESOLVE_CONFIDENCE || '0');
+  if (rsl.ok && THRESH > 0 && typeof rsl.confidence === 'number' && rsl.confidence < THRESH) {
+    if (DEBUG_TRACE) console.log(`${traceEvt} MATCH bajo umbral → confidence=${rsl.confidence} < ${THRESH}; forzando fallback`);
+    rsl.ok = false; // deja pasar al fallback que ya añadimos
+  }
+}
+let infoFromStrict = null;
 if (!rsl.ok) {
   const infoTry = await enriquecerPartidoConAPIFootball(P);
   if (infoTry && infoTry.fixture_id) {
