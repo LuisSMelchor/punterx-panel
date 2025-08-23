@@ -670,7 +670,7 @@ if (!rsl.ok) {
   P.af_league_id  = rsl.league_id;
   P.af_country    = rsl.country;
 }
-console.log(`${traceEvt} MATCH OK → fixture_id=${rsl.fixture_id} | league=${rsl.league_id} | country=${rsl.country}`);
+console.log(`${traceEvt} MATCH OK → fixture_id=${P.af_fixture_id} | league=${P.af_league_id} | country=${P.af_country} | via=${infoFromStrict ? fallback : direct}`);
         } catch (er) {
           console.warn(`${traceEvt} resolveTeamsAndLeague error:`, er?.message || er);
           continue;
