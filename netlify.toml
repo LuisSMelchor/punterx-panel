@@ -230,4 +230,3 @@ schedule = "*/10 * * * *"
   force = true
 
 
-[functions."autopick-vip-run3"]
