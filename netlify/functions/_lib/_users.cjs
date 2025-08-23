@@ -1,6 +1,6 @@
 // netlify/functions/_users.cjs
 
-use strict';
+'use strict';
   const { getSupabase } = require('./_lib/_supabase-client.cjs');
 
 // ===== Helpers =====
