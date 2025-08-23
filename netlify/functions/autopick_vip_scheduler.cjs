@@ -19,33 +19,40 @@ function httpsGet(u, headers = {}, timeoutMs = 8000) {
   });
 }
 
+function logChunk(label, str, max = 2000) {
+  if (!str) return console.log(label, '(sin cuerpo)');
+  const chunk = str.slice(0, max);
+  console.log(label, 'len=', str.length, '\n---8<---\n' + chunk + '\n---8<---');
+}
+
 exports.handler = async function () {
   try {
     const base =
-      (process && process.env && process.env.URL) ||
-      (process && process.env && process.env.DEPLOY_PRIME_URL) ||
+      (typeof process !== 'undefined' && process.env && process.env.URL) ||
+      (typeof process !== 'undefined' && process.env && process.env.DEPLOY_PRIME_URL) ||
       'https://punterx-panel-vip.netlify.app';
 
-    const url = base + '/.netlify/functions/autopick-vip-run2?from=scheduler';
+    // Forzamos debug=1 para que run2 imprima trazas
+    const url = `${base}/.netlify/functions/autopick-vip-run2?from=scheduler&debug=1`;
 
-    // 1) Intento con fetch si existe
-    let resObj = null;
-    try {
-      if (typeof fetch === 'function') {
-        const ac = new AbortController();
-        const t = setTimeout(() => ac.abort(), 8000);
-        const res = await fetch(url, { headers: { 'x-nf-scheduled': '1' }, signal: ac.signal });
-        clearTimeout(t);
-        const text = await res.text();
-        resObj = { status: res.status, text };
-      }
-    } catch (_) { /* fallback abajo */ }
+    console.log('[scheduler] calling run2', { url });
 
-    // 2) Fallback a https nativo
-    if (!resObj) resObj = await httpsGet(url, { 'x-nf-scheduled': '1' });
+    // fetch si existe, si no https fallback
+    let res, text;
+    if (globalThis.fetch) {
+      const r = await fetch(url, { headers: { 'x-nf-scheduled': '1' } });
+      res = { status: r.status, text: await r.text() };
+    } else {
+      res = await httpsGet(url, { 'x-nf-scheduled': '1' });
+    }
+    text = res.text || '';
 
-    let payload = null;
-    try { payload = JSON.parse(resObj.text); } catch (_) {}
+    console.log('[scheduler] run2 status', { status: res.status });
+    logChunk('[scheduler] run2 body (trunc)', text);
+
+    // Intentamos parsear, pero no fallamos si viene texto
+    let json = null;
+    try { json = JSON.parse(text); } catch {}
 
     return {
       statusCode: 200,
@@ -53,16 +60,17 @@ exports.handler = async function () {
       body: JSON.stringify({
         ok: true,
         triggered: 'run2',
-        status: resObj.status,
-        resumen: (payload && payload.resumen) ? payload.resumen : null,
-        raw: payload ? undefined : resObj.text
-      }),
+        status: res.status,
+        resumen: json && json.resumen ? json.resumen : null,
+        raw_snippet: text ? text.slice(0, 2000) : null
+      })
     };
   } catch (e) {
+    console.error('[scheduler] error', e && e.stack || e);
     return {
-      statusCode: 200,
+      statusCode: 500,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok: false, error: (e && e.message) ? e.message : String(e) }),
+      body: JSON.stringify({ ok: false, error: (e && e.message) || String(e) })
     };
   }
 };
