@@ -303,7 +303,7 @@ return { ok: false, reason: 'sin_team_id' };
     console.error('[MATCH-HELPER] resolveTeamsAndLeague error:', err?.message || err);
     return { ok: false, reason: 'exception' };
   }
-}
+} catch (e) { try { console.error('[MATCH-HELPER] resolver error:', e && e.message); } catch(_){} return { ok:false, reason:'exception' }; }
 
 module.exports = {
   resolveTeamsAndLeague,
