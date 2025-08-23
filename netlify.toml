@@ -229,3 +229,6 @@ MATCH_RESOLVE_CONFIDENCE = "0.5"
   schedule = "*/15 * * * *"
 
 
+
+[functions.scheduler_bridge_v2]
+  schedule = "*/15 * * * *"
