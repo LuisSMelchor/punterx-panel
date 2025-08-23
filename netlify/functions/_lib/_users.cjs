@@ -1,26 +1,13 @@
 // netlify/functions/_users.cjs
-'use strict';
 
-const { createClient } = require('@supabase/supabase-js');
-
-const {
-  SUPABASE_URL,
-  SUPABASE_KEY
-} = process.env;
-
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.warn('[USERS] Falta SUPABASE_URL/SUPABASE_KEY');
-}
-
-const sb = (SUPABASE_URL && SUPABASE_KEY)
-  ? createClient(SUPABASE_URL, SUPABASE_KEY)
-  : null;
+use strict';
+  const { getSupabase } = require('./_lib/_supabase-client.cjs');
 
 // ===== Helpers =====
 function toInt(v) { const n = Number(v); return Number.isFinite(n) ? Math.trunc(n) : null; }
 
 async function upsertTelegramUser({ tg_id, username, first_name, last_name, lang_code, source }) {
-  if (!sb) return null;
+  const sb = await getSupabase();
   const idNum = toInt(tg_id);
   if (!idNum) return null;
 
