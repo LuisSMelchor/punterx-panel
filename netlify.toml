@@ -228,3 +228,5 @@ schedule = "*/10 * * * *"
   to = "/.netlify/functions/tg_trial_webhook"
   status = 200
   force = true
+
+[functions."hello"]
