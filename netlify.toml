@@ -7,7 +7,7 @@
   command = "npm run build || echo 'no build step'; mkdir -p public"
   publish  = "public"
   functions = "netlify/functions"
-
+  
 [build.environment]
   NODE_VERSION = "20"
   TZ = "America/Mexico_City"
