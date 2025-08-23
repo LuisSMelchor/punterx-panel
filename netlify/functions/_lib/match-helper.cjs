@@ -114,8 +114,10 @@ async function fetchAFTeamId(afApi, rawName) {
  * @returns {Object} { ok, fixture_id?, league_id?, country?, reason? }
  */
 async function resolveTeamsAndLeague(evt, {
+  const TIME_PAD_MIN = parseInt(process.env.AF_TIME_PAD_MIN || "10", 10);
   const SIM_THR = parseFloat(process.env.AF_MIN_SIM || "0.86");
- afApi } = {}) {
+
+afApi } = {}) {
   try {
     const home = evt?.home_team || evt?.home || evt?.teams?.home?.name;
     const away = evt?.away_team || evt?.away || evt?.teams?.away?.name;
@@ -170,7 +172,7 @@ async function resolveTeamsAndLeague(evt, {
       // --- Fallback opcional por tiempo + similaridad ---
       if (String(process.env.AF_MATCH_TIME_SIM) === '1') {
         try {
-          const TIME_PAD_MIN = Number(process.env.AF_MATCH_TIME_PAD_MIN || 15); // ±15 min por defecto
+// ±15 min por defecto
           const THRESH = Number(process.env.AF_MATCH_SIM_THRESHOLD || 0.88);   // 0.88 por defecto
           const rFx = await afApi('/fixtures', { date: dateYMD, timezone: 'UTC' }); // Fixtures del día (forzado a UTC)
           const list = Array.isArray(rFx?.response) ? rFx.response : [];
