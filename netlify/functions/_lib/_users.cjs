@@ -40,28 +40,28 @@ async function upsertTelegramUser({ tg_id, username, first_name, last_name, lang
 }
 
 async function isBannedByTgId(tg_id) {
-  if (!sb) return false;
+  const sb = await getSupabase();
   const idNum = toInt(tg_id); if (!idNum) return false;
   const { data: row } = await sb.from('v_px_user_status').select('is_banned').eq('tg_id', idNum).maybeSingle();
   return !!row?.is_banned;
 }
 
 async function isVipByTgId(tg_id) {
-  if (!sb) return false;
+  const sb = await getSupabase();
   const idNum = toInt(tg_id); if (!idNum) return false;
   const { data: row } = await sb.from('v_px_user_status').select('is_vip').eq('tg_id', idNum).maybeSingle();
   return !!row?.is_vip;
 }
 
 async function getUserIdByTgId(tg_id) {
-  if (!sb) return null;
+  const sb = await getSupabase();
   const idNum = toInt(tg_id); if (!idNum) return null;
   const { data: u } = await sb.from('px_users').select('id').eq('tg_id', idNum).maybeSingle();
   return u?.id || null;
 }
 
 async function grantVipByTgId(tg_id, { plan_code='VIP', days=30 } = {}) {
-  if (!sb) return false;
+  const sb = await getSupabase();
   const userId = await getUserIdByTgId(tg_id);
   if (!userId) return false;
 
@@ -86,7 +86,7 @@ async function grantVipByTgId(tg_id, { plan_code='VIP', days=30 } = {}) {
 }
 
 async function revokeVipByTgId(tg_id, reason='manual_revoke') {
-  if (!sb) return false;
+  const sb = await getSupabase();
   const userId = await getUserIdByTgId(tg_id);
   if (!userId) return false;
 
@@ -100,7 +100,7 @@ async function revokeVipByTgId(tg_id, reason='manual_revoke') {
 }
 
 async function banByTgId(tg_id, reason='manual_ban', expires_at=null) {
-  if (!sb) return false;
+  const sb = await getSupabase();
   const userId = await getUserIdByTgId(tg_id) || await upsertTelegramUser({ tg_id });
   if (!userId) return false;
 
@@ -114,7 +114,7 @@ async function banByTgId(tg_id, reason='manual_ban', expires_at=null) {
 }
 
 async function unbanByTgId(tg_id) {
-  if (!sb) return false;
+  const sb = await getSupabase();
   const userId = await getUserIdByTgId(tg_id);
   if (!userId) return false;
 
@@ -126,6 +126,7 @@ async function unbanByTgId(tg_id) {
 }
 
 async function logUserEvent(user_id, event_type, payload) {
+  const sb = await getSupabase();
   if (!sb || !user_id) return;
   await sb.from('px_user_events').insert([{ user_id, event_type, payload }]);
 }
