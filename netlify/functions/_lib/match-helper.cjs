@@ -116,11 +116,7 @@ async function fetchAFTeamId(afApi, rawName) {
 async function resolveTeamsAndLeague(evt, { afApi } = {}) {
       const TIME_PAD_MIN = parseInt(process.env.AF_TIME_PAD_MIN || "15", 10);
   const SIM_THR      = parseFloat(process.env.AF_MIN_SIM || "0.84");
-  if (process.env.DEBUG_TRACE === '1') console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR });
-
-
-
-try {
+  if (process.env.DEBUG_TRACE === '1')try {
     const home = evt?.home_team || evt?.home || evt?.teams?.home?.name;
     const away = evt?.away_team || evt?.away || evt?.teams?.away?.name;
     const commence = ensureUtcDate(evt?.commence_time || evt?.start_time || evt?.commenceTime);
@@ -142,7 +138,8 @@ try {
       console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
       
       // --- Fallback opcional por tiempo + similaridad ---
-      if (String(process.env.AF_MATCH_TIME_SIM) === '1') {
+      if (String(process.env.AF_MATCH_TIME_SIM) === '1') {  if (process.env.DEBUG_TRACE === '1') console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR });
+
         try {
           const TIME_PAD_MIN = Number(process.env.AF_MATCH_TIME_PAD_MIN || 15); // ±15 min por defecto
           const THRESH = Number(process.env.AF_MATCH_SIM_THRESHOLD || 0.88);   // 0.88 por defecto
