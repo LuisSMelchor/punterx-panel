@@ -27,9 +27,9 @@ function logChunk(label, str, max) {
 
 exports.handler = async function (event) {
   try {
-    const qs = event && event.queryStringParameters || {};
+    const qs = (event && event.queryStringParameters) || {};
     const wantFull = qs.full === '1';
-    const passDebug = qs.debug === '1'; // opcional: forzar debug manualmente
+    const passDebug = qs.debug === '1';
     const MAX = wantFull ? 10000 : 3000;
 
     const base =
@@ -37,21 +37,20 @@ exports.handler = async function (event) {
       (typeof process !== 'undefined' && process.env && process.env.DEPLOY_PRIME_URL) ||
       'https://punterx-panel-vip.netlify.app';
 
-    const run2Url = new URL(`${base}/.netlify/functions/autopick-vip-run2`);
+    const run2Url = new URL(base + '/.netlify/functions/autopick-vip-run2');
     run2Url.searchParams.set('from', 'scheduler');
-    // siempre pasamos debug=1 para ver trazas; si NO quieres siempre, cambia a: if (passDebug) run2Url.searchParams.set('debug','1');
+    // si quieres que SOLO en manual pase debug, usa: if (passDebug) run2Url.searchParams.set('debug','1')
     run2Url.searchParams.set('debug', passDebug ? '1' : '1');
 
-    const url = run2Url.toString();
-    console.log('[scheduler] calling run2', { url });
-
+    const headers = { 'x-nf-scheduled': '1' };
     let status, body;
+
     if (globalThis.fetch) {
-      const r = await fetch(url, { headers: { 'x-nf-scheduled': '1' } });
+      const r = await fetch(run2Url, { headers });
       status = r.status;
       body = await r.text();
     } else {
-      const r = await httpsGet(url, { 'x-nf-scheduled': '1' });
+      const r = await httpsGet(run2Url.toString(), headers);
       status = r.status;
       body = r.text || '';
     }
