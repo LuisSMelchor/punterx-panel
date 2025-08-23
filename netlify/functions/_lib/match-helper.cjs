@@ -114,8 +114,11 @@ async function fetchAFTeamId(afApi, rawName) {
  * @returns {Object} { ok, fixture_id?, league_id?, country?, reason? }
  */
 async function resolveTeamsAndLeague(evt, { afApi } = {}) {
-    const SIM_THR = parseFloat(process.env.AF_MIN_SIM || "0.84");
-  if (process.env.DEBUG_TRACE==='1') console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR });
+      const TIME_PAD_MIN = parseInt(process.env.AF_TIME_PAD_MIN || "15", 10);
+  const SIM_THR      = parseFloat(process.env.AF_MIN_SIM || "0.84");
+  if (process.env.DEBUG_TRACE === '1') console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR });
+
+
 
 try {
     const home = evt?.home_team || evt?.home || evt?.teams?.home?.name;
