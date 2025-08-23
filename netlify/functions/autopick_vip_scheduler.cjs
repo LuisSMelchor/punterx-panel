@@ -19,40 +19,48 @@ function httpsGet(u, headers = {}, timeoutMs = 8000) {
   });
 }
 
-function logChunk(label, str, max = 2000) {
+function logChunk(label, str, max) {
   if (!str) return console.log(label, '(sin cuerpo)');
   const chunk = str.slice(0, max);
   console.log(label, 'len=', str.length, '\n---8<---\n' + chunk + '\n---8<---');
 }
 
-exports.handler = async function () {
+exports.handler = async function (event) {
   try {
+    const qs = event && event.queryStringParameters || {};
+    const wantFull = qs.full === '1';
+    const passDebug = qs.debug === '1'; // opcional: forzar debug manualmente
+    const MAX = wantFull ? 10000 : 3000;
+
     const base =
       (typeof process !== 'undefined' && process.env && process.env.URL) ||
       (typeof process !== 'undefined' && process.env && process.env.DEPLOY_PRIME_URL) ||
       'https://punterx-panel-vip.netlify.app';
 
-    // Forzamos debug=1 para que run2 imprima trazas
-    const url = `${base}/.netlify/functions/autopick-vip-run2?from=scheduler&debug=1`;
+    const run2Url = new URL(`${base}/.netlify/functions/autopick-vip-run2`);
+    run2Url.searchParams.set('from', 'scheduler');
+    // siempre pasamos debug=1 para ver trazas; si NO quieres siempre, cambia a: if (passDebug) run2Url.searchParams.set('debug','1');
+    run2Url.searchParams.set('debug', passDebug ? '1' : '1');
 
+    const url = run2Url.toString();
     console.log('[scheduler] calling run2', { url });
 
-    // fetch si existe, si no https fallback
-    let res, text;
+    let status, body;
     if (globalThis.fetch) {
       const r = await fetch(url, { headers: { 'x-nf-scheduled': '1' } });
-      res = { status: r.status, text: await r.text() };
+      status = r.status;
+      body = await r.text();
     } else {
-      res = await httpsGet(url, { 'x-nf-scheduled': '1' });
+      const r = await httpsGet(url, { 'x-nf-scheduled': '1' });
+      status = r.status;
+      body = r.text || '';
     }
-    text = res.text || '';
 
-    console.log('[scheduler] run2 status', { status: res.status });
-    logChunk('[scheduler] run2 body (trunc)', text);
+    console.log('[scheduler] run2 status', { status });
+    logChunk('[scheduler] run2 body (trunc)', body, MAX);
 
-    // Intentamos parsear, pero no fallamos si viene texto
     let json = null;
-    try { json = JSON.parse(text); } catch {}
+    try { json = JSON.parse(body); } catch {}
 
     return {
       statusCode: 200,
@@ -60,9 +68,10 @@ exports.handler = async function () {
       body: JSON.stringify({
         ok: true,
         triggered: 'run2',
-        status: res.status,
+        status,
         resumen: json && json.resumen ? json.resumen : null,
-        raw_snippet: text ? text.slice(0, 2000) : null
+        raw_snippet: body ? body.slice(0, MAX) : null,
+        trunc: body ? Math.max(0, body.length - MAX) : 0
       })
     };
   } catch (e) {
