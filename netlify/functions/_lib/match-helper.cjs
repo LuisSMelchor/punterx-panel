@@ -255,8 +255,10 @@ try {
 
   if (homeId && awayId) {
     console.log('[MATCH-HELPER] Normalized match success (pre-return)', { home, away, homeId, awayId });
-    return { ok: true, homeId, awayId, reason: 'normalized', confidence: 0.66 };
-  }
+    
+console.log('[MATCH-HELPER] Normalized match success (pre-continue)', { home, away, homeId, awayId });
+// no retornamos aquí: dejamos que el flujo normal continúe para buscar fixtures del día y fijar fixture_id/league_id/country
+}
 } catch(e) {
   console.warn('[MATCH-HELPER] normalize fallback error (pre-return):', e && e.message || e);
 }
