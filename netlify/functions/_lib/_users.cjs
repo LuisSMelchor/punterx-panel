@@ -1,7 +1,7 @@
 // netlify/functions/_users.cjs
 
 'use strict';
-  const { getSupabase } = require('./_lib/_supabase-client.cjs');
+  const { getSupabase } = require('./_supabase-client.cjs');
 
 // ===== Helpers =====
 function toInt(v) { const n = Number(v); return Number.isFinite(n) ? Math.trunc(n) : null; }
