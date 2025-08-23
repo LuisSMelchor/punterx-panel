@@ -1,6 +1,12 @@
 'use strict';
 exports.handler = async (event, context) => {
-  try { const qs = (event && event.queryStringParameters) || {}; if (qs.cron) { qs.manual = "1"; delete qs.cron; } if (event) event.queryStringParameters = qs; } catch (e) {}
+  try {
+    const qs = (event && event.queryStringParameters) || {};
+    if (qs.cron) delete qs.cron;           // ignora cron siempre
+    qs.manual = "1";                        // fuerza manual SIEMPRE
+    if (event) event.queryStringParameters = qs;
+  } catch (e) {}
+try { const qs = (event && event.queryStringParameters) || {}; if (qs.cron) { qs.manual = "1"; delete qs.cron; } if (event) event.queryStringParameters = qs; } catch (e) {}
 try {
     const mod = require('./autopick-vip-nuevo-impl.cjs');
     if (!mod || typeof mod.handler !== 'function') {
