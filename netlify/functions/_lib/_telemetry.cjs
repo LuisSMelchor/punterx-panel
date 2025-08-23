@@ -1,5 +1,5 @@
 // netlify/functions/_telemetry.cjs
-const { createClient } = require('@supabase/supabase-js');
+const { getSupabase } = require("./_supabase-client.cjs");
 
 const {
   SUPABASE_URL,
