@@ -114,13 +114,6 @@ async function fetchAFTeamId(afApi, rawName) {
  * @returns {Object} { ok, fixture_id?, league_id?, country?, reason? }
  */
 async function resolveTeamsAndLeague(evt, { afApi } = {}) {
-  const TIME_PAD_MIN = parseInt(process.env.AF_TIME_PAD_MIN || "15", 10);
-  const SIM_THR = parseFloat(process.env.AF_MIN_SIM || "0.84");
-  process.env.DEBUG_TRACE==='1' && console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR });
-
-
-
-
   try {
     const home = evt?.home_team || evt?.home || evt?.teams?.home?.name;
     const away = evt?.away_team || evt?.away || evt?.teams?.away?.name;
@@ -134,48 +127,18 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
     const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
 
     // 1) Resolver team IDs
-    let [homeId, awayId] = await Promise.all([
+    const [homeId, awayId] = await Promise.all([
       fetchAFTeamId(afApi, home),
       fetchAFTeamId(afApi, away),
     ]);
     
     if (!homeId || !awayId) {
-      
-// Fallback de normalización básica antes de avisar "Sin teamId AF"
-(() => {
-  try {
-    const __normalize = (s) => String(s || '')
-      .toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/\b(club de futbol|club de fútbol|club deportivo|football club|futbol club|futebol clube|fc|cf|cd|sc|ac|afc|sfc|cfc)\b/g, "")
-      .replace(/[^a-z0-9]/g, "")
-      .trim();
-
-    // list: catálogo AF; home/away: nombres de OddsAPI; homeId/awayId: ids encontrados (pueden venir null)
-    const __byNorm = new Map((list || []).map(t => [__normalize(t.name), t.id]));
-    const __h = __byNorm.get(__normalize(home));
-    const __a = __byNorm.get(__normalize(away));
-
-    if (!homeId && __h) homeId = __h;
-    if (!awayId && __a) awayId = __a;
-
-    if (homeId && awayId) {
-      console.log('[MATCH-HELPER] Normalized match success', { home, away, homeId, awayId });
-      return; // éxito: no emitir el warn
-    }
-  } catch (e) {
-    console.warn('[MATCH-HELPER] normalize fallback error:', e && e.message || e);
-  }
-
-  // Si no hubo éxito, dejamos el warn original
-  console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
-})();
-
+      console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
       
       // --- Fallback opcional por tiempo + similaridad ---
       if (String(process.env.AF_MATCH_TIME_SIM) === '1') {
         try {
-// ±15 min por defecto
+          const TIME_PAD_MIN = Number(process.env.AF_MATCH_TIME_PAD_MIN || 15); // ±15 min por defecto
           const THRESH = Number(process.env.AF_MATCH_SIM_THRESHOLD || 0.88);   // 0.88 por defecto
           const rFx = await afApi('/fixtures', { date: dateYMD, timezone: 'UTC' }); // Fixtures del día (forzado a UTC)
           const list = Array.isArray(rFx?.response) ? rFx.response : [];
@@ -223,8 +186,8 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
                 const hName = hit?.teams?.home?.name;
                 const aName = hit?.teams?.away?.name;
                 console.log('[MATCH-HELPER] Fallback time+sim HIT', { fixture: hit?.fixture?.id, h: hName, a: aName, sum: (typeof best.sum === 'number' ? best.sum.toFixed(3) : best.sum) });
-
-
+              } catch {}
+              
               return {
                 ok: true,
                 fixture_id: hit.fixture.id,
@@ -239,33 +202,7 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
       }
       
       // si el fallback está apagado o no hubo match sólido:
-      
-// Fallback de normalización básica antes de descartar por sin_team_id
-try {
-  const __normalize = (s) => String(s || '')
-    .toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/\b(club de futbol|club de fútbol|club deportivo|football club|futbol club|futebol clube|fc|cf|cd|sc|ac|afc|sfc|cfc)\b/g, "")
-    .replace(/[^a-z0-9]/g, "")
-    .trim();
-
-  const __byNorm = new Map((list || []).map(t => [__normalize(t.name), t.id]));
-  const __h = __byNorm.get(__normalize(home));
-  const __a = __byNorm.get(__normalize(away));
-
-  if (!homeId && __h) homeId = __h;
-  if (!awayId && __a) awayId = __a;
-
-  if (homeId && awayId) {
-    console.log('[MATCH-HELPER] Normalized match success (pre-return)', { home, away, homeId, awayId });
-    
-console.log('[MATCH-HELPER] Normalized match success (pre-continue)', { home, away, homeId, awayId });
-// no retornamos aquí: dejamos que el flujo normal continúe para buscar fixtures del día y fijar fixture_id/league_id/country
-}
-} catch(e) {
-  console.warn('[MATCH-HELPER] normalize fallback error (pre-return):', e && e.message || e);
-}
-return { ok: false, reason: 'sin_team_id' };
+      return { ok: false, reason: 'sin_team_id' };
     }
     
     // 2) Fixtures del día para el homeId; cruzar rival
@@ -303,7 +240,7 @@ return { ok: false, reason: 'sin_team_id' };
     console.error('[MATCH-HELPER] resolveTeamsAndLeague error:', err?.message || err);
     return { ok: false, reason: 'exception' };
   }
-} catch (e) { try { console.error('[MATCH-HELPER] resolver error:', e && e.message); } catch(_){} return { ok:false, reason:'exception' }; }
+}
 
 module.exports = {
   resolveTeamsAndLeague,
