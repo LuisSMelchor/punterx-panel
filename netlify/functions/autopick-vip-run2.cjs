@@ -25,17 +25,17 @@ exports.handler = async (event, context) => {
     // 2) Carga diferida del impl (evita crash por ESM/CJS en top-level)
     let impl;
     try {
-      impl = require('./autopick-vip-nuevo-impl.cjs');
+      const rq = eval('require');
+      impl = rq('./autopick-vip-nuevo-impl.cjs');
     } catch (e) {
       return __json(200, {
         ok: false,
         fatal: true,
-        stage: 'require(impl)',
+        stage: 'require(impl)-eval',
         error: (e && e.message) || String(e),
         stack: debug && e && e.stack ? String(e.stack) : undefined,
       });
     }
-
     // 3) Preparar evento delegado
     const inHeaders = Object.assign({}, headers);
     // Inyecta auth solo para ejecuciones programadas (cron o manual)
