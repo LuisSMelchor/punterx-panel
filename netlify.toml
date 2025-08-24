@@ -8,18 +8,6 @@
 
 [functions."autopick-vip-run2"]
   schedule = "*/15 * * * *"
-  included_files = [
-    "netlify/functions/_supabase-client.cjs",
-    "netlify/functions/_logger.cjs",
-    "netlify/functions/_corazonada.cjs",
-    "prompts_punterx.md",
-    "netlify/functions/_lib/**"
-  ]
-  external_node_modules = ["@supabase/supabase-js","openai"]
-
-# (mantengo tus redirects básicos; si no los usas, no pasa nada)
-  node_bundler = "zisi"
-[[redirects]]
   from = "/diag"
   to   = "/.netlify/functions/diagnostico-total"
   status = 200
