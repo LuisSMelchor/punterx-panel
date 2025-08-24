@@ -18,14 +18,22 @@ function stripDiacritics(s='') {
 }
 
 // Quitar sufijos comunes de clubes (IF, BK, FC, SC, etc.)
-function stripClubSuffixes(s='') {
-  // límites de palabra para no “comer” dentro de nombres compuestos
-  return s.replace(/\b(afc|fc|sc|ac|cf|cfk|if|bk|fk|sk|ik)\b/gi, ' ');
+
+function stripClubTokens(str=''){
+  // Tokens genéricos de "club" comunes en muchas ligas/idiomas (no específicos por equipo):
+  // OJO: NO incluimos 'union', 'universidad', etc.
+  const TOKENS = [
+    'fc','sc','cf','ac','afc','bk','fk','sk','ik','cd','ud','sv',
+    'ca','ss','ssc','club','sporting','sport', 'atletico','atlético'
+  ];
+  const re = new RegExp('\\b(?:' + TOKENS.join('|') + ')\\b','gi');
+  return str.replace(re, ' ');
 }
+
 
 // Normalización completa para matching
 function normalizeTeamName(s='') {
-  return compatFold(stripClubSuffixes(stripDiacritics(String(s))))
+  return compatFold(stripClubTokens(stripDiacritics(String(s))))
     .toLowerCase()
     .replace(/[\.\-]/g, ' ')
     .replace(/\s+/g, ' ')

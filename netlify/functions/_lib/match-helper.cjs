@@ -1,4 +1,5 @@
 // netlify/functions/_lib/match-helper.cjs
+if (process.env.DEBUG_TRACE==='1') console.log('[MATCH-HELPER] ver', MATCH_HELPER_VER);
 // CommonJS — Resolver interno para mapear eventos de OddsAPI → fixture_id de API‑Football
 // Estrategia: (1) normalizar nombres → (2) buscar ids de equipos con /teams?search → (3) fixtures por fecha/equipo → cruce de rival
 
