@@ -153,7 +153,7 @@ const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
         if (homeId == null) homeId = await pickId(home);
         if (awayId == null) awayId = await pickId(away);
       }
-}
+
 } catch(_) { /* swallow */ }
     /* __END_NORMALIZE_FALLBACK__ */
 
