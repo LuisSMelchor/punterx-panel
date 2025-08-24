@@ -115,7 +115,7 @@ async function fetchAFTeamId(afApi, rawName) {
  */
 async function resolveTeamsAndLeague(evt, { afApi } = {}) {
       const TIME_PAD_MIN = parseInt(process.env.AF_TIME_PAD_MIN || "15", 10);
-  const SIM_THR      = parseFloat(process.env.AF_MIN_SIM || "0.88");
+  const SIM_THR      = parseFloat(process.env.AF_MIN_SIM || "0.84");
   if (process.env.DEBUG_TRACE === '1')try {
     const home = evt?.home_team || evt?.home || evt?.teams?.home?.name;
     const away = evt?.away_team || evt?.away || evt?.teams?.away?.name;
@@ -142,7 +142,7 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
 
         try {
           const TIME_PAD_MIN = Number(process.env.AF_MATCH_TIME_PAD_MIN || 15); // ±15 min por defecto
-          const THRESH = Number(process.env.AF_MIN_SIM || 0.88);   // 0.88 por defecto
+          const THRESH = Number(process.env.AF_MATCH_SIM_THRESHOLD || 0.88);   // 0.88 por defecto
           const rFx = await afApi('/fixtures', { date: dateYMD, timezone: 'UTC' }); // Fixtures del día (forzado a UTC)
           const list = Array.isArray(rFx?.response) ? rFx.response : [];
 
@@ -226,11 +226,7 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
       const aId = x?.teams?.away?.id;
       const rivalOk = (hId === homeId && aId === awayId) || (aId === homeId && hId === awayId);
       const timeOk = isNaN(tFx) ? false : Math.abs(tFx - tCommence) <= TOL;
-      const __ok = !!fid && rivalOk && timeOk;
-      if (!__ok) {
-        try { _logDiscard(fx?.fixture?.id || null, 'fuera_de_ventana_tiempo_o_rival', { hasFid: !!fid, rivalOk, timeOk, TOL }); } catch {}
-      }
-      return __ok;
+      return !!fid && rivalOk && timeOk;
     });
 
     if (!hit?.fixture?.id) {
