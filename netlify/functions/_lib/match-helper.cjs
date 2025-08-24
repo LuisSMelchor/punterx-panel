@@ -135,7 +135,26 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
     ]);
     
     if (!homeId || !awayId) {
-      console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
+      
+    /* __NORMALIZE_FALLBACK__ */
+    try {
+      if ((homeId == null || awayId == null) && process.env.API_FOOTBALL_KEY) {
+        const _fetch = global.fetch || (await import('node-fetch')).default;
+        const pickId = async (rawName) => {
+          const q = normalizeTeamName(rawName);
+          if (!q) return null;
+          const url = `https://v3.football.api-sports.io/teams?search=${encodeURIComponent(q)}`;
+          const r = await _fetch(url, { headers: { 'x-apisports-key': process.env.API_FOOTBALL_KEY } });
+          const j = await r.json().catch(()=>null);
+          const hit = j && j.response && j.response[0] && j.response[0].team && j.response[0].team.id;
+          return hit || null;
+        };
+        if (homeId == null) homeId = await pickId(home);
+        if (awayId == null) awayId = await pickId(away);
+      }
+    } catch(_) { /* swallow */ }
+    /* __END_NORMALIZE_FALLBACK__ */
+console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
       
       // --- Fallback opcional por tiempo + similaridad ---
       if (String(process.env.AF_MATCH_TIME_SIM) === '1') {  if (process.env.DEBUG_TRACE === '1') console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR });
