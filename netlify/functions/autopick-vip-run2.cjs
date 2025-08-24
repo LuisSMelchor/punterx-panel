@@ -38,13 +38,11 @@ exports.handler = async (event, context) => {
 
     // 3) Preparar evento delegado
     const inHeaders = Object.assign({}, headers);
-    // Inyecta auth solo para ejecuciones programadas (cron)
-    if ((isScheduled || qbool(qs.manual)) if (isScheduled && process.env.AUTH_CODE)if (isScheduled && process.env.AUTH_CODE) process.env.AUTH_CODE) {
+    // Inyecta auth solo para ejecuciones programadas (cron o manual)
+    if ((isScheduled || qbool(qs.manual)) && process.env.AUTH_CODE) {
       inHeaders["x-auth"] = process.env.AUTH_CODE;
       inHeaders["x-auth-code"] = process.env.AUTH_CODE;
     }
-
-    // Si viene scheduled o manual=1: forzamos la ruta "manual"
     const forceManual = isScheduled || qbool(qs.manual);
     const newQs = Object.assign({}, qs);
 
