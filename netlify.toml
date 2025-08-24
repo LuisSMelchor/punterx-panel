@@ -18,6 +18,3 @@
   status = 200
   force = true
 
-[functions."autopick-vip-run2"]
-  schedule = "*/15 * * * *"
-  node_bundler = "zisi"
