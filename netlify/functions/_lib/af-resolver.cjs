@@ -242,4 +242,27 @@ async function resolveTeamsAndLeague(evt = {}, opts = {}) {
   }
 }
 
-module.exports = { sim, pickTeamId, resolveTeamsAndLeague };
+
+/**
+ * Wrapper canónico: NO usa alias ni nombres fijos.
+ * Busca por nombres (normalizados internamente por el propio módulo) y
+ * usa el selector ya existente para elegir el fixture correcto.
+ */
+async function resolveTeamsAndLeague(evt = {}, opts = {}) {
+  const home = evt.home || evt.home_team || (evt.teams && evt.teams.home && evt.teams.home.name) || '';
+  const away = evt.away || evt.away_team || (evt.teams && evt.teams.away && evt.teams.away.name) || '';
+  const liga = evt.liga || evt.league || evt.league_name || '';
+
+  // Hints opcionales (no obligatorios)
+  const commence = evt.commence || evt.commence_time || evt.commenceTime || null;
+
+  // 1) Buscar lista de posibles fixtures por nombres
+  const list = await searchFixturesByNames(home, away, { leagueHint: liga, commence, ...opts });
+
+  // 2) Resolver el mejor fixture de esa lista
+  return resolveFixtureFromList(list, { home, away, liga, commence, ...opts });
+}
+
+module.exports = { afApi,
+  searchFixturesByNames,
+  resolveFixtureFromList, resolveTeamsAndLeague };
