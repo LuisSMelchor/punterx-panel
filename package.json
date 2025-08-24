@@ -18,5 +18,8 @@
     "dotenv": "^16.6.1",
     "node-fetch": "^3.3.2",
     "openai": "^4.104.0"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.38.1"
   }
 }

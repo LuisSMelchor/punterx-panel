@@ -2,7 +2,7 @@
 
 // Eliminar diacríticos y estandarizar
 function stripDiacritics(s='') {
-  return s.normalize('NFD').replace(/\p{M}+/gu, ''); // \p{M} = marcas combinantes (acentos)
+  return s.normalize('NFKD').replace(/\p{M}+/gu, ''); // \p{M} = marcas combinantes (acentos)
 }
 
 // Quitar sufijos comunes de clubes (IF, BK, FC, SC, etc.)
