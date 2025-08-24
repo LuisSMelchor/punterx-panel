@@ -137,7 +137,7 @@ cron = "0 5 * * *"
 
 
 
-[functions."diag-require"]
+[functions."diag-require"][functions."diag-require"]
   included_files = [
     "netlify/functions/_logger.cjs",
     "netlify/functions/_diag-core-v4.cjs",
@@ -176,7 +176,7 @@ schedule = "*/10 * * * *"
 # ----------------
 # Redirects útiles
 # ----------------
-[[redirects]]
+[[redirects]][[redirects]]
   from = "/diag"
   to = "/.netlify/functions/diagnostico-total"
   status = 200
@@ -211,6 +211,3 @@ schedule = "*/10 * * * *"
   ]
 
   schedule = "*/15 * * * *"
-[[scheduled.functions]]
-path = "autopick-vip-run2"
-schedule = "*/15 * * * *"
