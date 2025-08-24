@@ -1,55 +1,143 @@
 // netlify/functions/_lib/match-helper.cjs
 'use strict';
 
-/**
- * Helper de matching contra API-FOOTBALL con fallback por normalización.
- * - No usa alias fijos ni listas de nombres.
- * - Lee knobs desde match-config.cjs
- */
-
-const { STRICT_MATCH, SIM_THR, TIME_PAD_MIN } = require('./match-config.cjs');
 const { normalizeTeamName } = require('./name-normalize.cjs');
-const { pickTeamId } = require('./af-resolver.cjs');
+const { STRICT_MATCH, SIM_THR, TIME_PAD_MIN } = require('./match-config.cjs');
+// usamos SOLO funciones del resolver; nada de alias fijos
+const {
+  searchFixturesByNames,
+  resolveFixtureFromList,
+  pickTeamId,
+  sim,
+} = require('./af-resolver.cjs');
 
-function pickEvtName(evt, side){
-  return evt?.[side + '_team'] || evt?.[side] || evt?.teams?.[side]?.name || '';
-}
+/**
+ * Resolución dinámica de teams/league SIN nombres fijos:
+ * - Normaliza strings (sin diacríticos, sin sufijos de club, etc.).
+ * - Busca candidatos en AF por nombres crudos (el módulo ya normaliza internamente).
+ * - Selecciona el mejor fixture por similitud y cercanía temporal (SIM_THR, TIME_PAD_MIN).
+ * - Fallback: obtiene team IDs con búsqueda por nombre (raw -> norm) SIN alias.
+ */
+async function resolveTeamsAndLeague(evt = {}, _afApiIgnored) {
+  const home =
+    evt.home ||
+    evt.home_team ||
+    (evt.teams && evt.teams.home && evt.teams.home.name) ||
+    '';
+  const away =
+    evt.away ||
+    evt.away_team ||
+    (evt.teams && evt.teams.away && evt.teams.away.name) ||
+    '';
+  const liga = evt.liga || evt.league || evt.league_name || evt.leagueName || '';
 
-async function fetchAFTeamId(name){
-  return pickTeamId(name);
-}
+  const commence =
+    evt.commence || evt.commence_time || evt.commenceTime || null;
 
-async function resolveEvent(evt={}, opts={}){
-  const home = pickEvtName(evt, 'home');
-  const away = pickEvtName(evt, 'away');
-  const liga = evt?.league || evt?.league_name || evt?.sport_key || '';
-  let homeId = await fetchAFTeamId(home);
-  let awayId = await fetchAFTeamId(away);
+  // Normalizaciones (para logs y fallback)
+  const normH = normalizeTeamName(home);
+  const normA = normalizeTeamName(away);
 
-  // Fallback solo si falta alguno
-  if (!homeId || !awayId){
-    const nh = normalizeTeamName(home);
-    const na = normalizeTeamName(away);
-    if (!homeId) homeId = await fetchAFTeamId(nh);
-    if (!awayId) awayId = await fetchAFTeamId(na);
-    if (process.env.DEBUG_TRACE==='1'){
-      console.log('[normalize] raw', { home, away });
-      console.log('[normalize] norm', { nh, na, ids: { homeId, awayId } });
+  if (process.env.DEBUG_TRACE === '1') {
+    console.log('[MATCH-HELPER] ver mh-2025-08-24g');
+    console.log('[MATCH-HELPER] knobs', {
+      TIME_PAD_MIN,
+      SIM_THR,
+      STRICT_MATCH,
+    });
+    console.log('[MATCH-HELPER] start resolve', {
+      home,
+      away,
+      league: liga,
+      commence,
+    });
+    console.log('[MATCH-HELPER] normalized', {
+      normH,
+      normA,
+      ids: { h: null, a: null },
+    });
+  }
+
+  // 1) Buscar fixtures candidatos por nombres (sin alias fijos)
+  let candidates = [];
+  try {
+    candidates = await searchFixturesByNames(home, away, {
+      leagueHint: liga || undefined, // pista textual solamente
+      commence,
+    });
+  } catch (e) {
+    if (process.env.DEBUG_TRACE === '1') {
+      console.warn('[MATCH-HELPER] searchFixturesByNames error', e?.message || e);
     }
   }
 
-  if (homeId && awayId){
-    return { ok:true, reason:null, confidence:1, home, away, liga, homeId, awayId };
+  // 2) Elegir el mejor candidato dinámicamente
+  let best = null;
+  try {
+    if (Array.isArray(candidates) && candidates.length) {
+      best = resolveFixtureFromList(candidates, {
+        home,
+        away,
+        leagueHint: liga || undefined,
+        commence,
+        simThr: SIM_THR,       // umbral configurable (env)
+        timePadMin: TIME_PAD_MIN,
+        debug: process.env.DEBUG_TRACE === '1',
+      });
+    }
+  } catch (e) {
+    if (process.env.DEBUG_TRACE === '1') {
+      console.warn('[MATCH-HELPER] resolveFixtureFromList error', e?.message || e);
+    }
   }
 
-  return {
-    ok:false,
-    reason:'sin_team_id',
-    confidence:null,
-    home, away, liga,
-    homeId: homeId || null,
-    awayId: awayId || null,
+  // 3) Si hay fixture consistente, lo devolvemos
+  if (best && (best.fixture_id || best.fixtureId)) {
+    const payload = {
+      ok: true,
+      reason: 'fixture_selected',
+      confidence: best.score ?? null,
+      fixture_id: best.fixture_id || best.fixtureId,
+      homeId: best.homeId ?? null,
+      awayId: best.awayId ?? null,
+      home,
+      away,
+      liga,
+    };
+    if (process.env.DEBUG_TRACE === '1') {
+      console.log('[MATCH-HELPER] selected', payload);
+    }
+    return payload;
+  }
+
+  // 4) Fallback: obtener team IDs SOLO por búsqueda textual (raw -> norm)
+  let homeId = null;
+  let awayId = null;
+  try {
+    homeId = (await pickTeamId(home)) || (await pickTeamId(normH)) || null;
+    awayId = (await pickTeamId(away)) || (await pickTeamId(normA)) || null;
+  } catch (e) {
+    if (process.env.DEBUG_TRACE === '1') {
+      console.warn('[MATCH-HELPER] pickTeamId fallback error', e?.message || e);
+    }
+  }
+
+  const okTeams = Boolean(homeId && awayId);
+  const payload = {
+    ok: okTeams || (STRICT_MATCH ? false : null),
+    reason: okTeams ? 'team_ids_fallback' : 'no_match',
+    confidence: null,
+    fixture_id: null,
+    homeId,
+    awayId,
+    home,
+    away,
+    liga,
   };
+  if (process.env.DEBUG_TRACE === '1') {
+    console.log('[MATCH-HELPER] rsl=', payload);
+  }
+  return payload;
 }
 
-module.exports = { resolveEvent, fetchAFTeamId, normalizeTeamName };
+module.exports = { sim, pickTeamId, resolveTeamsAndLeague };
