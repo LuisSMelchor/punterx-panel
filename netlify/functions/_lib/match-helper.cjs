@@ -1,14 +1,12 @@
 'use strict';
-const MATCH_HELPER_VER='mh-2025-08-24f';
-const STRICT_MATCH = String(process.env.STRICT_MATCH)==='1';
-const SIM_THR      = parseFloat(process.env.AF_MIN_SIM || '0.84');
-const TIME_PAD_MIN = parseInt(process.env.TIME_PAD_MIN || '15',10);
-if (process.env.DEBUG_TRACE==='1') {
-  console.log('[MATCH-HELPER] ver', MATCH_HELPER_VER);
-  console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR, STRICT_MATCH });
+
+
+const { STRICT_MATCH, SIM_THR, TIME_PAD_MIN } = require('./match-config.cjs');
+if (process.env.DEBUG_TRACE==='1') { {; }
+
 }
 // netlify/functions/_lib/match-helper.cjs
-if(process.env.DEBUG_TRACE==='1') // CommonJS — Resolver interno para mapear eventos de OddsAPI → fixture_id de API‑Football
+if (process.env.DEBUG_TRACE==='1') { // CommonJS — Resolver interno para mapear eventos de OddsAPI → fixture_id de API‑Football; }
 // Estrategia: (1) normalizar nombres → (2) buscar ids de equipos con /teams?search → (3) fixtures por fecha/equipo → cruce de rival
 
 const strip = (s = '') => s
@@ -123,9 +121,9 @@ async function fetchAFTeamId(afApi, rawName) {
  * @returns {Object} { ok, fixture_id?, league_id?, country?, reason? }
  */
 async function resolveTeamsAndLeague(evt, { afApi } = {}) {
-      const TIME_PAD_MIN = parseInt(process.env.TIME_PAD_MIN || '15',10);
-  const SIM_THR = parseFloat(process.env.AF_MIN_SIM || '0.84');
-  if (process.env.DEBUG_TRACE === '1')try {
+
+
+  if (process.env.DEBUG_TRACE==='1') { try {; }
     const home = evt?.home_team || evt?.home || evt?.teams?.home?.name;
     const away = evt?.away_team || evt?.away || evt?.teams?.away?.name;
     const commence = ensureUtcDate(evt?.commence_time || evt?.start_time || evt?.commenceTime);
@@ -167,24 +165,24 @@ const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
       try {
         const nh = normalizeTeamName(home);
         const na = normalizeTeamName(away);
-        if (process.env.DEBUG_TRACE==='1') { console.log('[normalize] intent', { raw:{home,away}, norm:{nh,na} }); }
+        if (process.env.DEBUG_TRACE==='1') { { console.log('[normalize] intent', { raw:{home,away}, norm:{nh,na} }); } }
         if (homeId==null || awayId==null) {
           const [h2,a2] = await Promise.all([ pickId(nh), pickId(na) ]);
-          if (process.env.DEBUG_TRACE==='1') { console.log('[normalize] retry ids', { h2, a2 }); }
+          if (process.env.DEBUG_TRACE==='1') { { console.log('[normalize] retry ids', { h2, a2 }); } }
           if (homeId==null) homeId = h2;
           if (awayId==null) awayId = a2;
         }
       } catch(e) {
-        if (process.env.DEBUG_TRACE==='1') { console.warn('[normalize] retry error', e?.message||e); }
+        if (process.env.DEBUG_TRACE==='1') { { console.warn('[normalize] retry error', e?.message||e); } }
       }
   
       console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
       
       // --- Fallback opcional por tiempo + similaridad ---
-      if (String(process.env.AF_MATCH_TIME_SIM) === '1') {  if (process.env.DEBUG_TRACE==='1') { console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR }); }
+      if (String(process.env.AF_MATCH_TIME_SIM) === '1') {  if (process.env.DEBUG_TRACE==='1') { { console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR }); } }
 
         try {
-          const TIME_PAD_MIN = Number(process.env.AF_MATCH_TIME_PAD_MIN || 15); // ±15 min por defecto
+
           const THRESH = Number(process.env.AF_MATCH_SIM_THRESHOLD || 0.88);   // 0.88 por defecto
           const rFx = await afApi('/fixtures', { date: dateYMD, timezone: 'UTC' }); // Fixtures del día (forzado a UTC)
           const list = Array.isArray(rFx?.response) ? rFx.response : [];
