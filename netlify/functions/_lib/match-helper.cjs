@@ -155,7 +155,23 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
       }
     } catch(_) { /* swallow */ }
     /* __END_NORMALIZE_FALLBACK__ */
-console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
+
+      /* __NORMALIZE_FALLBACK_v2__ */
+      try {
+        const nh = normalizeTeamName(home);
+        const na = normalizeTeamName(away);
+        if (process.env.DEBUG_TRACE==='1') console.log('[normalize] intent', { raw:{home,away}, norm:{nh,na} });
+        if (homeId==null || awayId==null) {
+          const [h2,a2] = await Promise.all([ pickId(nh), pickId(na) ]);
+          if (process.env.DEBUG_TRACE==='1') console.log('[normalize] retry ids', { h2, a2 });
+          if (homeId==null) homeId = h2;
+          if (awayId==null) awayId = a2;
+        }
+      } catch(e) {
+        if (process.env.DEBUG_TRACE==='1') console.warn('[normalize] retry error', e?.message||e);
+      }
+  
+      console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
       
       // --- Fallback opcional por tiempo + similaridad ---
       if (String(process.env.AF_MATCH_TIME_SIM) === '1') {  if (process.env.DEBUG_TRACE === '1') console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR });
