@@ -10,7 +10,7 @@ const qbool = (v) => v === '1' || v === 'true' || v === 'yes';
 exports.handler = async (event, context) => {
   try {
     const qs = (event && event.queryStringParameters) || {};
-    const headers = (event && event.headers) || {};
+    let headers = (event && event.headers) || {};
     const isScheduled = !!headers['x-nf-scheduled'];
     const debug = qbool(qs.debug);
 
