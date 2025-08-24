@@ -15,7 +15,7 @@ exports.handler = async (event, context) => {
     const isScheduled = !!headers['x-nf-scheduled'];
     const debug = qbool(qs.debug);
 
-    // 1) Ping universal
+    // 1) Ping universal (siempre 200 JSON)
     if (qbool(qs.ping)) {
       return __json(200, { ok: true, ping: 'autopick-vip-run2 (pong)', scheduled: isScheduled });
     }
@@ -23,7 +23,7 @@ exports.handler = async (event, context) => {
     // 2) Carga diferida del impl (evita crash por ESM/CJS en top-level)
     let impl;
     try {
-      const rq = eval('require'); // importante para evitar bundling en frío
+      const rq = eval('require'); // clave para evitar bundling en frío
       impl = rq('./autopick-vip-nuevo-impl.cjs');
     } catch (e) {
       return __json(200, {
@@ -35,13 +35,14 @@ exports.handler = async (event, context) => {
       });
     }
 
-    // 3) Preparar evento delegado (inyecta auth en cron o manual)
+    // 3) Preparar evento delegado (inyecta auth cuando es cron o manual)
     const inHeaders = Object.assign({}, headers);
     if ((isScheduled || qbool(qs.manual)) && process.env.AUTH_CODE) {
       inHeaders['x-auth'] = process.env.AUTH_CODE;
       inHeaders['x-auth-code'] = process.env.AUTH_CODE;
     }
 
+    // Forzar modo manual si viene scheduled o ?manual=1
     const forceManual = isScheduled || qbool(qs.manual);
     const newQs = Object.assign({}, qs);
     if (forceManual) {
@@ -54,7 +55,7 @@ exports.handler = async (event, context) => {
       queryStringParameters: newQs,
     });
 
-    // 4) Delegar a impl.handler con manejo de errores y salida JSON
+    // 4) Delegar a impl.handler con manejo de errores y salida JSON garantizada
     if (!impl || typeof impl.handler !== 'function') {
       return __json(200, { ok: false, fatal: true, stage: 'impl', error: 'impl.handler no encontrado' });
     }
@@ -71,11 +72,10 @@ exports.handler = async (event, context) => {
       });
     }
 
+    // 5) Normalizar salida a JSON
     if (!res || typeof res.statusCode !== 'number') {
       return __json(200, { ok: false, stage: 'impl.response', error: 'Respuesta inválida de impl' });
     }
-
-    // Fuerza JSON si no viene marcado
     if (!res.headers || String(res.headers['content-type'] || '').indexOf('application/json') === -1) {
       try {
         const parsed = typeof res.body === 'string' ? JSON.parse(res.body) : res.body;
@@ -84,7 +84,6 @@ exports.handler = async (event, context) => {
         return __json(200, { ok: false, stage: 'impl.response', error: 'impl devolvió body no-JSON' });
       }
     }
-
     return res;
 
   } catch (e) {
