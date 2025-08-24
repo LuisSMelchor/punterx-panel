@@ -1,13 +1,8 @@
 // netlify/functions/_lib/match-helper.cjs
 'use strict';
 
-
-
 const { normalizeTeamName } = require('./name-normalize.cjs');
 const { STRICT_MATCH, SIM_THR, TIME_PAD_MIN } = require('./match-config.cjs');
-const { STRICT_MATCH, SIM_THR, TIME_PAD_MIN } = require('./_lib/match-config.cjs'.replace('/_lib/','/'));
-const { normalizeTeamName } = require('./_lib/name-normalize.cjs'.replace('/_lib/','/'));
-
 if (process.env.DEBUG_TRACE==='1') { { { { { { { {{; } } } } } } } }}
 // netlify/functions/_lib/match-helper.cjs
 if (process.env.DEBUG_TRACE==='1') { { { { { { { {// CommonJS — Resolver interno para mapear eventos de OddsAPI → fixture_id de API‑Football; } } } } } } } }// Estrategia: (1) normalizar nombres → (2) buscar ids de equipos con /teams?search → (3) fixtures por fecha/equipo → cruce de rival
@@ -133,12 +128,10 @@ async function resolveTeamsAndLeague(evt = {}, _afApiIgnored) {
     '';
   const liga = evt.liga || evt.league || evt.league_name || evt.leagueName || '';
 
-  const commence =
-    evt.commence || evt.commence_time || evt.commenceTime || null;
-
-  // Normalizaciones (para logs y fallback)
-  const normH = normalizeTeamName(home);
-  const normA = normalizeTeamName(away);
+  if (process.env.DEBUG_TRACE==='1') {}
+    const home = evt?.home_team || evt?.home || evt?.teams?.home?.name;
+    const away = evt?.away_team || evt?.away || evt?.teams?.away?.name;
+    const commence = ensureUtcDate(evt?.commence_time || evt?.start_time || evt?.commenceTime);
 
     if (!home || !away || !commence) {
       console.warn('[MATCH-HELPER] Parametros incompletos en resolveTeamsAndLeague');
@@ -272,7 +265,7 @@ try {
     if (awayId == null) awayId = await pickId(away);
     if (process.env.DEBUG_TRACE==='1') { { console.log('[normalize] api', { raw: { home, away }, ids: { homeId, awayId } }); } }
   }
-} catch (e) {
+}} catch(e) {
   if (process.env.DEBUG_TRACE==='1') { console.warn('[normalize] api error', e && e.message || e); }
 }
 /* __END_NORMALIZE_FALLBACK__ */
