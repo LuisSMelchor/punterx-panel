@@ -5,54 +5,51 @@ const __json = (code, obj) => ({
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify(obj),
 });
-
 const qbool = (v) => v === '1' || v === 'true' || v === 'yes';
 
-exports.handler =
- async (event, context) => {
+exports.handler = async (event, context) => {
   try {
     const qs = (event && event.queryStringParameters) || {};
     const headers = (event && event.headers) || {};
     const isScheduled = !!headers['x-nf-scheduled'];
     const debug = qbool(qs.debug);
 
-
-    // Ruta de depuración: ?ls=1 → lista archivos disponibles en la carpeta de la función
-    try {
-      const rq = eval('require');
-      var _fs = rq('fs'), _path = rq('path');
-    } catch {}
-    if (qbool(qs.ls)) {
-      try {
-        const dir = __dirname;
-        const files = _fs ? _fs.readdirSync(dir) : [];
-        return {
-          statusCode: 200,
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ok:true, dir, files })
-        };
-      } catch (e) {
-        return {
-          statusCode: 200,
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ok:false, stage:'ls', error: (e && e.message) || String(e) })
-        };
-      }
-    }
-    // 1) Ping universal (siempre 200 JSON)
+    // 0) PING (siempre 200 JSON)
     if (qbool(qs.ping)) {
       return __json(200, { ok: true, ping: 'autopick-vip-run2 (pong)', scheduled: isScheduled });
     }
 
-    // 2) Carga diferida del impl (evita crash por ESM/CJS en top-level)
+    // 0.1) DEBUG FS: listar __dirname o LAMBDA_TASK_ROOT ANTES de cargar el impl
+    if (qbool(qs.ls) || qbool(qs.lsroot)) {
+      try {
+        const rq = eval('require');
+        const _fs = rq('fs');
+        const dir = qbool(qs.lsroot) && process.env.LAMBDA_TASK_ROOT
+          ? process.env.LAMBDA_TASK_ROOT
+          : __dirname;
+        const files = _fs.readdirSync(dir).sort();
+        return __json(200, { ok: true, dir, __dirname, LAMBDA_TASK_ROOT: process.env.LAMBDA_TASK_ROOT || null, files });
+      } catch (e) {
+        return __json(200, { ok: false, stage: 'ls', error: (e && e.message) || String(e) });
+      }
+    }
+
+    // 1) Carga diferida del impl (evita crash por ESM/CJS en top-level)
     let impl;
     try {
-      const rq = eval('require'); // clave para evitar bundling en frío
-      {
+      const rq = eval('require');                    // evita bundling en frío
       const path = rq('path');
-      const implPath = path.join(__dirname, 'autopick-vip-nuevo-impl.cjs');
+      const fsx = rq('fs');
+
+      // Ruta 1: impl junto a la función (zisi suele dejar /var/task/netlify/functions/)
+      let implPath = path.join(__dirname, 'autopick-vip-nuevo-impl.cjs');
+      if (!fsx.existsSync(implPath) && process.env.LAMBDA_TASK_ROOT) {
+        // Ruta 2: raíz del bundle (esbuild suele dejar /var/task/)
+        const alt = path.join(process.env.LAMBDA_TASK_ROOT, 'netlify/functions', 'autopick-vip-nuevo-impl.cjs');
+        if (fsx.existsSync(alt)) implPath = alt;
+      }
+
       impl = rq(implPath);
-    }
     } catch (e) {
       return __json(200, {
         ok: false,
@@ -63,7 +60,7 @@ exports.handler =
       });
     }
 
-    // 3) Preparar evento delegado (inyecta auth cuando es cron o manual)
+    // 2) Preparar evento delegado (inyecta auth cuando es cron o manual)
     const inHeaders = Object.assign({}, headers);
     if ((isScheduled || qbool(qs.manual)) && process.env.AUTH_CODE) {
       inHeaders['x-auth'] = process.env.AUTH_CODE;
@@ -83,7 +80,7 @@ exports.handler =
       queryStringParameters: newQs,
     });
 
-    // 4) Delegar a impl.handler con manejo de errores y salida JSON garantizada
+    // 3) Delegar a impl.handler con manejo de errores y salida JSON garantizada
     if (!impl || typeof impl.handler !== 'function') {
       return __json(200, { ok: false, fatal: true, stage: 'impl', error: 'impl.handler no encontrado' });
     }
@@ -100,7 +97,7 @@ exports.handler =
       });
     }
 
-    // 5) Normalizar salida a JSON
+    // 4) Normalizar salida a JSON
     if (!res || typeof res.statusCode !== 'number') {
       return __json(200, { ok: false, stage: 'impl.response', error: 'Respuesta inválida de impl' });
     }
@@ -115,11 +112,6 @@ exports.handler =
     return res;
 
   } catch (e) {
-    return __json(200, {
-      ok: false,
-      fatal: true,
-      stage: 'wrapper.catch',
-      error: (e && e.message) || String(e),
-    });
+    return __json(200, { ok: false, fatal: true, stage: 'wrapper.catch', error: (e && e.message) || String(e) });
   }
 };
