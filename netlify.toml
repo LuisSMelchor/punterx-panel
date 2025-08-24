@@ -22,15 +22,10 @@
 
 
 [functions."autopick-vip-run2"]
-  # Programa cada 15 minutos
-
-  # esbuild copiará estas dependencias dentro del ZIP
   external_node_modules = [
     "@supabase/supabase-js",
     "openai"
   ]
-
-  # Asegura que el impl y helpers estén en el bundle
   included_files = [
     "netlify/functions/autopick-vip-nuevo-impl.cjs",
     "netlify/functions/_lib/**",
@@ -39,3 +34,4 @@
     "netlify/functions/_corazonada.cjs",
     "prompts_punterx.md"
   ]
+
