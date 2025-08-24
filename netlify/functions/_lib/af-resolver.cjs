@@ -263,6 +263,37 @@ async function resolveTeamsAndLeague(evt = {}, opts = {}) {
   return resolveFixtureFromList(list, { home, away, liga, commence, ...opts });
 }
 
-module.exports = { afApi,
-  searchFixturesByNames,
-  resolveFixtureFromList, resolveTeamsAndLeague };
+module.exports = { afApi, searchFixturesByNames, resolveFixtureFromList, resolveTeamsAndLeague, sim, pickTeamId };
+
+
+/** Similaridad tipo Dice (bigrams) sobre strings normalizados */
+function sim(a = '', b = '') {
+  const norm = (t) => String(t).toLowerCase().normalize('NFD').replace(/\p{M}+/gu,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+  const A = norm(a), B = norm(b);
+  if (!A || !B) return 0;
+  const grams = (t) => { const g=new Map(); for(let i=0;i<t.length-1;i++){ const bg=t.slice(i,i+2); g.set(bg,(g.get(bg)||0)+1);} return g; };
+  const GA = grams(A), GB = grams(B);
+  let overlap = 0;
+  for (const [bg, cntA] of GA) {
+    const cntB = GB.get(bg) || 0;
+    overlap += Math.min(cntA, cntB);
+  }
+  const sizeA = Array.from(GA.values()).reduce((a,b)=>a+b,0);
+  const sizeB = Array.from(GB.values()).reduce((a,b)=>a+b,0);
+  return sizeA+sizeB ? (2*overlap)/(sizeA+sizeB) : 0;
+}
+
+
+/**
+ * pickTeamId(afApi, name): intenta delegar en afApi si existe; si no, null.
+ * NO hace fetch ni requiere API_KEY en "require-time".
+ */
+function pickTeamId(afApi, name) {
+  if (!name) return null;
+  try {
+    if (afApi && typeof afApi.pickTeamId === 'function') {
+      return afApi.pickTeamId(name) ?? null;
+    }
+  } catch(_) {}
+  return null;
+}
