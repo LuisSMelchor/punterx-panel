@@ -62,6 +62,16 @@ exports.handler = async (event, context) => {
 
     // 2) Preparar evento delegado (inyecta auth cuando es cron o manual)
     const inHeaders = Object.assign({}, headers);
+    // Inyecta AUTH en todas las variantes que podría leer el impl
+    if ((isScheduled || qbool(qs.manual)) && process.env.AUTH_CODE) {
+      inHeaders["x-auth"] = process.env.AUTH_CODE;
+      inHeaders["x-auth-code"] = process.env.AUTH_CODE;
+      inHeaders["authorization"] = "Bearer " + process.env.AUTH_CODE;
+      inHeaders["x-api-key"] = process.env.AUTH_CODE;
+    }
+    // Propaga YA al wrapper, para que el gate de auth las vea
+    headers = inHeaders;
+    try { event.headers = inHeaders } catch(e) {}
     if ((isScheduled || qbool(qs.manual)) && process.env.AUTH_CODE) {
       inHeaders['x-auth'] = process.env.AUTH_CODE;
       inHeaders['x-auth-code'] = process.env.AUTH_CODE;
