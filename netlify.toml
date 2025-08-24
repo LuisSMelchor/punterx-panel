@@ -23,7 +23,6 @@
 
 [functions."autopick-vip-run2"]
   # Programa cada 15 minutos
-  schedule = "*/15 * * * *"
 
   # esbuild copiará estas dependencias dentro del ZIP
   external_node_modules = [
