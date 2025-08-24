@@ -6,12 +6,6 @@
   node_bundler = "esbuild"
   included_files = ["netlify/functions/_lib/**"]
 
-[functions."autopick-vip-run2"]
-  schedule = "*/15 * * * *"
-  from = "/diag"
-  to   = "/.netlify/functions/diagnostico-total"
-  status = 200
-
 [[redirects]]
   from = "/telegram/webhook"
   to   = "/.netlify/functions/telegram-webhook"
@@ -23,3 +17,7 @@
   to   = "/.netlify/functions/tg_trial_webhook"
   status = 200
   force = true
+
+[functions."autopick-vip-run2"]
+  schedule = "*/15 * * * *"
+  node_bundler = "zisi"
