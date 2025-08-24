@@ -82,7 +82,6 @@ exports.handler = async (event, context) => {
     if (debug) {
       try {
         const seen = { xauth: headers["x-auth"], xauthc: headers["x-auth-code"] };
-        console.log("[run2] auth_probe", JSON.stringify(seen));
       } catch {}
     }
     const newQs = Object.assign({}, qs);
