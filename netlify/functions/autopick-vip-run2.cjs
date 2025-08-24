@@ -8,13 +8,37 @@ const __json = (code, obj) => ({
 
 const qbool = (v) => v === '1' || v === 'true' || v === 'yes';
 
-exports.handler = async (event, context) => {
+exports.handler =
+ async (event, context) => {
   try {
     const qs = (event && event.queryStringParameters) || {};
     const headers = (event && event.headers) || {};
     const isScheduled = !!headers['x-nf-scheduled'];
     const debug = qbool(qs.debug);
 
+
+    // Ruta de depuración: ?ls=1 → lista archivos disponibles en la carpeta de la función
+    try {
+      const rq = eval('require');
+      var _fs = rq('fs'), _path = rq('path');
+    } catch {}
+    if (qbool(qs.ls)) {
+      try {
+        const dir = __dirname;
+        const files = _fs ? _fs.readdirSync(dir) : [];
+        return {
+          statusCode: 200,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ok:true, dir, files })
+        };
+      } catch (e) {
+        return {
+          statusCode: 200,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ok:false, stage:'ls', error: (e && e.message) || String(e) })
+        };
+      }
+    }
     // 1) Ping universal (siempre 200 JSON)
     if (qbool(qs.ping)) {
       return __json(200, { ok: true, ping: 'autopick-vip-run2 (pong)', scheduled: isScheduled });
