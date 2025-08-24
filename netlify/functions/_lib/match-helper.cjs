@@ -145,7 +145,7 @@ const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
           const q = normalizeTeamName(rawName);
           if (!q) return null;
           const url = `https://v3.football.api-sports.io/teams?search=${encodeURIComponent(q)}`;
-          const r = await _fetch(url, { headers: { 'x-apisports-key': process.env.API_FOOTBALL_KEY });
+          const r = await _fetch(url, { headers: { 'x-apisports-key': process.env.API_FOOTBALL_KEY } });
           const j = await r.json().catch(()=>null);
           const hit = j && j.response && j.response[0] && j.response[0].team && j.response[0].team.id;
           return hit || null;
