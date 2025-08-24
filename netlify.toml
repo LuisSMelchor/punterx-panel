@@ -42,7 +42,6 @@
 # --------------------------------------
 # Autopick pre-match (cron frecuente)
 # --------------------------------------
-[functions."autopick-vip-run3"]
 [functions."autopick-outrights"]
   # CRON: cada 1 hora (ajusta si usabas otro)
   schedule = "0 * * * *"
