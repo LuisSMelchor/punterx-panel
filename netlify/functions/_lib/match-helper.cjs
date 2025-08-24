@@ -4,9 +4,9 @@
 
 const { normalizeTeamName } = require('./name-normalize.cjs');
 const { STRICT_MATCH, SIM_THR, TIME_PAD_MIN } = require('./match-config.cjs');
-if (process.env.DEBUG_TRACE==='1') { { {{; } } }}
+if (process.env.DEBUG_TRACE==='1') { { { {{; } } } }}
 // netlify/functions/_lib/match-helper.cjs
-if (process.env.DEBUG_TRACE==='1') { { {// CommonJS — Resolver interno para mapear eventos de OddsAPI → fixture_id de API‑Football; } } }// Estrategia: (1) normalizar nombres → (2) buscar ids de equipos con /teams?search → (3) fixtures por fecha/equipo → cruce de rival
+if (process.env.DEBUG_TRACE==='1') { { { {// CommonJS — Resolver interno para mapear eventos de OddsAPI → fixture_id de API‑Football; } } } }// Estrategia: (1) normalizar nombres → (2) buscar ids de equipos con /teams?search → (3) fixtures por fecha/equipo → cruce de rival
 
 const strip = (s = '') => s
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quitar acentos
@@ -161,15 +161,15 @@ const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
       try {
         const nh = normalizeTeamName(home);
         const na = normalizeTeamName(away);
-        if (process.env.DEBUG_TRACE==='1') { { { console.log('[normalize] intent', { raw: { home, away }, norm: { nh, na } }); } } }
+        if (process.env.DEBUG_TRACE==='1') { { { { console.log('[normalize] intent', { raw: { home, away }, norm: { nh, na } }); } } } }
         if (homeId==null || awayId==null) {
           const [h2,a2] = await Promise.all([ pickId(nh), pickId(na) ]);
-          if (process.env.DEBUG_TRACE==='1') { { {{ console.log('[normalize] retry ids', { h2, a2 }); } } }}
+          if (process.env.DEBUG_TRACE==='1') { { { {{ console.log('[normalize] retry ids', { h2, a2 }); } } } }}
           if (homeId==null) homeId = h2;
           if (awayId==null) awayId = a2;
         }
 } catch(e) {
-        if (process.env.DEBUG_TRACE==='1') { { {{ console.warn('[normalize] retry error', e?.message||e); } } }}
+        if (process.env.DEBUG_TRACE==='1') { { { {{ console.warn('[normalize] retry error', e?.message||e); } } } }}
       
       try {
         if (homeId == null || awayId == null) {
@@ -185,7 +185,7 @@ const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
         }
       }
 } catch(e) {
-        if (process.env.DEBUG_TRACE==='1') { { console.warn('[normalize] fallback error', e && e.message || e); } }
+        if (process.env.DEBUG_TRACE==='1') { { { console.warn('[normalize] fallback error', e && e.message || e); } } }
       }
   
       
@@ -211,13 +211,36 @@ const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
         }
       }
 } catch(e) {
-        if (process.env.DEBUG_TRACE==='1') { { console.warn('[normalize] fallback error', (e && e.message) || e); } }
+        if (process.env.DEBUG_TRACE==='1') { { { console.warn('[normalize] fallback error', (e && e.message) || e); } } }
       }
       /* __END_NORMALIZE_FALLBACK_CANON__ */
+
+      /* __NORMALIZE_FALLBACK__ */
+      try {
+        if ((homeId == null || awayId == null) && process.env.API_FOOTBALL_KEY) {
+          const _fetch = global.fetch || (await import('node-fetch')).default;
+          const pickId = async (rawName) => {
+            const q = normalizeTeamName(rawName);
+            if (!q) return null;
+            const url = `https://v3.football.api-sports.io/teams?search=${encodeURIComponent(q)}`;
+            const r = await _fetch(url, { headers: { 'x-apisports-key': process.env.API_FOOTBALL_KEY } });
+            const j = await r.json().catch(() => null);
+            const hit = j && j.response && j.response[0] && j.response[0].team && j.response[0].team.id;
+            return hit || null;
+          };
+          if (homeId == null) homeId = await pickId(home);
+          if (awayId == null) awayId = await pickId(away);
+          if (process.env.DEBUG_TRACE === '1') {
+            console.log('[normalize] raw',  { home, away });
+            console.log('[normalize] norm', { nh: normalizeTeamName(home), na: normalizeTeamName(away) });
+          }
+        }
+      } catch(e) { /* swallow */ }
+      /* __END_NORMALIZE_FALLBACK__ */
 console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
       
       // --- Fallback opcional por tiempo + similaridad ---
-      if (String(process.env.AF_MATCH_TIME_SIM) === '1') {  if (process.env.DEBUG_TRACE==='1') { { {{ console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR }); } } }}
+      if (String(process.env.AF_MATCH_TIME_SIM) === '1') {  if (process.env.DEBUG_TRACE==='1') { { { {{ console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR }); } } } }}
 
         try {
 
