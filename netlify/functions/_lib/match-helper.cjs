@@ -129,7 +129,7 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
     const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
 
     // 1) Resolver team IDs
-    const [homeId, awayId] = await Promise.all([
+    let [homeId, awayId] = await Promise.all([
       fetchAFTeamId(afApi, home),
       fetchAFTeamId(afApi, away),
     ]);
