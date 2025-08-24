@@ -15,7 +15,7 @@ if (!API_FOOTBALL_KEY) {
 
 const MATCH_RESOLVE_CONFIDENCE = (() => {
   const v = Number(process.env.MATCH_RESOLVE_CONFIDENCE);
-  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.72;
+  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.80;
 })();
 
 const MATCH_LEAGUE_WEIGHT = (() => {
