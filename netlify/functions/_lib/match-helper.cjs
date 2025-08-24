@@ -1,4 +1,5 @@
 // netlify/functions/_lib/match-helper.cjs
+if(process.env.DEBUG_TRACE==='1') console.log('[MATCH-HELPER] STRICT_MATCH runtime', STRICT_MATCH?1:0);
 if (process.env.DEBUG_TRACE==='1') console.log('[MATCH-HELPER] ver', MATCH_HELPER_VER);
 // CommonJS — Resolver interno para mapear eventos de OddsAPI → fixture_id de API‑Football
 // Estrategia: (1) normalizar nombres → (2) buscar ids de equipos con /teams?search → (3) fixtures por fecha/equipo → cruce de rival
@@ -115,7 +116,7 @@ async function fetchAFTeamId(afApi, rawName) {
  * @returns {Object} { ok, fixture_id?, league_id?, country?, reason? }
  */
 async function resolveTeamsAndLeague(evt, { afApi } = {}) {
-      const TIME_PAD_MIN = parseInt(process.env.TIME_PAD_MIN || '15', 10);
+      const TIME_PAD_MIN = parseInt(process.env.TIME_PAD_MIN || '15',10);
   const SIM_THR = parseFloat(process.env.AF_MIN_SIM || '0.84');
   if (process.env.DEBUG_TRACE === '1')try {
     const home = evt?.home_team || evt?.home || evt?.teams?.home?.name;
