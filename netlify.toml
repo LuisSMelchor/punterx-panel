@@ -19,8 +19,13 @@
   force = true
 
 
+
 [functions."autopick-vip-run2"]
-  # Bundler: usamos el global (esbuild). Solo garantizamos que los archivos estén en el bundle:
+  # Usamos el bundler global (esbuild). Estas deps se copian tal cual en el ZIP:
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "openai"
+  ]
   included_files = [
     "netlify/functions/autopick-vip-nuevo-impl.cjs",
     "netlify/functions/_lib/**",
