@@ -39,4 +39,3 @@
     "netlify/functions/_corazonada.cjs",
     "prompts_punterx.md"
   ]
-  schedule = "*/15 * * * *"
