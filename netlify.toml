@@ -1,13 +1,203 @@
-[build]
-  command = "npm run build || echo 'no build step'; mkdir -p public"
-  publish = "public"
+# ===============================
+# Netlify config unificado PunterX
+# ===============================
 
+[build]
+  # Si no tienes build, este comando no falla y deja /public
+  command = "npm run build || echo 'no build step'; mkdir -p public"
+  publish  = "public"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+  TZ = "America/Mexico_City"
+
+# Defaults para TODAS las funciones
 [functions]
   node_bundler = "esbuild"
+  # El bundler debe empacar la carpeta _lib con los helpers usados por las funciones
   included_files = ["netlify/functions/_lib/**"]
 
+# -------------------------------
+# Diagnóstico (URL pública + cron)
+# -------------------------------
+# --- HTTP (URL pública) ---
+[functions."diagnostico-total"]
+  included_files = [
+    "netlify/functions/_supabase-client.cjs",
+    "netlify/functions/_diag-core-v4.cjs"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "openai",
+    "node-fetch"
+  ]
+
+# ---------------------------------------
+# Envíos (sin cron; endpoint HTTP público)
+# ---------------------------------------
+[functions."send"]
+  external_node_modules = ["node-fetch"]
+
+# --------------------------------------
+# Autopick pre-match (cron frecuente)
+# --------------------------------------
+[functions."autopick-vip-run3"]
+[functions."autopick-outrights"]
+  # CRON: cada 1 hora (ajusta si usabas otro)
+  schedule = "0 * * * *"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs",
+    "prompts_punterx.md",
+    "netlify/functions/_lib/**"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "openai",
+    "node-fetch"
+  ]
+
+# --------------------------------------
+# Análisis semanal (ej. lunes al mediodía)
+# --------------------------------------
+[functions."analisis-semanal"]
+  # CRON: lunes 12:00 (ajusta si usabas otro)
+  schedule = "0 12 * * MON"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+# --------------------------------------
+# Verificador de aciertos (regular)
+# --------------------------------------
+[functions."verificador-aciertos"]
+  # CRON: cada 30 minutos (ajusta si usabas otro)
+  schedule = "*/30 * * * *"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+# --------------------------------------
+# Memoria inteligente (mantenimiento regular)
+# --------------------------------------
+[functions."memoria-inteligente"]
+  # CRON: a los 15 de cada hora (ajusta si usabas otro)
+  schedule = "15 * * * *"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+# --------------------------------------
+# Check de estado (ligero y frecuente)
+# --------------------------------------
+[functions."check-status"]
+  # CRON: cada 10 minutos (ajusta si usabas otro)
+  schedule = "*/10 * * * *"
+  included_files = [
+    "netlify/functions/_supabase-client.cjs"
+  ]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+# --------------------------------------
+# Autopick LIVE (endpoint HTTP + helpers)
+# --------------------------------------
+[functions."autopick-live"]
+  node_bundler = "esbuild"
+  included_files = [
+    "netlify/functions/send.js",
+    "prompts_punterx.md",
+    "netlify/functions/_lib/**"
+  ]
+  external_node_modules = [
+    "node-fetch",
+    "@supabase/supabase-js",
+    "openai"
+  ]
+  timeout = 60
+
+
+
+[[scheduled.functions]]
+function = "check-expirados"
+cron = "0 5 * * *"
+
+
+
+[functions."diag-require"]
+  included_files = [
+    "netlify/functions/_logger.cjs",
+    "netlify/functions/_diag-core-v4.cjs",
+    "netlify/functions/_supabase-client.cjs",
+    "netlify/functions/_telemetry.cjs",
+    "netlify/functions/_users.cjs",
+    "netlify/functions/_corazonada.cjs",
+    "netlify/functions/_lib/**"
+  ]
+  external_node_modules = [
+    "openai",
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+[functions."diag-env"]
+  included_files = [
+    "netlify/functions/_logger.cjs",
+    "netlify/functions/_supabase-client.cjs",
+    "netlify/functions/_diag-core-v4.cjs",
+    "netlify/functions/_lib/**"
+  ]
+  external_node_modules = [
+    "openai",
+    "@supabase/supabase-js",
+    "node-fetch"
+  ]
+
+
+
+[[scheduled.functions]]
+path = "clv-settle"
+schedule = "*/10 * * * *"
+
+
+# ----------------
+# Redirects útiles
+# ----------------
+[[redirects]]
+  from = "/diag"
+  to = "/.netlify/functions/diagnostico-total"
+  status = 200
+
+# Webhook de Telegram
+[[redirects]]
+  from = "/telegram/webhook"
+  to = "/.netlify/functions/telegram-webhook"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/telegram/trial"
+  to = "/.netlify/functions/tg_trial_webhook"
+  status = 200
+  force = true
+
+
+
 [functions."autopick-vip-run2"]
-  schedule = "*/15 * * * *"
   included_files = [
     "netlify/functions/_supabase-client.cjs",
     "netlify/functions/_logger.cjs",
@@ -15,22 +205,12 @@
     "prompts_punterx.md",
     "netlify/functions/_lib/**"
   ]
-  external_node_modules = ["@supabase/supabase-js","openai"]
+  external_node_modules = [
+    "@supabase/supabase-js",
+    "openai",
+    "node-fetch"
+  ]
 
-# (mantengo tus redirects básicos; si no los usas, no pasa nada)
-[[redirects]]
-  from = "/diag"
-  to   = "/.netlify/functions/diagnostico-total"
-  status = 200
-
-[[redirects]]
-  from = "/telegram/webhook"
-  to   = "/.netlify/functions/telegram-webhook"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/telegram/trial"
-  to   = "/.netlify/functions/tg_trial_webhook"
-  status = 200
-  force = true
+[[scheduled.functions]]
+path = "autopick-vip-run2"
+schedule = "*/15 * * * *"
