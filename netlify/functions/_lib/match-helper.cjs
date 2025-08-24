@@ -1,3 +1,12 @@
+'use strict';
+const MATCH_HELPER_VER='mh-2025-08-24f';
+const STRICT_MATCH = String(process.env.STRICT_MATCH)==='1';
+const SIM_THR      = parseFloat(process.env.AF_MIN_SIM || '0.84');
+const TIME_PAD_MIN = parseInt(process.env.TIME_PAD_MIN || '15',10);
+if (process.env.DEBUG_TRACE==='1') {
+  console.log('[MATCH-HELPER] ver', MATCH_HELPER_VER);
+  console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR, STRICT_MATCH });
+}
 // netlify/functions/_lib/match-helper.cjs
 if(process.env.DEBUG_TRACE==='1') // CommonJS — Resolver interno para mapear eventos de OddsAPI → fixture_id de API‑Football
 // Estrategia: (1) normalizar nombres → (2) buscar ids de equipos con /teams?search → (3) fixtures por fecha/equipo → cruce de rival
@@ -45,7 +54,7 @@ function _jaro(a = '', b = '') {
     if (s1[i] !== s2[k]) transpositions++;
     k++;
   }
-  const jaro = (matches / s1.length + matches / s2.length + (matches - transpositions / 2) / matches) / 3;
+const jaro = (matches / s1.length + matches / s2.length + (matches - transpositions / 2) / matches) / 3;
   return jaro;
 }
 
@@ -125,8 +134,7 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
       console.warn('[MATCH-HELPER] Parametros incompletos en resolveTeamsAndLeague');
       return { ok: false, reason: 'incompleto' };
     }
-
-    const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
+const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
 
     // 1) Resolver team IDs
     let [homeId, awayId] = await Promise.all([
@@ -159,21 +167,21 @@ async function resolveTeamsAndLeague(evt, { afApi } = {}) {
       try {
         const nh = normalizeTeamName(home);
         const na = normalizeTeamName(away);
-        if (process.env.DEBUG_TRACE==='1') console.log('[normalize] intent', { raw:{home,away}, norm:{nh,na} });
+        if (process.env.DEBUG_TRACE==='1') { console.log('[normalize] intent', { raw:{home,away}, norm:{nh,na} }); }
         if (homeId==null || awayId==null) {
           const [h2,a2] = await Promise.all([ pickId(nh), pickId(na) ]);
-          if (process.env.DEBUG_TRACE==='1') console.log('[normalize] retry ids', { h2, a2 });
+          if (process.env.DEBUG_TRACE==='1') { console.log('[normalize] retry ids', { h2, a2 }); }
           if (homeId==null) homeId = h2;
           if (awayId==null) awayId = a2;
         }
       } catch(e) {
-        if (process.env.DEBUG_TRACE==='1') console.warn('[normalize] retry error', e?.message||e);
+        if (process.env.DEBUG_TRACE==='1') { console.warn('[normalize] retry error', e?.message||e); }
       }
   
       console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
       
       // --- Fallback opcional por tiempo + similaridad ---
-      if (String(process.env.AF_MATCH_TIME_SIM) === '1') {  if (process.env.DEBUG_TRACE === '1') console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR });
+      if (String(process.env.AF_MATCH_TIME_SIM) === '1') {  if (process.env.DEBUG_TRACE==='1') { console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR }); }
 
         try {
           const TIME_PAD_MIN = Number(process.env.AF_MATCH_TIME_PAD_MIN || 15); // ±15 min por defecto
