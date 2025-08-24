@@ -20,12 +20,18 @@
 
 
 
+
 [functions."autopick-vip-run2"]
-  # Usamos el bundler global (esbuild). Estas deps se copian tal cual en el ZIP:
+  # Programa cada 15 minutos
+  schedule = "*/15 * * * *"
+
+  # esbuild copiará estas dependencias dentro del ZIP
   external_node_modules = [
     "@supabase/supabase-js",
     "openai"
   ]
+
+  # Asegura que el impl y helpers estén en el bundle
   included_files = [
     "netlify/functions/autopick-vip-nuevo-impl.cjs",
     "netlify/functions/_lib/**",
