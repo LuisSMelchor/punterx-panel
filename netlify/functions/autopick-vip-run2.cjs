@@ -24,7 +24,11 @@ exports.handler = async (event, context) => {
     let impl;
     try {
       const rq = eval('require'); // clave para evitar bundling en frío
-      impl = rq('./autopick-vip-nuevo-impl.cjs');
+      {
+      const path = rq('path');
+      const implPath = path.join(__dirname, 'autopick-vip-nuevo-impl.cjs');
+      impl = rq(implPath);
+    }
     } catch (e) {
       return __json(200, {
         ok: false,

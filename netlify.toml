@@ -18,3 +18,14 @@
   status = 200
   force = true
 
+
+[functions."autopick-vip-run2"]
+  # Bundler: usamos el global (esbuild). Solo garantizamos que los archivos estén en el bundle:
+  included_files = [
+    "netlify/functions/autopick-vip-nuevo-impl.cjs",
+    "netlify/functions/_lib/**",
+    "netlify/functions/_logger.cjs",
+    "netlify/functions/_supabase-client.cjs",
+    "netlify/functions/_corazonada.cjs",
+    "prompts_punterx.md"
+  ]
