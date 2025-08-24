@@ -1,13 +1,12 @@
 'use strict';
 
 
-const { STRICT_MATCH, SIM_THR, TIME_PAD_MIN } = require('./match-config.cjs');
-if (process.env.DEBUG_TRACE==='1') { {; }
 
-}
+const { normalizeTeamName } = require('./name-normalize.cjs');
+const { STRICT_MATCH, SIM_THR, TIME_PAD_MIN } = require('./match-config.cjs');
+if (process.env.DEBUG_TRACE==='1') {{; }}
 // netlify/functions/_lib/match-helper.cjs
-if (process.env.DEBUG_TRACE==='1') { // CommonJS — Resolver interno para mapear eventos de OddsAPI → fixture_id de API‑Football; }
-// Estrategia: (1) normalizar nombres → (2) buscar ids de equipos con /teams?search → (3) fixtures por fecha/equipo → cruce de rival
+if (process.env.DEBUG_TRACE==='1') {// CommonJS — Resolver interno para mapear eventos de OddsAPI → fixture_id de API‑Football; }// Estrategia: (1) normalizar nombres → (2) buscar ids de equipos con /teams?search → (3) fixtures por fecha/equipo → cruce de rival
 
 const strip = (s = '') => s
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quitar acentos
@@ -42,9 +41,7 @@ function _jaro(a = '', b = '') {
     for (let j = start; j < end; j++) {
       if (s2Match[j] || s1[i] !== s2[j]) continue;
       s1Match[i] = true; s2Match[j] = true; matches++; break;
-    }
-  }
-  if (!matches) return 0;
+    }if (!matches) return 0;
   let k = 0;
   for (let i = 0; i < s1.length; i++) {
     if (!s1Match[i]) continue;
@@ -80,9 +77,7 @@ function _bigramDice(a = '', b = '') {
   let overlap = 0;
   for (const x of A) {
     const c = setB.get(x);
-    if (c > 0) { overlap++; setB.set(x, c - 1); }
-  }
-  return (2 * overlap) / (A.length + B.length);
+    if (c > 0) { overlap++; setB.set(x, c - 1); }return (2 * overlap) / (A.length + B.length);
 }
 
 function _simScore(aRaw = '', bRaw = '') {
@@ -123,7 +118,7 @@ async function fetchAFTeamId(afApi, rawName) {
 async function resolveTeamsAndLeague(evt, { afApi } = {}) {
 
 
-  if (process.env.DEBUG_TRACE==='1') { try {; }
+  if (process.env.DEBUG_TRACE==='1') {}
     const home = evt?.home_team || evt?.home || evt?.teams?.home?.name;
     const away = evt?.away_team || evt?.away || evt?.teams?.away?.name;
     const commence = ensureUtcDate(evt?.commence_time || evt?.start_time || evt?.commenceTime);
@@ -150,36 +145,49 @@ const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
           const q = normalizeTeamName(rawName);
           if (!q) return null;
           const url = `https://v3.football.api-sports.io/teams?search=${encodeURIComponent(q)}`;
-          const r = await _fetch(url, { headers: { 'x-apisports-key': process.env.API_FOOTBALL_KEY } });
+          const r = await _fetch(url, { headers: { 'x-apisports-key': process.env.API_FOOTBALL_KEY });
           const j = await r.json().catch(()=>null);
           const hit = j && j.response && j.response[0] && j.response[0].team && j.response[0].team.id;
           return hit || null;
         };
         if (homeId == null) homeId = await pickId(home);
         if (awayId == null) awayId = await pickId(away);
-      }
-    } catch(_) { /* swallow */ }
+      }catch(_) { /* swallow */ }
     /* __END_NORMALIZE_FALLBACK__ */
 
       /* __NORMALIZE_FALLBACK_v2__ */
       try {
         const nh = normalizeTeamName(home);
         const na = normalizeTeamName(away);
-        if (process.env.DEBUG_TRACE==='1') { { console.log('[normalize] intent', { raw:{home,away}, norm:{nh,na} }); } }
+        if (process.env.DEBUG_TRACE==='1') {{ console.log('[normalize] intent', { raw:{home,away}, norm:{nh,na}); }}
         if (homeId==null || awayId==null) {
           const [h2,a2] = await Promise.all([ pickId(nh), pickId(na) ]);
-          if (process.env.DEBUG_TRACE==='1') { { console.log('[normalize] retry ids', { h2, a2 }); } }
+          if (process.env.DEBUG_TRACE==='1') {{ console.log('[normalize] retry ids', { h2, a2 }); }}
           if (homeId==null) homeId = h2;
           if (awayId==null) awayId = a2;
+        }catch(e) {
+        if (process.env.DEBUG_TRACE==='1') {{ console.warn('[normalize] retry error', e?.message||e); }}
+      /* __NORMALIZE_FALLBACK_v3__ */
+      try {
+        if (homeId == null || awayId == null) {
+          const nh = normalizeTeamName(home);
+          const na = normalizeTeamName(away);
+          const [h2, a2] = await Promise.all([ pickId(nh), pickId(na) ]);
+          if (homeId == null) homeId = h2;
+          if (awayId == null) awayId = a2;
+          if (process.env.DEBUG_TRACE==='1') {
+            console.log('[normalize] raw', { home, away });
+            console.log('[normalize] norm', { nh, na, ids: { h2, a2 } });
+          }
         }
-      } catch(e) {
-        if (process.env.DEBUG_TRACE==='1') { { console.warn('[normalize] retry error', e?.message||e); } }
+      } catch (e) {
+        if (process.env.DEBUG_TRACE==='1') console.warn('[normalize] fallback error', e && e.message || e);
       }
   
       console.warn('[MATCH-HELPER] Sin teamId AF', { homeId, awayId, home, away });
       
       // --- Fallback opcional por tiempo + similaridad ---
-      if (String(process.env.AF_MATCH_TIME_SIM) === '1') {  if (process.env.DEBUG_TRACE==='1') { { console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR }); } }
+      if (String(process.env.AF_MATCH_TIME_SIM) === '1') {  if (process.env.DEBUG_TRACE==='1') {{ console.log('[MATCH-HELPER] knobs', { TIME_PAD_MIN, SIM_THR }); }}
 
         try {
 
@@ -238,14 +246,9 @@ const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
                 league_id: hit.league?.id || null,
                 country: hit.league?.country || null,
               };
-            }
-          }
-        } catch (e) {
+            }} catch (e) {
           console.warn('[MATCH-HELPER] Fallback tiempo+similitud falló', e?.message || e);
-        }
-      }
-      
-      // si el fallback está apagado o no hubo match sólido:
+        }// si el fallback está apagado o no hubo match sólido:
       return { ok: false, reason: 'sin_team_id' };
     }
     
@@ -283,10 +286,7 @@ const dateYMD = commence.toISOString().slice(0, 10); // YYYY-MM-DD en UTC
   } catch (err) {
     console.error('[MATCH-HELPER] resolveTeamsAndLeague error:', err?.message || err);
     return { ok: false, reason: 'exception' };
-  }
-}
-
-module.exports = {
+  }module.exports = {
   resolveTeamsAndLeague,
   fetchAFTeamId,
   strip,
