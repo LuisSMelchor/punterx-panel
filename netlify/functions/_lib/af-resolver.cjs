@@ -138,43 +138,13 @@ function minutesDiff(aISO, bISO) {
 
 // --- API-Football thin client (por si se requiere en el futuro) ---
 
-async function afApi(path, params = {}) {
-  // Nota: Node 20 ya tiene fetch global
-  const url = new URL(AF_BASE + path);
-  Object.entries(params || {}).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
-  });
-  const res = await fetch(url, {
-    headers: {
-      'x-apisports-key': API_FOOTBALL_KEY,
-      'x-rapidapi-key': API_FOOTBALL_KEY, // algunos proxies
-      'accept': 'application/json'
-    },
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(()=> '');
-    throw new Error(`AF HTTP ${res.status} ${res.statusText} :: ${url} :: ${body}`);
-  }
-  const json = await res.json();
-  if (!json || !Array.isArray(json.response)) {
-    throw new Error(`AF response malformado: ${url}`);
-  }
-  return json.response;
-}
+async function afApi(path, params = {
 
 /**
  * searchFixturesByNames (opcional): no lo usas directo hoy,
  * pero lo exponemos por si necesitas refinar búsquedas en otra etapa.
  */
-async function searchFixturesByNames({ dateISO, leagueId, season, timezone }) {
-  const params = {};
-  if (dateISO) params.date = dateISO.slice(0, 10);
-  if (leagueId) params.league = leagueId;
-  if (season) params.season = season;
-  if (timezone) params.timezone = timezone;
-  // /fixtures por fecha/league/season
-  return afApi('/fixtures', params);
-}
+async function searchFixturesByNames({ dateISO, leagueId, season, timezone 
 
 /**
  * resolveFixtureFromList(partido, afList)
@@ -307,20 +277,7 @@ function resolveFixtureFromList(partido, afList) {
  * Busca por nombres (normalizados internamente por el propio módulo) y
  * usa el selector ya existente para elegir el fixture correcto.
  */
-async function resolveTeamsAndLeague(evt = {}, opts = {}) {
-  const home = evt.home || evt.home_team || (evt.teams && evt.teams.home && evt.teams.home.name) || '';
-  const away = evt.away || evt.away_team || (evt.teams && evt.teams.away && evt.teams.away.name) || '';
-  const liga = evt.liga || evt.league || evt.league_name || '';
-
-  // Hints opcionales (no obligatorios)
-  const commence = evt.commence || evt.commence_time || evt.commenceTime || null;
-
-  // 1) Buscar lista de posibles fixtures por nombres
-  const list = await searchFixturesByNames(home, away, { leagueHint: liga, commence, ...opts });
-
-  // 2) Resolver el mejor fixture de esa lista
-  return resolveFixtureFromList(list, { home, away, liga, commence, ...opts });
-}
+async function resolveTeamsAndLeague(evt = {
 
 module.exports = { afApi, searchFixturesByNames, resolveFixtureFromList, resolveTeamsAndLeague, sim, pickTeamId };
 
@@ -365,21 +322,7 @@ function pickTeamId(afApi, name) {
  * Busca fixtures por texto (home/away) con ventana opcional.
  * /fixtures?search=<q>&from=YYYY-MM-DD&to=YYYY-MM-DD&timezone=UTC
  */
-async function searchFixturesByText({ q, from, to }) {
-  if (!q) return [];
-  const params = { search: q, timezone: 'UTC' };
-  if (from) params.from = from;
-  if (to) params.to = to;
-  try {
-    const resp = await afApi('/fixtures', params);
-    return Array.isArray(resp) ? resp : [];
-  } catch (e) {
-    if (typeof AF_DEBUG !== 'undefined' && AF_DEBUG) {
-      console.warn('[AF_DEBUG] fixtures search error', e && e.message || String(e));
-    }
-    return [];
-  }
-}
+async function searchFixturesByText({ q, from, to 
 
 
 /**
@@ -388,69 +331,8 @@ async function searchFixturesByText({ q, from, to }) {
  * NO toca resolveFixtureFromList (respeta tu gate por MATCH_RESOLVE_CONFIDENCE).
  */
 
-async function patchedResolveTeamsAndLeague(evt = {}, opts = {}) {
-  const DBG = !!(process && process.env && (process.env.AF_DEBUG === '1' || process.env.AF_DEBUG === 'true'));
-
-  const home = evt.home || evt.home_team || (evt.teams?.home?.name) || '';
-  const away = evt.away || evt.away_team || (evt.teams?.away?.name) || '';
-  const liga = evt.liga || evt.league || evt.league_name || '';
-  const commence = evt.commence || evt.commence_time || evt.commenceTime || evt.kickoff || null;
-
-  const isoDay = (d) => { try { return new Date(d).toISOString().slice(0,10); } catch(_) { return null; } };
-  const dayUTC = commence ? isoDay(commence) : null;
-
-  // 1) fixtures por fecha
-  let listByDate = [];
-  try {
-    if (dayUTC) {
-      listByDate = await afApi('/fixtures', { date: dayUTC, timezone: 'UTC' });
-      if (DBG) console.log('[AF_DEBUG] fixtures by date', { date: dayUTC, count: listByDate.length });
-    }
-  } catch (e) { if (DBG) console.warn('[AF_DEBUG] fixtures by date error', e?.message || String(e)); }
-
-  // 2) fixtures por búsqueda textual (±2 días) usando unión de home y away
-  let listBySearch = [];
-  try {
-    if (home || away) {
-      const base = commence ? new Date(commence) : null;
-      const from = base ? isoDay(new Date(base.getTime() - 2*24*60*60*1000)) : null;
-      const to   = base ? isoDay(new Date(base.getTime() + 2*24*60*60*1000)) : null;
-      listBySearch = await searchFixturesByTeamsUnion({ home, away, from, to });
-      if (DBG) console.log('[AF_DEBUG] fixtures search union scanned', { from, to, home, away, count: listBySearch.length });
-    }
-  } catch (e) { if (DBG) console.warn('[AF_DEBUG] fixtures search union error', e?.message || String(e)); }
-
-  // 3) Merge + dedupe
-  const seen = new Set();
-  const merged = [];
-  for (const arr of [listByDate, listBySearch]) {
-    for (const fx of (arr || [])) {
-      const id = fx?.fixture?.id;
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      merged.push(fx);
-    }
-  }
-  if (DBG) console.log('[AF_DEBUG] merged fixtures', { fromDate: listByDate.length, fromSearch: listBySearch.length, merged: merged.length });
-
-  if (!merged.length) { if (DBG) console.warn('[AF_DEBUG] NO_CANDIDATES after date+search', { home, away, liga, dayUTC }); return null; }
-
-  // 4) Selección final (usa tu selector canónico)
-  const partido = { home, away, liga, kickoff: commence };
-  const picked = resolveFixtureFromList(partido, merged);
-  if (!picked) { if (DBG) console.warn('[AF_DEBUG] NO_MATCH (below confidence or not suitable)', { home, away, liga, dayUTC }); return null; }
-
-  // 5) method según origen
-  const pid = picked.fixture_id;
-  const inDate = listByDate.some(fx => fx?.fixture?.id === pid);
-  const inSearch = listBySearch.some(fx => fx?.fixture?.id === pid);
-  const method = inDate ? 'date' : (inSearch ? 'search' : 'mixed');
-
-  const out = { ...picked, method };
-  if (DBG) console.log('[AF_DEBUG] PICK', { method, fixture_id: out.fixture_id, confidence: out.confidence });
-  return out;
-}
-, opts = {}) {
+async function patchedResolveTeamsAndLeague(evt = {
+) {
   const home = evt.home || evt.home_team || (evt.teams && evt.teams.home && evt.teams.home.name) || '';
   const away = evt.away || evt.away_team || (evt.teams && evt.teams.away && evt.teams.away.name) || '';
   const liga = evt.liga || evt.league || evt.league_name || '';
@@ -549,21 +431,4 @@ try {
  * Busca por texto usando home y away por separado y hace unión (dedupe por fixture.id).
  * Usa timezone=UTC y ventana {from,to} si se provee.
  */
-async function searchFixturesByTeamsUnion({ home, away, from, to }) {
-  const seen = new Set();
-  const out = [];
-  const addBatch = (arr) => {
-    for (const fx of (arr || [])) {
-      const id = fx?.fixture?.id;
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      out.push(fx);
-    }
-  };
-  const qParams = { from, to };
-  try {
-    if (home) addBatch(await searchFixturesByText({ q: String(home).trim(), ...qParams }));
-    if (away) addBatch(await searchFixturesByText({ q: String(away).trim(), ...qParams }));
-  } catch (_) {}
-  return out;
-}
+async function searchFixturesByTeamsUnion({ home, away, from, to 
