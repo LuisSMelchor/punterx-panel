@@ -700,3 +700,130 @@ async function getLeagueIdAndSeasonByName(leagueName) {
   }
   return { leagueId: null, season: null };
 }
+
+
+// ==== PUNTERX PATCH: MLS hint + final override (idempotent) ====
+
+const MLS_LEAGUE_ID = 253;
+
+/** Heurística de temporada: año UTC del commence (fallback: año actual) */
+function guessSeasonFromCommence(commence) {
+  try {
+    if (commence) return new Date(commence).getUTCFullYear();
+  } catch(_) {}
+  return new Date().getUTCFullYear();
+}
+
+/** Detección robusta de MLS y obtención de leagueId/season */
+async function robustLeagueHint(liga, commence) {
+  // 1) Si ya tenemos helper avanzado, úsalo
+  if (typeof getLeagueIdAndSeasonByName === 'function') {
+    const r = await getLeagueIdAndSeasonByName(liga);
+    if (r?.leagueId) return r;
+  }
+  // 2) Heurística MLS
+  if (/\bMLS\b/i.test(liga) || /major\s+league\s+soccer/i.test(liga)) {
+    return { leagueId: MLS_LEAGUE_ID, season: guessSeasonFromCommence(commence) };
+  }
+  return { leagueId: null, season: null };
+}
+
+/** teamsSearch con liga/temporada si las tenemos (mantiene el que ya exista, pero lo envuelve) */
+async function teamsSearchWithHint({ q, liga, commence }) {
+  if (!q) return [];
+  let leagueId = null, season = null;
+  try {
+    const hint = await robustLeagueHint(liga, commence);
+    leagueId = hint.leagueId || null;
+    season = hint.season || null;
+  } catch(_) {}
+  // Si existe teamsSearch (ya definido arriba), lo reutilizamos
+  if (typeof teamsSearch === 'function') {
+    return teamsSearch({ leagueId, season, q });
+  }
+  // Fallback súper simple si no existiera
+  const params = { search: q };
+  if (leagueId) params.league = leagueId;
+  if (season) params.season = season;
+  return afApi('/teams', params);
+}
+
+/** H2H fuerte: dado home/away y liga, intenta ±7d con IDs de equipo dentro de la liga/temporada */
+async function h2hWithLeague({ home, away, liga, commence }) {
+  try {
+    const base = commence ? new Date(commence) : null;
+    const iso = (d) => new Date(d).toISOString().slice(0,10);
+    const from = base ? iso(new Date(base.getTime() - 7*24*60*60*1000)) : null;
+    const to   = base ? iso(new Date(base.getTime() + 7*24*60*60*1000)) : null;
+
+    const tHome = (await teamsSearchWithHint({ q: home, liga, commence }))?.[0]?.team?.id || null;
+    const tAway = (await teamsSearchWithHint({ q: away, liga, commence }))?.[0]?.team?.id || null;
+
+    if (process.env.AF_DEBUG) {
+      console.log('[AF_DEBUG] H2H hint', { liga, from, to, tHome, tAway });
+    }
+
+    if (!tHome || !tAway) return [];
+
+    // Si tenemos helper H2H ya agregado, úsalo
+    if (typeof searchFixturesByH2H === 'function') {
+      return await searchFixturesByH2H({ homeId: tHome, awayId: tAway, from, to });
+    }
+
+    // Fallback genérico H2H por API
+    const params = { h2h: `${tHome}-${tAway}` };
+    if (from) params.from = from;
+    if (to) params.to = to;
+    params.timezone = 'UTC';
+    try {
+      const resp = await afApi('/fixtures', params);
+      return Array.isArray(resp) ? resp : [];
+    } catch(e) {
+      if (process.env.AF_DEBUG) console.warn('[AF_DEBUG] h2h fallback error', e?.message || String(e));
+      return [];
+    }
+  } catch(e) {
+    if (process.env.AF_DEBUG) console.warn('[AF_DEBUG] h2hWithLeague error', e?.message || String(e));
+    return [];
+  }
+}
+
+/** Último override: intenta el resolver parcheado actual; si devuelve null → H2H con liga forzada */
+async function patchedResolveTeamsAndLeague_FINAL(evt = {}, opts = {}) {
+  const DBG = !!process.env.AF_DEBUG;
+  try {
+    if (typeof patchedResolveTeamsAndLeague === 'function') {
+      const first = await patchedResolveTeamsAndLeague(evt, opts);
+      if (first) return first;
+    }
+  } catch(e) {
+    if (DBG) console.warn('[AF_DEBUG] patchedResolveTeamsAndLeague(primary) error', e?.message || String(e));
+  }
+
+  const home = evt.home || evt.home_team || evt?.teams?.home?.name || '';
+  const away = evt.away || evt.away_team || evt?.teams?.away?.name || '';
+  const liga = evt.liga || evt.league || evt.league_name || '';
+  const commence = evt.commence || evt.commence_time || evt.commenceTime || evt.kickoff || null;
+
+  // Intento H2H con liga/temporada forzada (MLS u otra si getLeagueId... funciona)
+  try {
+    const list = await h2hWithLeague({ home, away, liga, commence });
+    if (DBG) console.log('[AF_DEBUG] h2hWithLeague fixtures', { count: list.length });
+    if (list.length && typeof resolveFixtureFromList === 'function') {
+      const picked = resolveFixtureFromList({ home, away, liga, kickoff: commence }, list);
+      if (picked) {
+        const out = { ...picked, method: 'h2h' };
+        if (DBG) console.log('[AF_DEBUG] PICK(H2H-final)', { fixture_id: out.fixture_id, confidence: out.confidence });
+        return out;
+      }
+    }
+  } catch(e) {
+    if (DBG) console.warn('[AF_DEBUG] h2hWithLeague wrapper error', e?.message || String(e));
+  }
+
+  if (DBG) console.warn('[AF_DEBUG] FINAL NULL after all strategies', { home, away, liga, commence });
+  return null;
+}
+
+// Override explícito (última palabra se queda)
+try { module.exports.resolveTeamsAndLeague = patchedResolveTeamsAndLeague_FINAL; } catch(_) {}
