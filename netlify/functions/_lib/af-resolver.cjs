@@ -314,7 +314,7 @@ async function resolveTeamsAndLeague(evt = {}) {
 
   // 5) Resultado
   return picked || null;
-}, opts = {}) {
+}) {
   const home = evt.home || evt.home_team || (evt.teams && evt.teams.home && evt.teams.home.name) || '';
   const away = evt.away || evt.away_team || (evt.teams && evt.teams.away && evt.teams.away.name) || '';
   const liga = evt.liga || evt.league || evt.league_name || '';
