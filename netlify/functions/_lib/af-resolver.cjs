@@ -118,106 +118,13 @@ async function afApi(path, params = {
  *  - Primero por fixtures del día (si hay commence + liga)
  *  - Si no, resuelve teamIds por /teams y devuelve lo que consiga
  */
-async function searchFixturesByNames({ dateISO, leagueId, season, timezone 
 
-/**
- * resolveFixtureFromList(partido, afList)
- * - partido: { home, away, liga?, pais?, kickoff? } (kickoff opcional para desempate)
- * - afList: lista de fixtures ya consultados (API-Football)
- * Retorna objeto con ids y metadatos del mejor match o null.
- */
-function resolveFixtureFromList(partido, afList) {
-  try {
-    const home = evt.home || evt.home_team || evt?.teams?.home?.name || '';
-    const away = evt.away || evt.away_team || evt?.teams?.away?.name || '';
-    const leagueHint = (opts.leagueHint || evt.liga || evt.league || evt.league_name || evt.leagueName || '').trim();
-    const commence = opts.commence || evt.commence || evt.commence_time || evt.commenceTime || null;
-
-    const normH = normalizeTeamName(home);
-    const normA = normalizeTeamName(away);
-    const dayUTC = commence ? isoDay(commence) : null;
-    const year = commence ? new Date(commence).getUTCFullYear() : null;
-
-    if (AF_DEBUG) console.log('[AF_DEBUG] resolve start', { home, away, leagueHint, dayUTC, SIM_THR });
-
-    // Liga/temporada
-    const { leagueId, leagueName, season } = await findLeagueSeason(leagueHint || null, year);
-
-    // 1) Fixtures del día (preciso y rápido)
-    let fixturePick = null;
-    let fChecked = 0;
-    if (leagueId && dayUTC) {
-      const fixtures = await searchFixturesByDay({ leagueId, season, dayUTC });
-      fChecked = fixtures.length;
-
-      let best = { fixture_id: null, homeId: null, awayId: null, score: -1, pair: null };
-      for (const f of fixtures) {
-        const fh = f?.teams?.home?.name || '';
-        const fa = f?.teams?.away?.name || '';
-        // compara en orden y cruzado
-        const s1 = Math.min(sim(home, fh), sim(away, fa));
-        const s2 = Math.min(sim(home, fa), sim(away, fh));
-        const score = Math.max(s1, s2);
-        if (score > best.score) {
-          best = {
-            fixture_id: f?.fixture?.id || null,
-            homeId: s1 >= s2 ? (f?.teams?.home?.id || null) : (f?.teams?.away?.id || null),
-            awayId: s1 >= s2 ? (f?.teams?.away?.id || null) : (f?.teams?.home?.id || null),
-            score,
-            pair: { fh, fa, s1, s2 }
-          };
-        }
-      }
-      if (AF_DEBUG) console.log('[AF_DEBUG] fixtures scanned', { count: fChecked, best: best.score });
-
-      if (best.fixture_id && best.score >= SIM_THR) {
-        fixturePick = best;
-      }
-    }
-
-    // 2) Si no se encontró fixture suficientemente parecido, intenta /teams
-    let homeId = fixturePick?.homeId || null;
-    let awayId = fixturePick?.awayId || null;
-
-    if (!homeId) {
-      homeId = await pickTeamId(null, home, { leagueHint, commence });
-    }
-    if (!awayId) {
-      awayId = await pickTeamId(null, away, { leagueHint, commence });
-    }
-
-    const out = {
-      ok: Boolean(fixturePick?.fixture_id || (homeId && awayId)),
-      method: fixturePick ? 'fixtures' : ((homeId && awayId) ? 'teams' : 'none'),
-      fixture_id: fixturePick?.fixture_id || null,
-      confidence: fixturePick?.score ?? (homeId && awayId ? Math.min(sim(home, String(homeId)), sim(away, String(awayId))) : null),
-      home, away,
-      liga: leagueName || (leagueHint || null),
-      league_id: leagueId || null,
-      season: season || null,
-      homeId: homeId || null,
-      awayId: awayId || null,
-      reason: (!fixturePick && !(homeId && awayId)) ? (API_FOOTBALL_KEY ? 'not_found' : 'no_api_key') : null,
-      debug: AF_DEBUG ? {
-        normH, normA, SIM_THR,
-        searched: { leagueHint: leagueHint || null, leagueId: leagueId || null, season: season || null, dayUTC: dayUTC || null },
-        fixturesChecked: fChecked,
-        fixtureBest: fixturePick?.pair || null
-      } : undefined
-    };
-
-    if (AF_DEBUG) console.log('[AF_DEBUG] resolve done', { ok: out.ok, method: out.method, fixture_id: out.fixture_id, homeId: out.homeId, awayId: out.awayId });
-    return out;
-  } catch (e) {
-    if (AF_DEBUG) console.warn('[AF_DEBUG] resolver error', e?.message || e);
-    return { ok: false, reason: e?.message || String(e) };
-  }
+async function searchFixturesByNames({ dateISO, leagueId, season, timezone }) {
+  const params = {};
+  if (dateISO) params.date = String(dateISO).slice(0, 10);
+  if (leagueId) params.league = leagueId;
+  if (season) params.season = season;
+  if (timezone) params.timezone = timezone;
+  // Consulta /fixtures con filtros; afApi valida y devuelve array de response
+  return afApi('/fixtures', params);
 }
-
-
-/**
- * Wrapper canónico: NO usa alias ni nombres fijos.
- * Busca por nombres (normalizados internamente por el propio módulo) y
- * usa el selector ya existente para elegir el fixture correcto.
- */
-async function resolveTeamsAndLeague(evt = {
