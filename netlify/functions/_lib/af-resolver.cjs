@@ -344,7 +344,7 @@ async function searchFixturesByText({ q, from, to }) {
     const resp = await afApi('/fixtures', params);
     return Array.isArray(resp) ? resp : [];
   } catch (e) {
-    if (typeof AF_DEBUG !== 'undefined' && AF_DEBUG) {
+    if (process.env.AF_DEBUG) {
       console.warn('[AF_DEBUG] fixtures search error', e?.message || String(e));
     }
     return [];
@@ -363,7 +363,7 @@ async function searchFixturesByTeamsUnion({ home, away, from, to }) {
 
 // Parche: combina fecha + búsqueda textual y usa tu selector canónico
 async function patchedResolveTeamsAndLeague(evt = {}, opts = {}) {
-  const DBG = !!(typeof AF_DEBUG !== 'undefined' && AF_DEBUG);
+  const DBG = !!(process.env.AF_DEBUG);
   const home = evt.home || evt.home_team || evt?.teams?.home?.name || '';
   const away = evt.away || evt.away_team || evt?.teams?.away?.name || '';
   const liga = evt.liga || evt.league || evt.league_name || '';
