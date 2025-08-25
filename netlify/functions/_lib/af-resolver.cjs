@@ -630,3 +630,99 @@ function pickBestTeamIdByName(candidates = [], name) {
   if (process.env.AF_DEBUG) console.log('[AF_DEBUG] team pick', { q: name, best: top?.name, score: top?.score });
   return (top && top.score >= thr) ? top.id : null;
 }
+
+
+// ==== PUNTERX PATCH: strong league & team helpers (idempotent) ====
+
+/** Normaliza el texto de equipo: quita sufijos/ruido comunes */
+function cleanTeamQuery(q='') {
+  return String(q)
+    .replace(/\b(FC|CF|SC|AC|CD|UD|FK|SK)\b/gi,'')
+    .replace(/\b(Club|Sport|Deportivo|Athletic|Atletico|United|City|Sporting|Real)\b/gi,'')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+/** Re-declaración: AF /teams con fallbacks (search/name + query limpia) */
+async function teamsSearch({ leagueId, season, q }) {
+  if (!q) return [];
+  const out = [];
+  const tries = [];
+
+  // tries en orden decreciente de “amplitud”
+  tries.push({ search: q });
+  tries.push({ name: q });
+
+  const qClean = cleanTeamQuery(q);
+  if (qClean && qClean !== q) {
+    tries.push({ search: qClean });
+    tries.push({ name: qClean });
+  }
+
+  for (const base of tries) {
+    const params = { ...base };
+    if (leagueId) params.league = leagueId;
+    if (season) params.season = season;
+    try {
+      const resp = await afApi('/teams', params);
+      const arr = Array.isArray(resp) ? resp : [];
+      if (process.env.AF_DEBUG) console.log('[AF_DEBUG] teamsSearch try', { base, leagueId, season, found: arr.length });
+      if (arr.length) return arr;  // primer acierto
+    } catch (e) {
+      if (process.env.AF_DEBUG) console.warn('[AF_DEBUG] teams search error', { base, msg: e?.message || String(e) });
+    }
+  }
+  return out;
+}
+
+/** Re-declaración: /leagues robusta. Devuelve {leagueId, season} */
+async function getLeagueIdAndSeasonByName(leagueName) {
+  if (!leagueName) return { leagueId: null, season: null };
+
+  const tries = [];
+  // directos
+  tries.push({ search: leagueName });
+  tries.push({ name: leagueName });
+  // alias MLS
+  if (/major\s+league\s+soccer/i.test(leagueName) || /\bMLS\b/i.test(leagueName)) {
+    tries.push({ name: 'MLS' });
+    tries.push({ search: 'MLS' });
+  }
+  // con país
+  tries.push({ search: leagueName, country: 'USA' });
+  tries.push({ name: leagueName, country: 'USA' });
+
+  for (const params of tries) {
+    try {
+      const resp = await afApi('/leagues', params);
+      const arr = Array.isArray(resp) ? resp : [];
+      if (process.env.AF_DEBUG) console.log('[AF_DEBUG] leagues try', { params, found: arr.length });
+      if (!arr.length) continue;
+
+      const scored = arr.map(x => ({
+        leagueId: x?.league?.id ?? null,
+        leagueName: x?.league?.name ?? '',
+        country: x?.country?.name ?? x?.league?.country ?? '',
+        seasons: Array.isArray(x?.seasons) ? x.seasons : [],
+        score: (typeof sim === 'function') ? sim(x?.league?.name ?? '', leagueName) : 0
+      })).sort((a,b) => b.score - a.score);
+
+      const top = scored[0];
+      if (!top?.leagueId) continue;
+
+      // temporada: current=true o más reciente
+      let season = null;
+      const currents = top.seasons.filter(s => s?.current);
+      if (currents.length) season = currents[0]?.year ?? null;
+      if (!season && top.seasons.length) {
+        const sorted = [...top.seasons].sort((a,b) => (b?.year ?? 0) - (a?.year ?? 0));
+        season = sorted[0]?.year ?? null;
+      }
+      if (process.env.AF_DEBUG) console.log('[AF_DEBUG] leagues pick', { leagueId: top.leagueId, season, name: top.leagueName, score: Number(top.score?.toFixed?.(3) ?? top.score) });
+      return { leagueId: top.leagueId, season };
+    } catch (e) {
+      if (process.env.AF_DEBUG) console.warn('[AF_DEBUG] leagues search error', { params, msg: e?.message || String(e) });
+    }
+  }
+  return { leagueId: null, season: null };
+}
