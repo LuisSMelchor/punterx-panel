@@ -434,7 +434,35 @@ async function patchedResolveTeamsAndLeague(evt = {}, opts = {}) {
     }
   }
   if (DBG) console.log('[AF_DEBUG] merged fixtures', { fromDate: listByDate.length, fromSearch: listBySearch.length, merged: merged.length });
-  if (!merged.length) { if (DBG) console.warn('[AF_DEBUG] NO_CANDIDATES', { home, away, liga, dayUTC }); return null; }
+  if (!merged.length) { if (DBG) console.warn('[AF_DEBUG] NO_CANDIDATES', { home, away, liga, dayUTC }); 
+    // --- TRY H2H BEFORE RETURNING NULL ---
+    try {
+      const base = commence ? new Date(commence) : null;
+      const from = base ? new Date(base.getTime() - 2*24*60*60*1000).toISOString().slice(0,10) : null;
+      const to   = base ? new Date(base.getTime() + 2*24*60*60*1000).toISOString().slice(0,10) : null;
+
+      // Obtener posibles teamIds vía /teams?search
+      const tHome = (await teamsSearch({ q: home }))?.[0]?.team?.id || null;
+      const tAway = (await teamsSearch({ q: away }))?.[0]?.team?.id || null;
+
+      if (tHome && tAway) {
+        const listH2H = await searchFixturesByH2H({ homeId: tHome, awayId: tAway, from, to });
+        if (process.env.AF_DEBUG) console.log('[AF_DEBUG] h2h fixtures scanned', { from, to, count: listH2H.length });
+        if (listH2H.length) {
+          const partidoH2H = { home, away, liga, kickoff: commence };
+          const pickedH2H = resolveFixtureFromList(partidoH2H, listH2H);
+          if (pickedH2H) {
+            const out = { ...pickedH2H, method: 'h2h' };
+            if (process.env.AF_DEBUG) console.log('[AF_DEBUG] PICK(H2H)', { fixture_id: out.fixture_id, confidence: out.confidence });
+            return out;
+          }
+        }
+      }
+    } catch (e) {
+      if (process.env.AF_DEBUG) console.warn('[AF_DEBUG] h2h fallback error', e?.message || String(e));
+    }
+    // --- END TRY H2H ---
+    return null; }
 
   // 4) selección canónica (ORDEN correcto)
   const partido = { home, away, liga, kickoff: commence };
@@ -499,3 +527,21 @@ async function h2hFixturesByIds(homeId, awayId, { from, to } = {}) {
     return [];
   }
 }
+
+
+
+/** AF /fixtures/headtohead con ventana opcional */
+async function searchFixturesByH2H({ homeId, awayId, from, to }) {
+  if (!homeId || !awayId) return [];
+  const params = { h2h: `${homeId}-${awayId}`, timezone: 'UTC' };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  try {
+    const resp = await afApi('/fixtures/headtohead', params);
+    return Array.isArray(resp) ? resp : [];
+  } catch (e) {
+    if (process.env.AF_DEBUG) console.warn('[AF_DEBUG] h2h error', e?.message || String(e));
+    return [];
+  }
+}
+
