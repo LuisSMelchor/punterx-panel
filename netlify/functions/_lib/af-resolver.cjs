@@ -2,284 +2,244 @@
 'use strict';
 
 /**
- * Resolución basada en API-FOOTBALL SIN hardcodes:
- * 1) Intenta localizar fixture del día (league+season + date + timezone=UTC).
- * 2) Si no hay fixture, busca teamIds por /teams (filtrado por liga+temporada si es posible).
- * 3) Último recurso: /teams?search=<name> sin liga.
- *
- * Env necesarios (scope: functions):
- * - API_FOOTBALL_KEY
- * Env/knobs opcionales:
- * - SIM_THR (umbral de similitud 0..1)  [def: 0.60]
- * - DEBUG_TRACE (1 para logs)
+ * Resolución de IDs contra API-FOOTBALL sin hardcodes:
+ * - Liga/temporada vía /leagues?search=
+ * - Fixtures del día (mejor exactitud) y fallback a /teams con league+season
+ * - Similitud por tokens (sin alias fijos)
  */
 
 const { normalizeTeamName } = require('./name-normalize.cjs');
 
-// --------- knobs ----------
 const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY || '';
+const AF_DEBUG = String(process.env.DEBUG_TRACE || process.env.AF_DEBUG || '0') === '1';
 const SIM_THR = (() => {
-  const x = parseFloat(process.env.SIM_THR || '');
-  return Number.isFinite(x) ? x : 0.60;
+  const n = parseFloat(process.env.SIM_THR || '');
+  return Number.isFinite(n) ? n : 0.60;
 })();
-const DEBUG = String(process.env.DEBUG_TRACE || '') === '1';
 
-// --------- utils ----------
-function log(...args) { if (DEBUG) console.log('[AF_DEBUG]', ...args); }
+/* ----------------------------- utils básicas ------------------------------ */
 
-function normTokens(s = '') {
-  // normaliza y deja tokens básicos
-  return normalizeTeamName(String(s))
-    .replace(/[^a-z0-9 ]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+const BASE = 'https://v3.football.api-sports.io';
+
+function isoDay(d) {
+  // YYYY-MM-DD en UTC
+  const x = new Date(d);
+  if (Number.isNaN(+x)) return null;
+  const y = x.getUTCFullYear();
+  const m = String(x.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(x.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
 }
-function tokenSet(s = '') {
-  return new Set(normTokens(s).split(' ').filter(Boolean));
+
+function tokenSet(str = '') {
+  return new Set(
+    normalizeTeamName(str)
+      .split(' ')
+      .filter(Boolean)
+  );
 }
-function jaccard(a, b) {
-  const A = tokenSet(a), B = tokenSet(b);
-  if (A.size === 0 || B.size === 0) return 0;
+
+function jaccard(aStr, bStr) {
+  const A = tokenSet(aStr), B = tokenSet(bStr);
+  if (!A.size || !B.size) return 0;
   let inter = 0;
   for (const t of A) if (B.has(t)) inter++;
-  return inter / (A.size + B.size - inter);
+  const union = A.size + B.size - inter;
+  return inter / union;
 }
-function dice(a, b) {
-  const A = tokenSet(a), B = tokenSet(b);
-  if (A.size === 0 || B.size === 0) return 0;
+
+function dice(aStr, bStr) {
+  const A = tokenSet(aStr), B = tokenSet(bStr);
+  if (!A.size || !B.size) return 0;
   let inter = 0;
   for (const t of A) if (B.has(t)) inter++;
   return (2 * inter) / (A.size + B.size);
 }
+
 function sim(a, b) {
-  const na = normTokens(a), nb = normTokens(b);
+  if (!a || !b) return 0;
+  const na = normalizeTeamName(a), nb = normalizeTeamName(b);
   if (!na || !nb) return 0;
   if (na === nb) return 1;
   return Math.max(jaccard(na, nb), dice(na, nb));
 }
 
 async function afFetch(pathAndQuery) {
-  if (!API_FOOTBALL_KEY) throw new Error('API_FOOTBALL_KEY not set');
-  const base = 'https://v3.football.api-sports.io';
-  const url = base + pathAndQuery;
-  const headers = { 'x-apisports-key': API_FOOTBALL_KEY };
+  if (!API_FOOTBALL_KEY) return { ok: false, status: 401, response: [], results: 0, error: 'no_api_key' };
+  const url = BASE + pathAndQuery;
   const _fetch = global.fetch || (await import('node-fetch')).default;
-  log('GET', url);
-  const res = await _fetch(url, { headers });
-  if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    throw new Error(`AF ${res.status} ${pathAndQuery} :: ${txt.slice(0, 200)}`);
-  }
-  const json = await res.json();
-  return json && json.response ? json.response : [];
+  const res = await _fetch(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } });
+  let j = null;
+  try { j = await res.json(); } catch { j = null; }
+  const results = j?.results ?? (Array.isArray(j?.response) ? j.response.length : 0);
+  if (AF_DEBUG) console.log('[AF_DEBUG]', res.status, pathAndQuery, 'results=', results);
+  return { ok: res.ok, status: res.status, ...(j || {}), response: j?.response || [] };
 }
 
-// yyyy-mm-dd en UTC
-function ymdUTC(d) {
-  const dt = (d instanceof Date) ? d : new Date(d);
-  const y = dt.getUTCFullYear();
-  const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(dt.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
+/* ----------------------- helpers de búsqueda AF --------------------------- */
 
-// Busca liga+temporada dada una pista de liga (string) y un commence opcional
-async function resolveLeagueSeason(leagueHint, commence) {
-  if (!leagueHint) return { leagueId: null, season: null };
-  const encoded = encodeURIComponent(leagueHint);
-  const L = await afFetch(`/leagues?search=${encoded}`);
-  if (!Array.isArray(L) || L.length === 0) return { leagueId: null, season: null };
+async function findLeagueSeason(leagueHint, year) {
+  if (!leagueHint) return { leagueId: null, leagueName: null, season: null };
+  const q = `/leagues?search=${encodeURIComponent(leagueHint)}`;
+  const L = await afFetch(q);
+  const items = L.response || [];
+  if (!items.length) return { leagueId: null, leagueName: null, season: null };
 
-  const year = commence ? new Date(commence).getUTCFullYear() : null;
+  // Selecciona la entrada cuya seasons contenga el año; si no hay, toma "current"; si no, la última
   let picked = null;
-
-  for (const item of L) {
-    const seasons = Array.isArray(item.seasons) ? item.seasons : [];
-    if (year && seasons.some(s => String(s.year) === String(year))) {
-      picked = item;
-      break;
-    }
-    if (!year && seasons.some(s => s.current)) {
-      picked = item;
-      break;
-    }
+  for (const it of items) {
+    const seasons = it?.seasons || [];
+    if (year && seasons.some(s => String(s.year) === String(year))) { picked = it; break; }
+    if (!year && seasons.some(s => s.current)) picked = picked || it;
+    picked = picked || it;
   }
-  if (!picked) picked = L[0];
+  if (!picked?.league?.id) return { leagueId: null, leagueName: null, season: null };
 
-  const leagueId = picked?.league?.id || null;
-  const seasonsArr = Array.isArray(picked?.seasons) ? picked.seasons : [];
+  const seasons = picked.seasons || [];
   const season = year
-    ? (seasonsArr.find(s => String(s.year) === String(year))?.year ?? null)
-    : (seasonsArr.find(s => s.current)?.year ?? seasonsArr.at(-1)?.year ?? null);
+    ? (seasons.find(s => String(s.year) === String(year))?.year ?? seasons.find(s => s.current)?.year ?? seasons.at(-1)?.year ?? null)
+    : (seasons.find(s => s.current)?.year ?? seasons.at(-1)?.year ?? null);
 
-  log('leagueSeason', { leagueHint, leagueId, season, year });
-  return { leagueId, season };
+  return { leagueId: picked.league.id, leagueName: picked.league.name || null, season };
 }
 
-// Lista fixtures de una liga en fecha exacta (UTC)
-async function listFixturesByLeagueDay(leagueId, season, dateYMD) {
-  if (!leagueId || !season || !dateYMD) return [];
-  const resp = await afFetch(
-    `/fixtures?league=${leagueId}&season=${season}&date=${dateYMD}&timezone=UTC`
-  );
-  return Array.isArray(resp) ? resp : [];
+async function searchFixturesByDay({ leagueId, season, dayUTC }) {
+  if (!leagueId || !dayUTC) return [];
+  // El parámetro date limita a ese día en la zona dada
+  const q = `/fixtures?league=${leagueId}&season=${season}&date=${dayUTC}&timezone=UTC`;
+  const F = await afFetch(q);
+  return F.response || [];
 }
 
-// Busca teamId por /teams con filtros (liga+temporada) o sólo search si no hay liga
-async function pickTeamId(afApi, rawName, { leagueId, season } = {}) {
-  const q = String(rawName || '').trim();
-  if (!q) return null;
-  const enc = encodeURIComponent(q);
+async function teamsSearch({ leagueId, season, q }) {
+  // Busca equipos acotando por liga/temporada si se dispone
+  const base = leagueId ? `/teams?league=${leagueId}${season ? `&season=${season}` : ''}&search=${encodeURIComponent(q)}`
+                        : `/teams?search=${encodeURIComponent(q)}`;
+  const T = await afFetch(base);
+  return T.response || [];
+}
 
-  let path;
-  if (leagueId && season) {
-    path = `/teams?league=${leagueId}&season=${season}&search=${enc}`;
-  } else {
-    path = `/teams?search=${enc}`;
+/* --------------------------- API pública ---------------------------------- */
+
+/**
+ * Intenta obtener teamId combinando fixtures del día y fallback por /teams.
+ * No devuelve hardcodes; todo sale de la API.
+ */
+async function pickTeamId(_afApiIgnored, rawName, { leagueHint, commence } = {}) {
+  const name = String(rawName || '').trim();
+  if (!name) return null;
+
+  const dayUTC = commence ? isoDay(commence) : null;
+  const year = commence ? new Date(commence).getUTCFullYear() : null;
+
+  // 1) Liga/temporada (si hay hint)
+  const { leagueId, season } = await findLeagueSeason(leagueHint || null, year);
+
+  // 2) Fallback directo /teams con/ sin liga
+  const candidates = await teamsSearch({ leagueId, season, q: name });
+  let best = { id: null, score: -1, name: null };
+  for (const it of candidates) {
+    const tname = it?.team?.name || '';
+    const score = sim(name, tname);
+    if (score > best.score) best = { id: it?.team?.id || null, score, name: tname };
   }
-  const teams = await afApi(path); // espera array .response ya desenvuelto
-  let bestId = null, bestScore = -1;
-  for (const item of teams) {
-    const name = item?.team?.name || '';
-    const id = item?.team?.id || null;
-    if (!name || !id) continue;
-    const s = sim(q, name);
-    if (s > bestScore) {
-      bestScore = s;
-      bestId = id;
-    }
-  }
-  log('pickTeamId', { q, leagueId, season, bestId, bestScore });
-  if (bestId && bestScore >= SIM_THR) return bestId;
+  if (AF_DEBUG) console.log('[AF_DEBUG] pickTeamId', { leagueId, season, q: name, best });
+
+  if (best.id && best.score >= SIM_THR) return best.id;
   return null;
 }
 
-// --- API adapter compatible con afFetch (devuelve response array directo)
-async function afApi(pathWithQuery) {
-  const arr = await afFetch(pathWithQuery);
-  return arr; // ya es .response
-}
-
 /**
- * resolveTeamsAndLeague(evt, opts):
- *  - evt: { home, away, liga?, commence? }
- *  - opts: { leagueHint?, commence?, windowPadMin? }  (windowPadMin no se usa aquí)
- *
- * Devuelve:
- * {
- *   ok: boolean,
- *   reason: string|null,
- *   confidence: number|null,
- *   home, away, liga,
- *   homeId, awayId,
- *   league_id: number|null,
- *   fixture_id: number|null
- * }
+ * Intenta resolver fixture y/o teamIds:
+ *  - Primero por fixtures del día (si hay commence + liga)
+ *  - Si no, resuelve teamIds por /teams y devuelve lo que consiga
  */
 async function resolveTeamsAndLeague(evt = {}, opts = {}) {
-  const home = String(evt.home || '').trim();
-  const away = String(evt.away || '').trim();
-  const liga = String(opts.leagueHint || evt.liga || '').trim();
-  const commence = opts.commence || evt.commence || null;
-
-  const out = {
-    ok: false,
-    reason: null,
-    confidence: null,
-    home, away, liga,
-    homeId: null,
-    awayId: null,
-    league_id: null,
-    fixture_id: null,
-  };
-
   try {
-    if (!home || !away) {
-      out.reason = 'missing_teams';
-      return out;
-    }
-    if (!API_FOOTBALL_KEY) {
-      out.reason = 'no_api_key';
-      return out;
-    }
+    const home = evt.home || evt.home_team || evt?.teams?.home?.name || '';
+    const away = evt.away || evt.away_team || evt?.teams?.away?.name || '';
+    const leagueHint = (opts.leagueHint || evt.liga || evt.league || evt.league_name || evt.leagueName || '').trim();
+    const commence = opts.commence || evt.commence || evt.commence_time || evt.commenceTime || null;
 
-    // 1) liga+temporada (si hay pista de liga)
-    let leagueId = null, season = null;
-    if (liga) {
-      const ls = await resolveLeagueSeason(liga, commence);
-      leagueId = ls.leagueId;
-      season = ls.season;
-      out.league_id = leagueId || null;
-    }
+    const normH = normalizeTeamName(home);
+    const normA = normalizeTeamName(away);
+    const dayUTC = commence ? isoDay(commence) : null;
+    const year = commence ? new Date(commence).getUTCFullYear() : null;
 
-    // 2) Fecha
-    const dateYMD = commence ? ymdUTC(commence) : null;
+    if (AF_DEBUG) console.log('[AF_DEBUG] resolve start', { home, away, leagueHint, dayUTC, SIM_THR });
 
-    // 3) Camino A: Buscar fixture del día en la liga detectada
-    if (leagueId && season && dateYMD) {
-      const fixtures = await listFixturesByLeagueDay(leagueId, season, dateYMD);
-      log('fixtures.len', fixtures.length);
-      let best = null, bestScore = -1;
+    // Liga/temporada
+    const { leagueId, leagueName, season } = await findLeagueSeason(leagueHint || null, year);
 
-      for (const fx of fixtures) {
-        const th = fx?.teams?.home?.name || '';
-        const ta = fx?.teams?.away?.name || '';
-        const s1 = sim(home, th);
-        const s2 = sim(away, ta);
-        const s = Math.min(s1, s2); // ambas deben parecerse
-        if (s > bestScore) {
-          bestScore = s;
-          best = fx;
+    // 1) Fixtures del día (preciso y rápido)
+    let fixturePick = null;
+    let fChecked = 0;
+    if (leagueId && dayUTC) {
+      const fixtures = await searchFixturesByDay({ leagueId, season, dayUTC });
+      fChecked = fixtures.length;
+
+      let best = { fixture_id: null, homeId: null, awayId: null, score: -1, pair: null };
+      for (const f of fixtures) {
+        const fh = f?.teams?.home?.name || '';
+        const fa = f?.teams?.away?.name || '';
+        // compara en orden y cruzado
+        const s1 = Math.min(sim(home, fh), sim(away, fa));
+        const s2 = Math.min(sim(home, fa), sim(away, fh));
+        const score = Math.max(s1, s2);
+        if (score > best.score) {
+          best = {
+            fixture_id: f?.fixture?.id || null,
+            homeId: s1 >= s2 ? (f?.teams?.home?.id || null) : (f?.teams?.away?.id || null),
+            awayId: s1 >= s2 ? (f?.teams?.away?.id || null) : (f?.teams?.home?.id || null),
+            score,
+            pair: { fh, fa, s1, s2 }
+          };
         }
       }
+      if (AF_DEBUG) console.log('[AF_DEBUG] fixtures scanned', { count: fChecked, best: best.score });
 
-      if (best && bestScore >= SIM_THR) {
-        out.homeId = best?.teams?.home?.id ?? null;
-        out.awayId = best?.teams?.away?.id ?? null;
-        out.fixture_id = best?.fixture?.id ?? null;
-        out.ok = Boolean(out.homeId && out.awayId);
-        out.confidence = bestScore;
-        if (out.ok) return out;
+      if (best.fixture_id && best.score >= SIM_THR) {
+        fixturePick = best;
       }
     }
 
-    // 4) Camino B: teamIds por /teams (filtrando por liga+temporada si disponibles)
-    {
-      const hId = await pickTeamId(afApi, home, { leagueId, season });
-      const aId = await pickTeamId(afApi, away, { leagueId, season });
-      if (hId && aId) {
-        out.homeId = hId;
-        out.awayId = aId;
-        out.ok = true;
-        out.confidence = 0.66; // “media” cuando no vino de fixture directo
-        return out;
-      }
+    // 2) Si no se encontró fixture suficientemente parecido, intenta /teams
+    let homeId = fixturePick?.homeId || null;
+    let awayId = fixturePick?.awayId || null;
+
+    if (!homeId) {
+      homeId = await pickTeamId(null, home, { leagueHint, commence });
+    }
+    if (!awayId) {
+      awayId = await pickTeamId(null, away, { leagueHint, commence });
     }
 
-    // 5) Camino C: último recurso /teams?search sin liga
-    {
-      const hId = await pickTeamId(afApi, home, {});
-      const aId = await pickTeamId(afApi, away, {});
-      if (hId && aId) {
-        out.homeId = hId;
-        out.awayId = aId;
-        out.ok = true;
-        out.confidence = 0.55; // menor confianza sin liga
-        return out;
-      }
-    }
+    const out = {
+      ok: Boolean(fixturePick?.fixture_id || (homeId && awayId)),
+      method: fixturePick ? 'fixtures' : ((homeId && awayId) ? 'teams' : 'none'),
+      fixture_id: fixturePick?.fixture_id || null,
+      confidence: fixturePick?.score ?? (homeId && awayId ? Math.min(sim(home, String(homeId)), sim(away, String(awayId))) : null),
+      home, away,
+      liga: leagueName || (leagueHint || null),
+      league_id: leagueId || null,
+      season: season || null,
+      homeId: homeId || null,
+      awayId: awayId || null,
+      reason: (!fixturePick && !(homeId && awayId)) ? (API_FOOTBALL_KEY ? 'not_found' : 'no_api_key') : null,
+      debug: AF_DEBUG ? {
+        normH, normA, SIM_THR,
+        searched: { leagueHint: leagueHint || null, leagueId: leagueId || null, season: season || null, dayUTC: dayUTC || null },
+        fixturesChecked: fChecked,
+        fixtureBest: fixturePick?.pair || null
+      } : undefined
+    };
 
-    out.reason = out.reason || 'not_found';
+    if (AF_DEBUG) console.log('[AF_DEBUG] resolve done', { ok: out.ok, method: out.method, fixture_id: out.fixture_id, homeId: out.homeId, awayId: out.awayId });
     return out;
   } catch (e) {
-    out.reason = `error:${e && e.message || e}`;
-    return out;
+    if (AF_DEBUG) console.warn('[AF_DEBUG] resolver error', e?.message || e);
+    return { ok: false, reason: e?.message || String(e) };
   }
 }
 
-// Exports
-module.exports = {
-  sim,
-  pickTeamId,
-  resolveTeamsAndLeague,
-};
+module.exports = { sim, pickTeamId, resolveTeamsAndLeague };
