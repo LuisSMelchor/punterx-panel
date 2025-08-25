@@ -435,10 +435,11 @@ async function patchedResolveTeamsAndLeague(evt = {}, opts = {}) {
   }
   if (DBG) console.log('[AF_DEBUG] merged fixtures', { fromDate: listByDate.length, fromSearch: listBySearch.length, merged: merged.length });
   
+
 if (!merged.length) {
   if (DBG) console.warn('[AF_DEBUG] NO_CANDIDATES', { home, away, liga, dayUTC });
 
-  // --- TRY H2H BEFORE RETURNING NULL ---
+  // --- H2H FALLBACK (antes de devolver null) ---
   try {
     const base = commence ? new Date(commence) : null;
     const from = base ? new Date(base.getTime() - 2*24*60*60*1000).toISOString().slice(0,10) : null;
@@ -464,10 +465,11 @@ if (!merged.length) {
   } catch (e) {
     if (DBG) console.warn('[AF_DEBUG] h2h fallback error', e?.message || String(e));
   }
-  // --- END TRY H2H ---
+  // --- FIN H2H FALLBACK ---
 
   return null;
 }
+
 
 
   // 4) selección canónica (ORDEN correcto)
