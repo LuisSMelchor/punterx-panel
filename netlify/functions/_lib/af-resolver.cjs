@@ -386,7 +386,98 @@ async function searchFixturesByText({ q, from, to }) {
  * Parche no intrusivo: combina fixtures por fecha + búsqueda textual (±1 día)
  * y usa resolveFixtureFromList(partido, lista) en el ORDEN CORRECTO.
  */
+
 async function patchedResolveTeamsAndLeague(evt = {}, opts = {}) {
+  const home = evt.home || evt.home_team || (evt.teams && evt.teams.home && evt.teams.home.name) || '';
+  const away = evt.away || evt.away_team || (evt.teams && evt.teams.away && evt.teams.away.name) || '';
+  const liga = evt.liga || evt.league || evt.league_name || '';
+  const commence = evt.commence || evt.commence_time || evt.commenceTime || evt.kickoff || null;
+
+  const isoDay = (d) => { try { return new Date(d).toISOString().slice(0,10); } catch(_) { return null; } };
+  const dayUTC = commence ? isoDay(commence) : null;
+
+  let listByDate = [];
+  try {
+    if (dayUTC) {
+      listByDate = await afApi('/fixtures', { date: dayUTC, timezone: 'UTC' });
+      if (typeof AF_DEBUG !== 'undefined' && AF_DEBUG) {
+        console.log('[AF_DEBUG] fixtures by date', { date: dayUTC, count: listByDate.length });
+      }
+    }
+  } catch (e) {
+    if (typeof AF_DEBUG !== 'undefined' && AF_DEBUG) {
+      console.warn('[AF_DEBUG] fixtures by date error', e && e.message || String(e));
+    }
+  }
+
+  let listBySearch = [];
+  try {
+    if (home && away) {
+      const base = commence ? new Date(commence) : null;
+      const from = base ? isoDay(new Date(base.getTime() - 24*60*60*1000)) : null;
+      const to   = base ? isoDay(new Date(base.getTime() + 24*60*60*1000)) : null;
+      const q = `${home} ${away}`.trim();
+      listBySearch = await searchFixturesByText({ q, from, to });
+      if (typeof AF_DEBUG !== 'undefined' && AF_DEBUG) {
+        console.log('[AF_DEBUG] fixtures search scanned', { from, to, q, count: listBySearch.length });
+      }
+    }
+  } catch (e) {
+    if (typeof AF_DEBUG !== 'undefined' && AF_DEBUG) {
+      console.warn('[AF_DEBUG] fixtures search error', e && e.message || String(e));
+    }
+  }
+
+  // Merge + dedupe por fixture.id
+  const seen = new Set();
+  const merged = [];
+  for (const arr of [listByDate, listBySearch]) {
+    for (const fx of (arr || [])) {
+      const id = fx && fx.fixture && fx.fixture.id;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      merged.push(fx);
+    }
+  }
+  if (typeof AF_DEBUG !== 'undefined' && AF_DEBUG) {
+    console.log('[AF_DEBUG] merged fixtures', { fromDate: listByDate.length, fromSearch: listBySearch.length, merged: merged.length });
+  }
+  if (!merged.length) {
+    if (typeof AF_DEBUG !== 'undefined' && AF_DEBUG) {
+      console.warn('[AF_DEBUG] NO_CANDIDATES after date+search', { home, away, liga, dayUTC });
+    }
+    return null;
+  }
+
+  // Selección final (usa resolveFixtureFromList con orden correcto)
+  const partido = { home, away, liga, kickoff: commence };
+  const picked = resolveFixtureFromList(partido, merged);
+  if (!picked) {
+    if (typeof AF_DEBUG !== 'undefined' && AF_DEBUG) {
+      console.warn('[AF_DEBUG] NO_MATCH (below confidence or not suitable)', { home, away, liga, dayUTC });
+    }
+    return null;
+  }
+
+  // Determina método según origen del id
+  const pid = picked.fixture_id;
+  const inDate = (listByDate || []).some(fx => fx?.fixture?.id === pid);
+  const inSearch = (listBySearch || []).some(fx => fx?.fixture?.id === pid);
+  const method = inDate ? 'date' : (inSearch ? 'search' : 'mixed');
+
+  // picked ya trae confidence desde resolveFixtureFromList
+  const out = {
+    ...picked,
+    method,
+  };
+
+  if (typeof AF_DEBUG !== 'undefined' && AF_DEBUG) {
+    console.log('[AF_DEBUG] PICK', { method, fixture_id: out.fixture_id, confidence: out.confidence });
+  }
+
+  return out;
+}
+, opts = {}) {
   const home = evt.home || evt.home_team || (evt.teams && evt.teams.home && evt.teams.home.name) || '';
   const away = evt.away || evt.away_team || (evt.teams && evt.teams.away && evt.teams.away.name) || '';
   const liga = evt.liga || evt.league || evt.league_name || '';
