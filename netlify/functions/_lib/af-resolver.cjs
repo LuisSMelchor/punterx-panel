@@ -408,35 +408,41 @@ async function patchedResolveTeamsAndLeague(evt = {}, opts = {}) {
     }
   }
   if (DBG) console.log('[AF_DEBUG] merged fixtures', { fromDate: listByDate.length, fromSearch: listBySearch.length, merged: merged.length });
-  if (!merged.length) { if (DBG) console.warn('[AF_DEBUG] NO_CANDIDATES', { home, away, liga, dayUTC }); 
-    // --- TRY H2H BEFORE RETURNING NULL ---
-    try {
-      const base = commence ? new Date(commence) : null;
-      const from = base ? new Date(base.getTime() - 2*24*60*60*1000).toISOString().slice(0,10) : null;
-      const to   = base ? new Date(base.getTime() + 2*24*60*60*1000).toISOString().slice(0,10) : null;
+  
+if (!merged.length) {
+  if (DBG) console.warn('[AF_DEBUG] NO_CANDIDATES', { home, away, liga, dayUTC });
 
-      // Obtener posibles teamIds vía /teams?search
-      const tHome = (await teamsSearch({ q: home }))?.[0]?.team?.id || null;
-      const tAway = (await teamsSearch({ q: away }))?.[0]?.team?.id || null;
+  // --- TRY H2H BEFORE RETURNING NULL ---
+  try {
+    const base = commence ? new Date(commence) : null;
+    const from = base ? new Date(base.getTime() - 2*24*60*60*1000).toISOString().slice(0,10) : null;
+    const to   = base ? new Date(base.getTime() + 2*24*60*60*1000).toISOString().slice(0,10) : null;
 
-      if (tHome && tAway) {
-        const listH2H = await searchFixturesByH2H({ homeId: tHome, awayId: tAway, from, to });
-        if (process.env.AF_DEBUG) console.log('[AF_DEBUG] h2h fixtures scanned', { from, to, count: listH2H.length });
-        if (listH2H.length) {
-          const partidoH2H = { home, away, liga, kickoff: commence };
-          const pickedH2H = resolveFixtureFromList(partidoH2H, listH2H);
-          if (pickedH2H) {
-            const out = { ...pickedH2H, method: 'h2h' };
-            if (process.env.AF_DEBUG) console.log('[AF_DEBUG] PICK(H2H)', { fixture_id: out.fixture_id, confidence: out.confidence });
-            return out;
-          }
+    // teamIds vía /teams?search
+    const tHome = (await teamsSearch({ q: home }))?.[0]?.team?.id || null;
+    const tAway = (await teamsSearch({ q: away }))?.[0]?.team?.id || null;
+
+    if (tHome && tAway) {
+      const listH2H = await searchFixturesByH2H({ homeId: tHome, awayId: tAway, from, to });
+      if (DBG) console.log('[AF_DEBUG] h2h fixtures scanned', { from, to, count: listH2H.length });
+      if (listH2H.length) {
+        const partidoH2H = { home, away, liga, kickoff: commence };
+        const pickedH2H = resolveFixtureFromList(partidoH2H, listH2H);
+        if (pickedH2H) {
+          const out = { ...pickedH2H, method: 'h2h' };
+          if (DBG) console.log('[AF_DEBUG] PICK(H2H)', { fixture_id: out.fixture_id, confidence: out.confidence });
+          return out;
         }
       }
-    } catch (e) {
-      if (process.env.AF_DEBUG) console.warn('[AF_DEBUG] h2h fallback error', e?.message || String(e));
     }
-    // --- END TRY H2H ---
-    return null; }
+  } catch (e) {
+    if (DBG) console.warn('[AF_DEBUG] h2h fallback error', e?.message || String(e));
+  }
+  // --- END TRY H2H ---
+
+  return null;
+}
+
 
   // 4) selección canónica (ORDEN correcto)
   const partido = { home, away, liga, kickoff: commence };
