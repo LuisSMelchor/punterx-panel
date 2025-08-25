@@ -59,21 +59,83 @@ async function searchTeams(q){
   return arr.map(x => x && x.team).filter(Boolean);
 }
 
-async function pickTeamId(name){
-  if (!name) return null;
-  const teams = await searchTeams(name);
-  if (!teams.length) return null;
-  // Puntúa y elige mejor
-  let best = null, bestScore = -1;
-  for (const t of teams){
-    const score = sim(name, t.name);
-    if (score > bestScore){
-      best = t;
-      bestScore = score;
+// === drop-in: reemplaza pickTeamId existente ===
+async function pickTeamId(afApi, rawName, { leagueHint, commence } = {}) {
+  const qRaw = String(rawName || '').trim();
+  if (!qRaw) return null;
+
+  // normaliza solo para la similitud; la query a la API usa el texto del usuario
+  const norm = (t) => String(t).toLowerCase().normalize('NFD')
+    .replace(/\p{M}+/gu,'').replace(/[^a-z0-9 ]/g,' ')
+    .replace(/\s+/g,' ').trim();
+
+  const want = norm(qRaw);
+  const year = commence ? new Date(commence).getUTCFullYear() : null;
+
+  // 1) si hay pista de liga, intenta acotar por liga+temporada (recomendado por API-FOOTBALL)
+  //    - /leagues?search=<liga>
+  //    - elige la que tenga season==year (si hay commence), o la temporada "current"
+  let leagueId = null, season = null;
+  if (leagueHint) {
+    const L = await afApi(`/leagues?search=${encodeURIComponent(leagueHint)}`);
+    const leagues = (L && L.response) || [];
+    // pick liga cuya seasons incluya el año, o la current si no tenemos commence
+    let best = null;
+    for (const item of leagues) {
+      const seasons = item.seasons || [];
+      if (year) {
+        if (seasons.some(s => String(s.year) === String(year))) {
+          best = item;
+          break;
+        }
+      } else {
+        best = seasons.some(s => s.current) ? item : (best || item);
+      }
+    }
+    if (best && best.league && best.league.id) {
+      leagueId = best.league.id;
+      // prioriza temporada exacta; si no, la current; si no, última conocida
+      const seasons = best.seasons || [];
+      season = year
+        ? (seasons.find(s => String(s.year)===String(year))?.year)
+        : (seasons.find(s => s.current)?.year || seasons.at(-1)?.year || null);
     }
   }
-  if (best && bestScore >= MATCH_RESOLVE_CONFIDENCE) return best.id;
-  return null;
+
+  // 2) busca equipos: si tenemos leagueId, filtra por liga (mucho más preciso)
+  let teamsResp;
+  if (leagueId) {
+    const path = `/teams?league=${leagueId}` +
+                 (season ? `&season=${season}` : '') +
+                 `&search=${encodeURIComponent(qRaw)}`;
+    teamsResp = await afApi(path);
+  } else {
+    // fallback amplio si no hay pista de liga
+    teamsResp = await afApi(`/teams?search=${encodeURIComponent(qRaw)}`);
+  }
+
+  const candidates = (teamsResp && teamsResp.response) || [];
+  if (!candidates.length) return null;
+
+  // 3) elige por similitud del nombre (sin strip agresivo de tokens)
+  let bestId = null, bestScore = -1;
+  for (const it of candidates) {
+    const name = it?.team?.name || '';
+    if (!name) continue;
+    const score = sim(want, norm(name));
+    if (score > bestScore) {
+      bestScore = score;
+      bestId = it.team.id || null;
+    }
+  }
+
+  // si tu pipeline usa umbral, respétalo; si no, solo devuelve el mejor
+  // (SIM_THR llega desde el módulo de config; si no existe aquí, comenta el umbral)
+  try {
+    if (typeof SIM_THR === 'number' && bestScore < SIM_THR) return null;
+  } catch (_) { /* ignore if SIM_THR not in scope */ }
+
+  return bestId || null;
 }
 
 module.exports = { pickTeamId, sim };
