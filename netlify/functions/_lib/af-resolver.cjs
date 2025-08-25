@@ -307,7 +307,7 @@ function resolveFixtureFromList(partido, afList) {
  * Busca por nombres (normalizados internamente por el propio módulo) y
  * usa el selector ya existente para elegir el fixture correcto.
  */
-async function resolveTeamsAndLeague(evt = {}, opts = {}) {
+async function resolveTeamsAndLeague(evt = {}) {
   // Entradas
   const home = evt.home || evt.home_team || (evt.teams && evt.teams.home && evt.teams.home.name) || '';
   const away = evt.away || evt.away_team || (evt.teams && evt.teams.away && evt.teams.away.name) || '';
