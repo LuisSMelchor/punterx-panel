@@ -458,3 +458,44 @@ if (module && module.exports) {
 }
 
 // ==== END PUNTERX PATCH ====
+
+
+/** AF /teams?search (liga/temporada opcionales) */
+async function teamsSearch({ leagueId, season, q }) {
+  if (!q) return [];
+  const params = { search: q };
+  if (leagueId) params.league = leagueId;
+  if (season) params.season = season;
+  try {
+    const resp = await afApi('/teams', params);
+    return Array.isArray(resp) ? resp : [];
+  } catch (e) {
+    if (process.env.AF_DEBUG) console.warn('[AF_DEBUG] teams search error', e?.message || String(e));
+    return [];
+  }
+}
+
+
+/** Busca un teamId por nombre (opcionalmente con liga/season) */
+async function getTeamIdByName(name, { leagueId, season } = {}) {
+  if (!name) return null;
+  const resp = await teamsSearch({ leagueId, season, q: name });
+  // Tomamos el primero; el selector final decide el fixture luego.
+  return (resp[0] && resp[0].team && resp[0].team.id) || null;
+}
+
+
+/** AF /fixtures/headtohead?h2h=homeId-awayId&from&to&timezone=UTC */
+async function h2hFixturesByIds(homeId, awayId, { from, to } = {}) {
+  if (!homeId || !awayId) return [];
+  const params = { h2h: `${homeId}-${awayId}`, timezone: 'UTC' };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  try {
+    const resp = await afApi('/fixtures/headtohead', params);
+    return Array.isArray(resp) ? resp : [];
+  } catch (e) {
+    if (process.env.AF_DEBUG) console.warn('[AF_DEBUG] h2h error', e?.message || String(e));
+    return [];
+  }
+}
