@@ -322,6 +322,21 @@ async function resolveTeamsAndLeague(evt = {}, opts = {}) {
   return resolveFixtureFromList(list, { home, away, liga, commence, ...opts });
 }
 
+
+/**
+ * Busca fixtures por texto (home/away) con ventana opcional.
+ * /fixtures?search=<q>&from=YYYY-MM-DD&to=YYYY-MM-DD&timezone=UTC
+ */
+async function searchFixturesByText({ q, from, to }) {
+  if (!q) return [];
+  let path = `/fixtures?search=${encodeURIComponent(q)}`;
+  if (from) path += `&from=${encodeURIComponent(from)}`;
+  if (to) path += `&to=${encodeURIComponent(to)}`;
+  path += `&timezone=UTC`;
+  const F = await afFetch(path);
+  return F.response || [];
+}
+
 module.exports = { afApi, searchFixturesByNames, resolveFixtureFromList, resolveTeamsAndLeague, sim, pickTeamId };
 
 
