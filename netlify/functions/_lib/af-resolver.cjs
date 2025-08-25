@@ -423,6 +423,37 @@ if (!merged.length) {
     const tHome = (await teamsSearch({ q: home }))?.[0]?.team?.id || null;
     const tAway = (await teamsSearch({ q: away }))?.[0]?.team?.id || null;
 
+      /* H2H RE-TRY WITH LEAGUE/SEASON */
+      if (!(tHome && tAway)) {
+        const { leagueId, season } = await getLeagueIdAndSeasonByName(liga);
+        if (process.env.AF_DEBUG) console.log('[AF_DEBUG] league hint', { liga, leagueId, season });
+        try {
+          let homeCandidates = await teamsSearch({ leagueId, season, q: home });
+          let awayCandidates = await teamsSearch({ leagueId, season, q: away });
+          const pickedHome = pickBestTeamIdByName(homeCandidates, home);
+          const pickedAway = pickBestTeamIdByName(awayCandidates, away);
+          if (!tHome && pickedHome) { /* override local */ }
+          if (!tAway && pickedAway) { /* override local */ }
+          const _tHome = tHome || pickedHome || null;
+          const _tAway = tAway || pickedAway || null;
+          if (_tHome && _tAway) {
+            const listH2H2 = await searchFixturesByH2H({ homeId: _tHome, awayId: _tAway, from, to });
+            if (DBG) console.log('[AF_DEBUG] h2h fixtures scanned (league-bound)', { from, to, count: listH2H2.length });
+            if (listH2H2.length) {
+              const partidoH2H2 = { home, away, liga, kickoff: commence };
+              const pickedH2H2 = resolveFixtureFromList(partidoH2H2, listH2H2);
+              if (pickedH2H2) {
+                const out2 = { ...pickedH2H2, method: 'h2h' };
+                if (DBG) console.log('[AF_DEBUG] PICK(H2H)', { fixture_id: out2.fixture_id, confidence: out2.confidence });
+                return out2;
+              }
+            }
+          }
+        } catch (e) {
+          if (DBG) console.warn('[AF_DEBUG] h2h league-bound error', e?.message || String(e));
+        }
+      }
+
     if (tHome && tAway) {
       const listH2H = await searchFixturesByH2H({ homeId: tHome, awayId: tAway, from, to });
       if (DBG) console.log('[AF_DEBUG] h2h fixtures scanned', { from, to, count: listH2H.length });
@@ -527,3 +558,49 @@ async function searchFixturesByH2H({ homeId, awayId, from, to }) {
   }
 }
 
+
+
+/** AF /leagues?search -> retorna {leagueId, season} (temporada current=true si existe) */
+async function getLeagueIdAndSeasonByName(leagueName) {
+  if (!leagueName) return { leagueId: null, season: null };
+  try {
+    const resp = await afApi('/leagues', { search: leagueName });
+    if (!Array.isArray(resp) || !resp.length) return { leagueId: null, season: null };
+    // Elegimos la liga con mayor similitud por nombre
+    const scored = resp.map(x => ({
+      leagueId: x?.league?.id ?? null,
+      leagueName: x?.league?.name ?? '',
+      seasons: Array.isArray(x?.seasons) ? x.seasons : [],
+      score: (typeof sim === 'function') ? sim(x?.league?.name ?? '', leagueName) : 0
+    })).sort((a,b) => b.score - a.score);
+    const top = scored[0];
+    if (!top?.leagueId) return { leagueId: null, season: null };
+    // temporada: la current=true si existe; si no, la más reciente
+    let season = null;
+    const currents = top.seasons.filter(s => s?.current);
+    if (currents.length) season = currents[0]?.year ?? null;
+    if (!season && top.seasons.length) {
+      const sorted = [...top.seasons].sort((a,b) => (b?.year ?? 0) - (a?.year ?? 0));
+      season = sorted[0]?.year ?? null;
+    }
+    return { leagueId: top.leagueId, season };
+  } catch (e) {
+    if (process.env.AF_DEBUG) console.warn('[AF_DEBUG] leagues search error', e?.message || String(e));
+    return { leagueId: null, season: null };
+  }
+}
+
+
+/** Elige el team.id con mayor similitud a 'name' (umbral SIM_THR o 0.7 por defecto) */
+function pickBestTeamIdByName(candidates = [], name) {
+  const thr = Number(process.env.SIM_THR ?? 0.7);
+  const scored = candidates.map(c => {
+    const t = c?.team;
+    const n = t?.name || t?.common || t?.code || '';
+    return { id: t?.id ?? null, score: (typeof sim === 'function') ? sim(n, name) : 0, name: n };
+  }).filter(x => x.id);
+  scored.sort((a,b) => b.score - a.score);
+  const top = scored[0];
+  if (process.env.AF_DEBUG) console.log('[AF_DEBUG] team pick', { q: name, best: top?.name, score: top?.score });
+  return (top && top.score >= thr) ? top.id : null;
+}
