@@ -111,20 +111,222 @@ async function searchFixturesByDay({ leagueId, season, dayUTC }) {
   return F.response || [];
 }
 
-async function afApi(path, params = {
+async function afApi(path, params = {}) {
+  // Nota: Node 20 ya tiene fetch global
+  const url = new URL(AF_BASE + path);
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
+  });
+  const res = await fetch(url, {
+    headers: {
+      'x-apisports-key': API_FOOTBALL_KEY,
+      'x-rapidapi-key': API_FOOTBALL_KEY, // algunos proxies
+      'accept': 'application/json'
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(()=> '');
+    throw new Error(`AF HTTP ${res.status} ${res.statusText} :: ${url} :: ${body}`);
+  }
+  const json = await res.json();
+  if (!json || !Array.isArray(json.response)) {
+    throw new Error(`AF response malformado: ${url}`);
+  }
+  return json.response;
+}
 
 /**
  * Intenta resolver fixture y/o teamIds:
  *  - Primero por fixtures del día (si hay commence + liga)
  *  - Si no, resuelve teamIds por /teams y devuelve lo que consiga
  */
-
 async function searchFixturesByNames({ dateISO, leagueId, season, timezone }) {
   const params = {};
-  if (dateISO) params.date = String(dateISO).slice(0, 10);
+  if (dateISO) params.date = dateISO.slice(0, 10);
   if (leagueId) params.league = leagueId;
   if (season) params.season = season;
   if (timezone) params.timezone = timezone;
-  // Consulta /fixtures con filtros; afApi valida y devuelve array de response
+  // /fixtures por fecha/league/season
   return afApi('/fixtures', params);
+}
+
+/**
+ * resolveFixtureFromList(partido, afList)
+ * - partido: { home, away, liga?, pais?, kickoff? } (kickoff opcional para desempate)
+ * - afList: lista de fixtures ya consultados (API-Football)
+ * Retorna objeto con ids y metadatos del mejor match o null.
+ */
+function resolveFixtureFromList(partido, afList) {
+  try {
+    if (!afList || !Array.isArray(afList) || afList.length === 0) return null;
+
+    const homeQ = partido?.home || partido?.equipos?.home || partido?.equipos?.local || '';
+    const awayQ = partido?.away || partido?.equipos?.away || partido?.equipos?.visitante || '';
+    const ligaQ = partido?.liga || partido?.league || '';
+    const paisQ = partido?.pais || partido?.country || '';
+    const kickoffQ = partido?.kickoff || partido?.commence_time || partido?.start_time || null;
+
+    const nh = normalizeName(homeQ);
+    const na = normalizeName(awayQ);
+
+    const scored = [];
+
+    for (const fx of afList) {
+      const fh = fx?.teams?.home?.name || fx?.teams?.home?.common || fx?.teams?.home?.code || '';
+      const fa = fx?.teams?.away?.name || fx?.teams?.away?.common || fx?.teams?.away?.code || '';
+      const leagueName = fx?.league?.name || '';
+      const country = fx?.league?.country || '';
+      const fxKick = fx?.fixture?.date || null;
+
+      // Similaridades por orientación correcta
+      const sHome = nameSimilarity(fh, nh);
+      const sAway = nameSimilarity(fa, na);
+      const scoreDirect = (sHome + sAway) / 2;
+
+      // Similaridad por swap (por si están invertidos)
+      const sHomeSwap = nameSimilarity(fh, na);
+      const sAwaySwap = nameSimilarity(fa, nh);
+      const scoreSwap = (sHomeSwap + sAwaySwap) / 2;
+
+      // Ponderaciones por liga/país (suaves)
+      const sLeague = leagueSimilarity(leagueName, ligaQ);
+      const sCountry = countrySimilarity(country, paisQ);
+
+      // tomar el mejor de direct/swap y sumarle ligas/país
+      let baseScore, swapped;
+      if (scoreDirect >= scoreSwap) {
+        baseScore = scoreDirect;
+        swapped = false;
+      } else {
+        baseScore = scoreSwap;
+        swapped = true;
+      }
+
+      let score = baseScore
+        + MATCH_LEAGUE_WEIGHT * sLeague
+        + MATCH_COUNTRY_WEIGHT * sCountry;
+
+      // Pequeño bonus si existe kickoff cercano (<= 180 min)
+      let timeBonus = 0;
+      if (kickoffQ && fxKick) {
+        const min = minutesDiff(kickoffQ, fxKick);
+        if (min !== null) {
+          // de 0 a 180 minutos: bonus lineal decreciente
+          const clamped = Math.max(0, Math.min(180, min));
+          timeBonus = (1 - (clamped / 180)) * 0.05; // máx +0.05 si es idéntico
+          score += timeBonus;
+        }
+      }
+
+      scored.push({
+        fx, score, swapped, timeBonus,
+        sHome, sAway, sHomeSwap, sAwaySwap, sLeague, sCountry
+      });
+    }
+
+    // Ordenar por score desc. En empate, priorizar menor diferencia de hora.
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const ak = a.fx?.fixture?.date;
+      const bk = b.fx?.fixture?.date;
+      const da = kickoffQ && ak ? minutesDiff(kickoffQ, ak) : null;
+      const db = kickoffQ && bk ? minutesDiff(kickoffQ, bk) : null;
+      if (da !== null && db !== null && da !== db) return da - db;
+      return 0;
+    });
+
+    const best = scored[0];
+    if (!best) return null;
+
+    // Decisión final por umbral
+    if (best.score < MATCH_RESOLVE_CONFIDENCE) {
+      // log educativo, sin romper
+      console.warn(`[AF-RESOLVER] score<umbral → NO_MATCH`, {
+        home: homeQ, away: awayQ, ligaQ, paisQ,
+        best: {
+          home: best.fx?.teams?.home?.name,
+          away: best.fx?.teams?.away?.name,
+          league: best.fx?.league?.name,
+          country: best.fx?.league?.country,
+          score: Number(best.score.toFixed(3)),
+          swapped: best.swapped
+        },
+        umbral: MATCH_RESOLVE_CONFIDENCE
+      });
+      return null;
+    }
+
+    const fx = best.fx;
+    return {
+      fixture_id: fx?.fixture?.id,
+      kickoff: fx?.fixture?.date,
+      league_id: fx?.league?.id,
+      league_name: fx?.league?.name,
+      country: fx?.league?.country,
+      home_id: fx?.teams?.home?.id,
+      away_id: fx?.teams?.away?.id,
+      swapped: best.swapped,
+      confidence: Number(best.score.toFixed(3))
+    };
+
+  } catch (e) {
+    console.error('resolveFixtureFromList error:', e && e.stack ? e.stack : String(e));
+    return null;
+  }
+}
+
+
+/**
+ * Wrapper canónico: NO usa alias ni nombres fijos.
+ * Busca por nombres (normalizados internamente por el propio módulo) y
+ * usa el selector ya existente para elegir el fixture correcto.
+ */
+async function resolveTeamsAndLeague(evt = {}, opts = {}) {
+  const home = evt.home || evt.home_team || (evt.teams && evt.teams.home && evt.teams.home.name) || '';
+  const away = evt.away || evt.away_team || (evt.teams && evt.teams.away && evt.teams.away.name) || '';
+  const liga = evt.liga || evt.league || evt.league_name || '';
+
+  // Hints opcionales (no obligatorios)
+  const commence = evt.commence || evt.commence_time || evt.commenceTime || null;
+
+  // 1) Buscar lista de posibles fixtures por nombres
+  const list = await searchFixturesByNames(home, away, { leagueHint: liga, commence, ...opts });
+
+  // 2) Resolver el mejor fixture de esa lista
+  return resolveFixtureFromList(list, { home, away, liga, commence, ...opts });
+}
+
+module.exports = { afApi, searchFixturesByNames, resolveFixtureFromList, resolveTeamsAndLeague, sim, pickTeamId };
+
+
+/** Similaridad tipo Dice (bigrams) sobre strings normalizados */
+function sim(a = '', b = '') {
+  const norm = (t) => String(t).toLowerCase().normalize('NFD').replace(/\p{M}+/gu,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+  const A = norm(a), B = norm(b);
+  if (!A || !B) return 0;
+  const grams = (t) => { const g=new Map(); for(let i=0;i<t.length-1;i++){ const bg=t.slice(i,i+2); g.set(bg,(g.get(bg)||0)+1);} return g; };
+  const GA = grams(A), GB = grams(B);
+  let overlap = 0;
+  for (const [bg, cntA] of GA) {
+    const cntB = GB.get(bg) || 0;
+    overlap += Math.min(cntA, cntB);
+  }
+  const sizeA = Array.from(GA.values()).reduce((a,b)=>a+b,0);
+  const sizeB = Array.from(GB.values()).reduce((a,b)=>a+b,0);
+  return sizeA+sizeB ? (2*overlap)/(sizeA+sizeB) : 0;
+}
+
+
+/**
+ * pickTeamId(afApi, name): intenta delegar en afApi si existe; si no, null.
+ * NO hace fetch ni requiere API_KEY en "require-time".
+ */
+function pickTeamId(afApi, name) {
+  if (!name) return null;
+  try {
+    if (afApi && typeof afApi.pickTeamId === 'function') {
+      return afApi.pickTeamId(name) ?? null;
+    }
+  } catch(_) {}
+  return null;
 }
