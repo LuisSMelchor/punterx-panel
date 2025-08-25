@@ -330,3 +330,105 @@ function pickTeamId(afApi, name) {
   } catch(_) {}
   return null;
 }
+
+
+// ==== PUNTERX PATCH (non-intrusive) ====
+
+// Helper: /fixtures?search (texto) con ventana opcional y timezone=UTC
+async function searchFixturesByText({ q, from, to }) {
+  if (!q) return [];
+  const params = { search: q, timezone: 'UTC' };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  try {
+    const resp = await afApi('/fixtures', params);
+    return Array.isArray(resp) ? resp : [];
+  } catch (e) {
+    if (typeof AF_DEBUG !== 'undefined' && AF_DEBUG) {
+      console.warn('[AF_DEBUG] fixtures search error', e?.message || String(e));
+    }
+    return [];
+  }
+}
+
+// Helper: unión por equipos (home ∪ away) con dedupe por fixture.id
+async function searchFixturesByTeamsUnion({ home, away, from, to }) {
+  const seen = new Set(), out = [];
+  const add = (arr=[]) => { for (const fx of arr) { const id = fx?.fixture?.id; if (!id || seen.has(id)) continue; seen.add(id); out.push(fx); } };
+  const runOne = async (q) => q ? await searchFixturesByText({ q, from, to }) : [];
+  add(await runOne(home));
+  add(await runOne(away));
+  return out;
+}
+
+// Parche: combina fecha + búsqueda textual y usa tu selector canónico
+async function patchedResolveTeamsAndLeague(evt = {}, opts = {}) {
+  const DBG = !!(typeof AF_DEBUG !== 'undefined' && AF_DEBUG);
+  const home = evt.home || evt.home_team || evt?.teams?.home?.name || '';
+  const away = evt.away || evt.away_team || evt?.teams?.away?.name || '';
+  const liga = evt.liga || evt.league || evt.league_name || '';
+  const commence = evt.commence || evt.commence_time || evt.commenceTime || evt.kickoff || null;
+
+  const isoDay = (d) => { try { return new Date(d).toISOString().slice(0,10); } catch { return null; } };
+  const dayUTC = commence ? isoDay(commence) : null;
+
+  // 1) fixtures por fecha (UTC)
+  let listByDate = [];
+  try {
+    if (dayUTC) {
+      listByDate = await afApi('/fixtures', { date: dayUTC, timezone: 'UTC' });
+      if (DBG) console.log('[AF_DEBUG] fixtures by date', { date: dayUTC, count: listByDate.length });
+    }
+  } catch (e) {
+    if (DBG) console.warn('[AF_DEBUG] fixtures by date error', e?.message || String(e));
+  }
+
+  // 2) fixtures por texto: unión (home ∪ away) con ventana ±1 día
+  let listBySearch = [];
+  try {
+    if (home || away) {
+      const base = commence ? new Date(commence) : null;
+      const from = base ? isoDay(new Date(base.getTime() - 24*60*60*1000)) : null;
+      const to   = base ? isoDay(new Date(base.getTime() + 24*60*60*1000)) : null;
+      listBySearch = await searchFixturesByTeamsUnion({ home, away, from, to });
+      if (DBG) console.log('[AF_DEBUG] fixtures search union scanned', { from, to, count: listBySearch.length });
+    }
+  } catch (e) {
+    if (DBG) console.warn('[AF_DEBUG] fixtures search union error', e?.message || String(e));
+  }
+
+  // 3) merge + dedupe
+  const seen = new Set(), merged = [];
+  for (const arr of [listByDate, listBySearch]) {
+    for (const fx of (arr || [])) {
+      const id = fx?.fixture?.id;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      merged.push(fx);
+    }
+  }
+  if (DBG) console.log('[AF_DEBUG] merged fixtures', { fromDate: listByDate.length, fromSearch: listBySearch.length, merged: merged.length });
+  if (!merged.length) { if (DBG) console.warn('[AF_DEBUG] NO_CANDIDATES', { home, away, liga, dayUTC }); return null; }
+
+  // 4) selección canónica (ORDEN correcto)
+  const partido = { home, away, liga, kickoff: commence };
+  const picked = resolveFixtureFromList(partido, merged);
+  if (!picked) { if (DBG) console.warn('[AF_DEBUG] NO_MATCH (below confidence or unsuitable)', { home, away, liga, dayUTC }); return null; }
+
+  // 5) method segun origen
+  const pid = picked.fixture_id;
+  const inDate = listByDate.some(fx => fx?.fixture?.id === pid);
+  const inSearch = listBySearch.some(fx => fx?.fixture?.id === pid);
+  const method = inDate ? 'date' : (inSearch ? 'search' : 'mixed');
+
+  const out = { ...picked, method };
+  if (DBG) console.log('[AF_DEBUG] PICK', { method, fixture_id: out.fixture_id, confidence: out.confidence });
+  return out;
+}
+
+// Override controlado de export
+if (module && module.exports) {
+  try { module.exports.resolveTeamsAndLeague = patchedResolveTeamsAndLeague; } catch(_) {}
+}
+
+// ==== END PUNTERX PATCH ====
