@@ -2,93 +2,130 @@
 'use strict';
 
 /**
- * Resolución robusta sin hardcode:
- * 1) Si hay commence => /fixtures?date=YYYY-MM-DD (+leagueId si se puede mapear) y matcheo por similitud.
- * 2) Fallback => /teams?search= para cada lado y similitud.
- * 3) Sin listas fijas ni alias quemados.
+ * Resolver AF:
+ * - Sin hardcode de equipos/ligas.
+ * - 1) Busca fixture por rango alrededor de `commence` (o hoy).
+ * - 2) Si no hay fixture, busca teamIds por /teams (con liga+temporada si hay pista).
+ * - 3) Fallback amplio por /teams?search=
  */
 
 const { normalizeTeamName } = require('./name-normalize.cjs');
 
-// ====== Config/consts ======
-const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY || '';
-const BASE_URL = 'https://v3.football.api-sports.io';
+const API_KEY = process.env.API_FOOTBALL_KEY || '';
+const DEBUG_TRACE = String(process.env.DEBUG_TRACE || '0') === '1';
 
-// Umbrales (puedes ajustar por ENV)
+// Umbral de similitud: usa env SIM_THR si existe, si no 0.70
 const SIM_THR = (() => {
-  const n = parseFloat(process.env.SIM_THR || '');
-  return Number.isFinite(n) ? n : 0.75;
+  const n = Number(process.env.SIM_THR);
+  return Number.isFinite(n) ? n : 0.70;
 })();
 
-// ====== Utils de normalización/similitud ======
-function normText(t = '') {
-  return String(t)
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{M}+/gu, '')
-    .replace(/[^a-z0-9 ]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+// ===== util de similitud por tokens (conservador) =====
+function tokenSet(str = '') {
+  return new Set(
+    normalizeTeamName(str)
+      .split(' ')
+      .filter(Boolean)
+  );
+}
+function jaccard(aStr, bStr) {
+  const A = tokenSet(aStr), B = tokenSet(bStr);
+  if (A.size === 0 || B.size === 0) return 0;
+  let inter = 0;
+  for (const t of A) if (B.has(t)) inter++;
+  const union = A.size + B.size - inter;
+  return inter / union;
+}
+function dice(aStr, bStr) {
+  const A = tokenSet(aStr), B = tokenSet(bStr);
+  if (A.size === 0 || B.size === 0) return 0;
+  let inter = 0;
+  for (const t of A) if (B.has(t)) inter++;
+  return (2 * inter) / (A.size + B.size);
+}
+function sim(a, b) {
+  if (!a || !b) return 0;
+  const na = normalizeTeamName(a);
+  const nb = normalizeTeamName(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+  return Math.max(jaccard(na, nb), dice(na, nb));
 }
 
-/** Dice-bigrams sobre texto normalizado (más estable que tokens sueltos) */
-function sim(a = '', b = '') {
-  const A = normText(a), B = normText(b);
-  if (!A || !B) return 0;
-  if (A === B) return 1;
-  const grams = (t) => {
-    const m = new Map();
-    for (let i = 0; i < t.length - 1; i++) {
-      const bg = t.slice(i, i + 2);
-      m.set(bg, (m.get(bg) || 0) + 1);
-    }
-    return m;
-  };
-  const GA = grams(A), GB = grams(B);
-  let overlap = 0, sizeA = 0, sizeB = 0;
-  for (const v of GA.values()) sizeA += v;
-  for (const v of GB.values()) sizeB += v;
-  for (const [bg, cntA] of GA) overlap += Math.min(cntA, GB.get(bg) || 0);
-  return (sizeA + sizeB) ? (2 * overlap) / (sizeA + sizeB) : 0;
-}
-
-// ====== Cliente simple API-FOOTBALL ======
-async function afApi(path, params = {}) {
-  if (!API_FOOTBALL_KEY) {
-    console.warn('af-resolver.cjs: falta API_FOOTBALL_KEY en el entorno');
+// ===== cliente AF genérico =====
+async function afFetch(pathAndQuery) {
+  if (!API_KEY) {
+    if (DEBUG_TRACE) console.warn('af-resolver.cjs: falta API_FOOTBALL_KEY en el entorno');
+    throw new Error('AF_KEY_MISSING');
   }
-  const url = new URL(BASE_URL + path);
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
-  });
-  const headers = { 'x-apisports-key': API_FOOTBALL_KEY };
-  const _fetch = global.fetch || (await import('node-fetch')).default;
+  const base = 'https://v3.football.api-sports.io';
+  const url = new URL(pathAndQuery.startsWith('/') ? base + pathAndQuery : `${base}/${pathAndQuery}`);
+  const headers = { 'x-apisports-key': API_KEY };
+
+  const _fetch = globalThis.fetch || (await import('node-fetch')).default;
   const res = await _fetch(url, { headers });
   if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    throw new Error(`AF ${path} ${res.status} ${txt && ':: ' + txt.slice(0, 200)}`);
+    const body = await res.text().catch(() => '');
+    throw new Error(`AF ${url.pathname}${url.search} ${res.status} ${body?.slice(0, 140)}`);
   }
   return res.json();
 }
 
-// ====== Liga: mapear pista textual a leagueId/season ======
-async function resolveLeagueId(leagueHint, commence) {
+// Exponemos por compatibilidad (otras funciones pueden llamarlo)
+async function afApi(pathAndQuery) {
+  return afFetch(pathAndQuery);
+}
+
+// ===== helpers de fechas =====
+function toYMD(d) {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const da = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${da}`;
+}
+function clampRangeFromCommence(commenceIso, padMin) {
+  // Rango centrado en commence (UTC), de +/- padMin minutos (mínimo 0 => día de commence)
+  const pad = Math.max(Number(padMin || 0), 0);
+  const c = new Date(commenceIso);
+  if (Number.isNaN(c.getTime())) {
+    // Si commence inválido, usar “hoy” UTC
+    const now = new Date();
+    const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+    const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59));
+    return { from: toYMD(from), to: toYMD(to), dayYear: now.getUTCFullYear() };
+  }
+  if (pad === 0) {
+    const from = new Date(Date.UTC(c.getUTCFullYear(), c.getUTCMonth(), c.getUTCDate(), 0, 0, 0));
+    const to = new Date(Date.UTC(c.getUTCFullYear(), c.getUTCMonth(), c.getUTCDate(), 23, 59, 59));
+    return { from: toYMD(from), to: toYMD(to), dayYear: c.getUTCFullYear() };
+  }
+  const fromMs = c.getTime() - pad * 60 * 1000;
+  const toMs = c.getTime() + pad * 60 * 1000;
+  const from = new Date(fromMs);
+  const to = new Date(toMs);
+  return { from: toYMD(from), to: toYMD(to), dayYear: c.getUTCFullYear() };
+}
+
+// ===== liga + temporada a partir del hint =====
+async function resolveLeagueAndSeason(leagueHint, commenceIso) {
   if (!leagueHint) return { leagueId: null, season: null };
-  const year = commence ? new Date(commence).getUTCFullYear() : null;
 
-  const j = await afApi('/leagues', { search: leagueHint }).catch(() => null);
-  const list = j && j.response || [];
-  if (!list.length) return { leagueId: null, season: null };
+  const L = await afApi(`/leagues?search=${encodeURIComponent(leagueHint)}`).catch(() => null);
+  const items = (L && L.response) || [];
+  if (!items.length) return { leagueId: null, season: null };
 
-  // Elige la liga cuya seasons incluya el año; si no hay commence, prioriza current.
+  const want = normalizeTeamName(leagueHint);
+  const year = commenceIso ? new Date(commenceIso).getUTCFullYear() : null;
+
+  // pick la liga cuya similitud con el nombre sea mayor y cuya seasons incluya el año (si hay), o la current
   let best = null;
-  for (const it of list) {
-    const seasons = it.seasons || [];
-    if (year) {
-      if (seasons.some(s => String(s.year) === String(year))) { best = it; break; }
-    } else {
-      if (seasons.some(s => s.current)) { best = it; break; }
-      best = best || it;
+  let bestScore = -1;
+  for (const it of items) {
+    const name = it?.league?.name || '';
+    const s = sim(want, name);
+    if (s > bestScore) {
+      bestScore = s;
+      best = it;
     }
   }
   if (!best || !best.league || !best.league.id) return { leagueId: null, season: null };
@@ -101,162 +138,179 @@ async function resolveLeagueId(leagueHint, commence) {
   return { leagueId: best.league.id, season: season || null };
 }
 
-// ====== 1) Buscar fixture del día por similitud (ideal) ======
-async function findTeamsFromFixturesByDate({ home, away, leagueHint, commence, simThr }) {
-  if (!commence) return null;
-  const d = new Date(commence);
-  if (Number.isNaN(+d)) return null;
+// ===== fixtures por rango (opcionalmente filtrado por liga+season) =====
+async function listFixturesByRange({ from, to, leagueId, season }) {
+  const qs = new URLSearchParams();
+  if (from && to) { qs.set('from', from); qs.set('to', to); }
+  else if (from) { qs.set('date', from); }
+  if (leagueId) qs.set('league', String(leagueId));
+  if (season) qs.set('season', String(season));
+  // timezone no es obligatorio: trabajamos en UTC
+  const j = await afApi(`/fixtures?${qs.toString()}`).catch(() => null);
+  return (j && j.response) || [];
+}
 
-  const yyyy_mm_dd = d.toISOString().slice(0, 10);
-  let leagueId = null, season = null;
-
-  // Si hay pista de liga, intenta mapearla a ID+season
-  if (leagueHint) {
-    const mapped = await resolveLeagueId(leagueHint, commence).catch(() => ({ leagueId: null, season: null }));
-    leagueId = mapped.leagueId; season = mapped.season;
-  }
-
-  // /fixtures?date=YYYY-MM-DD [&league=ID][&season=YYYY]
-  const params = { date: yyyy_mm_dd };
-  if (leagueId) params.league = leagueId;
-  if (season) params.season = season;
-
-  const j = await afApi('/fixtures', params).catch(() => null);
-  const arr = j && j.response || [];
-  if (!arr.length) return null;
-
-  const H = normalizeTeamName(home);
-  const A = normalizeTeamName(away);
-
+// ===== selección del mejor fixture por similitud de nombres =====
+function resolveFixtureFromList(list, homeRaw, awayRaw) {
+  const wantH = normalizeTeamName(homeRaw);
+  const wantA = normalizeTeamName(awayRaw);
   let best = null;
-  for (const fx of arr) {
-    const hName = fx?.teams?.home?.name || '';
-    const aName = fx?.teams?.away?.name || '';
-    const score = Math.min(sim(H, hName), sim(A, aName));
-    if (!best || score > best.score) {
-      best = {
-        score,
-        fixture_id: fx?.fixture?.id || null,
-        homeId: fx?.teams?.home?.id || null,
-        awayId: fx?.teams?.away?.id || null,
-        hName, aName
-      };
+  let bestScore = -1;
+
+  for (const f of list) {
+    const hName = f?.teams?.home?.name || '';
+    const aName = f?.teams?.away?.name || '';
+    if (!hName || !aName) continue;
+
+    const score = (sim(wantH, hName) + sim(wantA, aName)) / 2;
+    if (score > bestScore) {
+      bestScore = score;
+      best = f;
     }
   }
-  if (best && best.score >= (simThr ?? SIM_THR) && best.fixture_id && best.homeId && best.awayId) {
-    return { ...best, via: 'fixtures' };
+
+  if (best && bestScore >= SIM_THR) {
+    return {
+      ok: true,
+      score: bestScore,
+      fixture_id: best.fixture?.id || null,
+      league_id: best.league?.id || null,
+      season: best.league?.season || null,
+      homeId: best.teams?.home?.id || null,
+      awayId: best.teams?.away?.id || null,
+    };
   }
-  return null;
+  return { ok: false, score: bestScore, reason: 'NO_FIXTURE_MATCH' };
 }
 
-// ====== 2) Fallback: buscar equipos por nombre (sin liga fija) ======
-async function searchTeams(q) {
-  const j = await afApi('/teams', { search: q }).catch(() => null);
-  const arr = j && j.response || [];
-  return arr.map(x => x && x.team).filter(Boolean);
-}
-
-// pickTeamId: mantiene la firma pública (afApi, rawName, { leagueHint, commence })
-async function pickTeamId(_afApi_unused, rawName, { leagueHint, commence } = {}) {
+// ===== búsqueda de teamId por /teams (con filtro de liga cuando se puede) =====
+async function pickTeamId(rawName, { leagueId, season } = {}) {
   const qRaw = String(rawName || '').trim();
   if (!qRaw) return null;
 
-  // Si hay pista de liga, intentamos acotar por liga+season para mejorar precisión
-  let leagueId = null, season = null;
-  if (leagueHint) {
-    const mapped = await resolveLeagueId(leagueHint, commence).catch(() => ({ leagueId: null, season: null }));
-    leagueId = mapped.leagueId; season = mapped.season;
-  }
-
-  let j;
+  // 1) si hay liga/season, intentar ahí primero
+  let teams = [];
   if (leagueId) {
-    j = await afApi('/teams', { league: leagueId, season: season || undefined, search: qRaw }).catch(() => null);
-  } else {
-    j = await afApi('/teams', { search: qRaw }).catch(() => null);
+    const q1 = new URLSearchParams();
+    q1.set('league', String(leagueId));
+    if (season) q1.set('season', String(season));
+    q1.set('search', qRaw);
+    const j1 = await afApi(`/teams?${q1.toString()}`).catch(() => null);
+    teams = (j1 && j1.response) || [];
   }
-  const candidates = j && j.response || [];
-  if (!candidates.length) return null;
 
+  // 2) fallback amplio
+  if (!teams.length) {
+    const j2 = await afApi(`/teams?search=${encodeURIComponent(qRaw)}`).catch(() => null);
+    teams = (j2 && j2.response) || [];
+  }
+
+  if (!teams.length) return null;
+
+  // 3) elegir por similitud
   const want = normalizeTeamName(qRaw);
   let bestId = null, bestScore = -1;
-  for (const it of candidates) {
+  for (const it of teams) {
     const name = it?.team?.name || '';
     if (!name) continue;
-    const score = sim(want, name);
-    if (score > bestScore) {
-      bestScore = score;
+    const s = sim(want, name);
+    if (s > bestScore) {
+      bestScore = s;
       bestId = it?.team?.id || null;
     }
   }
+
+  if (DEBUG_TRACE) console.log('[AF pickTeamId]', { raw: qRaw, leagueId: leagueId || null, season: season || null, bestScore });
+
   if (bestScore < SIM_THR) return null;
-  return bestId || null;
+  return bestId;
 }
 
-// ====== Compat: listado de fixtures por nombres (para flows existentes) ======
-async function searchFixturesByNames(home, away, { leagueHint, commence } = {}) {
-  // Reutilizamos la lógica de fixtures del día; si no hay commence, no promete nada
-  const found = await findTeamsFromFixturesByDate({ home, away, leagueHint, commence, simThr: SIM_THR }).catch(() => null);
-  return found ? [found] : [];
-}
-
-async function resolveFixtureFromList(list, { /* home, away, commence */ } = {}) {
-  if (!Array.isArray(list) || !list.length) return null;
-  // ya vienen con score; devuelve el mejor con fixture_id válido
-  const best = list
-    .filter(x => x && x.fixture_id && x.homeId && x.awayId)
-    .sort((a, b) => (b.score - a.score))[0];
-  return best || null;
-}
-
-// ====== Resolución principal usada por autopick ======
+// ===== API principal para tu pipeline =====
 async function resolveTeamsAndLeague(evt = {}, opts = {}) {
   const home = evt.home || evt.home_team || (evt.teams && evt.teams.home && evt.teams.home.name) || '';
   const away = evt.away || evt.away_team || (evt.teams && evt.teams.away && evt.teams.away.name) || '';
-  const leagueHint = evt.liga || evt.league || evt.league_name || evt.leagueName || '';
-  const commence = evt.commence || evt.commence_time || evt.commenceTime || null;
+  const liga = evt.liga || evt.league || evt.league_name || evt.leagueName || opts.leagueHint || '';
+  const commence = evt.commence || evt.commence_time || evt.commenceTime || opts.commence || null;
 
-  const simThr = Number.isFinite(+opts.simThr) ? +opts.simThr : SIM_THR;
+  const windowPadMin = Number(opts.windowPadMin ?? 60); // por defecto ±60m alrededor del commence
+  const { from, to, dayYear } = clampRangeFromCommence(commence, windowPadMin);
 
-  // 1) Intento ideal: fixtures del día
-  const byFx = await findTeamsFromFixturesByDate({ home, away, leagueHint, commence, simThr }).catch(() => null);
-  if (byFx && byFx.fixture_id) {
-    return {
-      ok: true,
-      reason: 'resolved-by-fixture-date',
-      confidence: byFx.score,
-      home, away, liga: leagueHint,
-      teamIds: { homeId: byFx.homeId, awayId: byFx.awayId },
-      fixture_id: byFx.fixture_id
-    };
+  if (DEBUG_TRACE) console.log('[AF resolve] input', { home, away, liga, commence, from, to, SIM_THR });
+
+  // 1) liga+temporada
+  const { leagueId, season } = await resolveLeagueAndSeason(liga, commence).catch(() => ({ leagueId: null, season: null }));
+  if (DEBUG_TRACE) console.log('[AF resolve] liga/season', { leagueId, season, dayYear });
+
+  // 2) fixtures por rango (siempre intentamos primero)
+  let fixtures = await listFixturesByRange({ from, to, leagueId, season }).catch(() => []);
+  if (!fixtures.length && leagueId) {
+    // algunos torneos exigen season explícita: intentar sin season también
+    fixtures = await listFixturesByRange({ from, to, leagueId, season: null }).catch(() => []);
+  }
+  if (!fixtures.length) {
+    // último intento amplio por fecha
+    fixtures = await listFixturesByRange({ from, to }).catch(() => []);
   }
 
-  // 2) Fallback: teams search (sin hardcode)
-  const [homeId, awayId] = await Promise.all([
-    pickTeamId(afApi, home, { leagueHint, commence }),
-    pickTeamId(afApi, away, { leagueHint, commence })
-  ]);
+  if (DEBUG_TRACE) console.log('[AF resolve] fixtures count', fixtures.length);
 
-  if (homeId && awayId) {
-    // Con IDs, puedes intentar head-to-head del día para obtener fixture_id (si existiera)
-    // NOTA: /fixtures/headtohead no acepta date exacta, así que no garantizamos el fixture.
-    return {
+  const pickFx = resolveFixtureFromList(fixtures, home, away);
+  if (pickFx.ok) {
+    const out = {
       ok: true,
-      reason: 'teams-search',
+      reason: 'FIXTURE_MATCH',
+      confidence: pickFx.score,
+      fixture_id: pickFx.fixture_id,
+      league_id: pickFx.league_id,
+      season: pickFx.season,
+      homeId: pickFx.homeId,
+      awayId: pickFx.awayId,
+      home,
+      away,
+      liga,
+    };
+    if (DEBUG_TRACE) console.log('[AF resolve] OK via fixture', out);
+    return out;
+  }
+
+  // 3) fallback por equipos
+  const hId = await pickTeamId(home, { leagueId, season }).catch(() => null);
+  const aId = await pickTeamId(away, { leagueId, season }).catch(() => null);
+
+  if (hId && aId) {
+    const out = {
+      ok: true,
+      reason: 'TEAMS_FALLBACK',
       confidence: null,
-      home, away, liga: leagueHint,
-      teamIds: { homeId, awayId },
-      fixture_id: null
+      fixture_id: null,
+      league_id: leagueId || null,
+      season: season || null,
+      homeId: hId,
+      awayId: aId,
+      home,
+      away,
+      liga,
     };
+    if (DEBUG_TRACE) console.log('[AF resolve] OK via teams', out);
+    return out;
   }
 
+  if (DEBUG_TRACE) console.warn('[AF resolve] null result', { pickFx, hId, aId });
   return null;
+}
+
+// También exportamos algunas utilidades por compat
+async function searchFixturesByNames(home, away, { from, to, leagueId, season } = {}) {
+  const fixtures = await listFixturesByRange({ from, to, leagueId, season }).catch(() => []);
+  return resolveFixtureFromList(fixtures, home, away);
 }
 
 module.exports = {
   afApi,
+  sim,
+  pickTeamId,
   searchFixturesByNames,
   resolveFixtureFromList,
   resolveTeamsAndLeague,
-  sim,
-  pickTeamId
 };
