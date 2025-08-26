@@ -276,56 +276,38 @@ function formatMarketsTop3(markets = {}) {
 
 // --- fin formatMarketsTop3 ---
 function composeOneShotPrompt(payload) {
-  const fx = payload?.fixture || {};
-  const mk = payload?.markets || {};
-  const meta = payload?.meta || {};
-  const marketText = formatMarketsTop3(mk) || '- (sin mercados disponibles)';
+  var fx = (payload && payload.fixture) ? payload.fixture : {};
+  var mk = (payload && payload.markets) ? payload.markets : {};
+  var meta = (payload && payload.meta) ? payload.meta : {};
+  var marketText = formatMarketsTop3(mk) || '- (sin mercados disponibles)';
 
-  const title = '🎯 Genera un único JSON con la recomendación de apuesta';
-  const instr = 'Eres un analista de fútbol. Con los datos estructurados y las cuotas disponibles,\\n'
-              + 'genera UNA respuesta en formato JSON. Sé conciso, técnico y claro. No inventes datos.';
-  const guard = [
+  var title = '🎯 Genera un único JSON con la recomendación de apuesta';
+  var instr = 'Eres un analista de fútbol. Con los datos estructurados y las cuotas disponibles,\n' +
+              'genera UNA respuesta en formato JSON. Sé conciso, técnico y claro. No inventes datos.';
+  var guard = [
     'Reglas:',
     '- Usa SOLO mercados disponibles en el bloque de "Top 3 por mercado".',
     '- Si no hay datos suficientes, fija "probabilidad_estim" y "ev_estimado" en null y deja "apuestas_extra" [].',
     '- Prioriza mercados con mejor cuota (desempata con robustez de señal: convergencia de bookies/top3).',
     '- "datos_avanzados": máximo 3 oraciones, enfocadas en forma reciente, localía, goles esperados (si inferible por cuotas) y riesgos.',
     '- No agregues notas fuera del JSON. No incluyas disclaimers.'
-  ].join('\\n');
+  ].join('\n');
 
-  const context = [
+  var ctx = [
     'Contexto del evento:',
     '- Liga: ' + (fx.league || '(desconocida)'),
     '- Inicio: ' + (fx.when_text || '(desconocido)'),
-    '- IDs: fixture=' + (fx.fixture_id ?? 'n/a') + ', league=' + (fx.league_id ?? 'n/a') + ', home=' + (fx.home_id ?? 'n/a') + ', away=' + (fx.away_id ?? 'n/a'),
-    '- Método de match: ' + (meta.method || 'n/a') + ' (conf=' + (meta.confidence ?? 'n/a') + ')',
+    '- IDs: fixture=' + (fx.fixture_id != null ? fx.fixture_id : 'n/a') + ', league=' + (fx.league_id != null ? fx.league_id : 'n/a') + ', home=' + (fx.home_id != null ? fx.home_id : 'n/a') + ', away=' + (fx.away_id != null ? fx.away_id : 'n/a'),
+    '- Método de match: ' + (meta.method || 'n/a') + ' (conf=' + (meta.confidence != null ? meta.confidence : 'n/a') + ')',
     '',
     'Top 3 por mercado (mejores cuotas):',
     marketText
-  ].join('\\n');
+  ].join('\n');
 
-  const reqJson = [
-    'Devuelve SOLO un JSON con esta forma:',
-    '',
-    '{',
-    '  "apuesta_sugerida": { "mercado": "1x2|btts|over_2_5|doublechance", "seleccion": "texto", "cuota": number, "bookie": "texto" },',
-    '  "apuestas_extra": [ { "mercado": "string", "seleccion": "string", "cuota": number, "bookie": "string" } ],',
-    '  "probabilidad_estim": number,   // 0-100',
-    '  "ev_estimado": number,          // -100..+100 (usa tu inferencia con las cuotas top)',
-    '  "datos_avanzados": "texto breve y útil"',
-    '}'
-  ].join('\\n');
+  var prompt = [title, '', instr, '', guard, '', ctx, '', 'Devuelve SOLO un JSON: { apuesta_sugerida, probabilidad_estim, ev_estimado, apuestas_extra, datos_avanzados }'].join('\n');
+  return prompt;
+}
 
-  return [
-    title,
-    '',
-    instr,
-    '',
-    '---',
-    context,
-    '---',
-    guard,
-    '',
-    reqJson
-  ].join('\\n');
+module.exports = { enrichFixtureUsingOdds, buildOneShotPayload, oneShotPayload, formatMarketsTop3, composeOneShotPrompt };
+
 }
