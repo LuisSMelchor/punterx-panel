@@ -296,7 +296,7 @@ async function _resolveTeamsAndLeagueBase(evt = {}, opts = {}) {
   return resolveFixtureFromList(list, { home, away, liga, commence, ...opts });
 }
 
-module.exports = { afApi, searchFixturesByNames, resolveFixtureFromList, resolveTeamsAndLeague, sim, pickTeamId };
+module.exports = { afApi, searchFixturesByNames, resolveFixtureFromList, resolveTeamsAndLeague: _resolveTeamsAndLeagueBase, sim, pickTeamId };
 
 
 /** Similaridad tipo Dice (bigrams) sobre strings normalizados */
