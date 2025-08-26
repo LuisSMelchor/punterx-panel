@@ -329,6 +329,7 @@ try {
 
 
 
+console.log('[ENRICH_LOAD_OK]');
 /* ===== unified exports (idempotent) ===== */
 try {
   if (typeof module !== 'undefined') {
