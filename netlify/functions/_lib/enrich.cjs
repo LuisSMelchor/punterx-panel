@@ -102,7 +102,7 @@ async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
   };
 }
 
-module.exports = { enrichFixtureUsingOdds, fetchOddsForFixture, marketKeyCanonical, preferredCanonMarkets, normalizeFromOddsAPIv4, toTop3ByMarket };
+module.exports = { enrichFixtureUsingOdds, fetchOddsForFixture, marketKeyCanonical, preferredCanonMarkets, normalizeFromOddsAPIv4, toTop3ByMarket, buildOneShotPayload, oneShotPayload };
 
 function _fetchJson(url, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -224,4 +224,44 @@ function marketKeyCanonical(key='') {
 function preferredCanonMarkets() {
   const raw = process.env.ODDS_MARKETS_CANON || '1x2,btts,over_2_5,doublechance';
   return raw.split(',').map(x => x.trim()).filter(Boolean);
+}
+
+function buildOneShotPayload({ evt = {}, match = {}, enriched = {} } = {}) {
+  const fx = {
+    fixture_id: enriched?.fixture_id ?? match?.fixture_id ?? null,
+    league: enriched?.league ?? match?.league_name ?? null,
+    kickoff: evt?.commence ?? null,
+    when_text: enriched?.when_text ?? null,
+    league_id: match?.league_id ?? null,
+    home_id: match?.home_id ?? null,
+    away_id: match?.away_id ?? null
+  };
+
+  // markets_top3 ya normalizados en enriched
+  const markets = enriched?.markets_top3 || {};
+
+  // Paquete canónico y compacto
+  return {
+    fixture: fx,
+    markets,
+    meta: {
+      method: match?.method || 'unknown',
+      confidence: match?.confidence ?? null,
+      source: 'OddsAPI+AF',
+      ts: new Date().toISOString()
+    }
+  };
+}
+
+async function oneShotPayload({ evt, match, fixture }) {
+  // Si ya viene enriched desde fuera, respétalo:
+  let enriched;
+  if (fixture && typeof fixture === 'object') {
+    // Asegura que pase por enrichFixtureUsingOdds para obtener markets_top3
+    enriched = await enrichFixtureUsingOdds({ fixture });
+  } else {
+    // fallback minimal: sin fixture no armamos enriched
+    enriched = {};
+  }
+  return buildOneShotPayload({ evt, match, enriched });
 }
