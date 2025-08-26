@@ -33,7 +33,7 @@ exports.handler = async (event) => {
       away_id: match?.away_id ?? null,
     };
 
-    // Enriquecimiento: intentará pedir OddsAPI si hay ODDS_API_KEY
+    // Enriquecimiento (si hay ODDS_API_KEY intentará fetch; sino, solo normaliza campos)
     const enriched = await enrich.enrichFixtureUsingOdds({ fixture });
 
     // Construir payload one-shot consistente
