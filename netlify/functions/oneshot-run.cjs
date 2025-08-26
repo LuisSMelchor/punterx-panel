@@ -1,20 +1,6 @@
 const enrich = require('./_lib/enrich.cjs');
-let oneShot = (enrich && (enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload));
-if (typeof oneShot !== 'function') {
-  oneShot = async ({ evt={}, match={}, fixture={} }) => ({
-    status: 'preview',
-    result_trace: 'local-fallback-' + Date.now().toString(36),
-    level: 'info', ev: null, markets: null,
-    meta: { reason: 'oneShot missing' }, evt, match, fixture
-  });
-}
-
-
-
-
+const oneShot = enrich.oneShotPayload || enrich.buildOneShotPayload;
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
-
-const { callOneShotOpenAI, safeJson, computeEV, classifyEV } = require('./_lib/ai.cjs');
 
 exports.handler = async (event) => {
   try {
@@ -23,61 +9,22 @@ exports.handler = async (event) => {
       home: q.home || 'Charlotte FC',
       away: q.away || 'New York Red Bulls',
       league: q.league || 'Major League Soccer',
-      commence: q.commence || '2025-08-24T23:00:00Z'
+      commence: q.commence || new Date(Date.now()+60*60*1000).toISOString()
     };
-
     const match = await resolveTeamsAndLeague(evt, {});
     const fixture = {
       fixture_id: match?.fixture_id,
       kickoff: evt.commence,
       league_id: match?.league_id,
-      league_name: match?.league_name,
+      league_name: match?.league_name || evt.league,
       country: match?.country,
       home_id: match?.home_id,
-      away_id: match?.away_id,
+      away_id: match?.away_id
     };
 
-    // 1) payload + prompt
     const payload = await oneShot({ evt, match, fixture });
-    const prompt = composeOneShotPrompt(payload);
-
-    // 2) Llamada a OpenAI (si no hay clave, retorna null)
-    const raw = await callOneShotOpenAI(prompt);
-
-    // 3) Validación JSON + EV + clasificación
-    const parsed = safeJson(raw);
-    let result = {
-      raw,                       // respuesta cruda de IA (string o null)
-      parsed: null,              // JSON parseado (forma esperada) o null
-      ev_calculado: null,
-      nivel: 'descartado',
-      reason: null
-    };
-
-    if (!parsed) {
-      result.reason = 'json_invalido';
-    } else {
-      // recalculamos EV con nuestra fórmula y overwritte si aplica
-      const prob = parsed.probabilidad_estim;
-      const apuesta = parsed.apuesta_sugerida;
-      const ev = computeEV(apuesta, prob);
-      result.parsed = parsed;
-      result.ev_calculado = Number.isFinite(ev) ? Number(ev.toFixed(2)) : null;
-
-      const nivel = classifyEV(result.ev_calculado);
-      result.nivel = nivel;
-      result.reason = nivel === 'descartado' ? 'ev_insuficiente' : 'ok';
-    }
-
-    // 4) Respuesta diagnóstica
-    return { statusCode: netlify/functions/oneshot-run.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        input: { evt, match },
-        payload,
-        prompt_preview: prompt.slice(0, 600),  // para inspección rápida
-        result
-      }, null, 2)
-    };
+    return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload, null, 2) };
   } catch (e) {
-    return { statusCode: netlify/functions/oneshot-run.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: e?.message || String(e) }) };
+    return { statusCode: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: e?.message || String(e) }) };
   }
 };
