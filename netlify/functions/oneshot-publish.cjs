@@ -4,6 +4,7 @@ const { callOneShotOpenAI, safeJson, computeEV } = require('./_lib/ai.cjs');
 const { classifyEV, isPublishable } = require('./_lib/ev-rules.cjs');
 const { fmtVIP, fmtFREE } = require('./_lib/format-msg.cjs');
 const { savePickIfValid } = require('./_lib/db.cjs');
+const { isRateLimited } = require('./_lib/ratelimit.cjs');
 
 let sendTG = null;
 try { sendTG = require('../../send.js'); } catch { /* no-op si no existe */ }
@@ -32,6 +33,12 @@ exports.handler = async (event) => {
       home_id: match?.home_id,
       away_id: match?.away_id,
     };
+
+    // Rate-limit por fixture_id
+    const rlKey = fixture?.fixture_id ? String(fixture.fixture_id) : null;
+    if (rlKey && isRateLimited(rlKey)) {
+      return { statusCode: 200, body: JSON.stringify({ status: 'rate_limited', fixture_id: rlKey }) };
+    }
 
     const payload = await oneShotPayload({ evt, match, fixture });
     const prompt = composeOneShotPrompt(payload);
