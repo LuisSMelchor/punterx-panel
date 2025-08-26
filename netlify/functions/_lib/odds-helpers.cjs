@@ -3,12 +3,10 @@ const https = require('https');
 
 function _get(url) {
   return new Promise((resolve, reject) => {
-    const req = https.request(url, { method: 'GET', timeout: 8000 }, (res) => {
+    const req = https.request(url, { method: 'GET', timeout: 9000 }, (res) => {
       let data = '';
       res.on('data', d => data += d);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
-      });
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
     });
     req.on('timeout', () => { req.destroy(new Error('timeout')); });
     req.on('error', reject);
@@ -16,7 +14,14 @@ function _get(url) {
   });
 }
 
-function _norm(s='') { return String(s).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').trim(); }
+function _norm(s='') {
+  return String(s).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').trim();
+}
+
+// elimina sufijos comunes tipo "FC", "CF", "SC" para comparación
+function _stripTeam(s='') {
+  return _norm(s).replace(/\b(fc|cf|sc|ac|cd|ud)\b/g,'').replace(/\s+/g,' ').trim();
+}
 
 // Mapa rápido de ligas → sport_key
 const LEAGUE_MAP = new Map([
@@ -35,11 +40,14 @@ const LEAGUE_MAP = new Map([
   ['campeonato brasileiro serie a', 'soccer_brazil_campeonato'],
   ['brasileirao', 'soccer_brazil_campeonato'],
   ['argentina liga profesional', 'soccer_argentina_primera_division'],
+  ['liga mx', 'soccer_mexico_liga_mx'],
+  ['championship', 'soccer_efl_championship'],
+  ['serie b', 'soccer_italy_serie_b'],
+  ['segunda division', 'soccer_spain_segunda_division'],
 ]);
 
 function guessSportKeyFromLeague(league='') {
-  const k = LEAGUE_MAP.get(_norm(league)) || null;
-  return k;
+  return LEAGUE_MAP.get(_norm(league)) || null;
 }
 
 async function discoverSportKeyAll(league='') {
@@ -50,8 +58,7 @@ async function discoverSportKeyAll(league='') {
     const target = _norm(league);
     let best = null, bestScore = 0;
     for (const s of (Array.isArray(list) ? list : [])) {
-      const name = _norm(s.title || s.key || '');
-      // score simple: incluye palabras de la liga
+      const name = _norm(`${s.title || ''} ${s.key || ''}`);
       let score = 0;
       for (const part of target.split(/\s+/)) if (part && name.includes(part)) score++;
       if (score > bestScore) { best = s; bestScore = score; }
@@ -67,14 +74,21 @@ function sameDayUTC(aIso, bIso) {
   } catch { return false; }
 }
 
-function teamLikeMatch(str, home, away) {
-  const s = _norm(str), h = _norm(home), a = _norm(away);
-  return (s.includes(h) && s.includes(a)) || s.includes(`${h} vs ${a}`) || s.includes(`${a} vs ${h}`);
+function teamLikeMatch(evt, home, away) {
+  const eH = _stripTeam(evt?.home_team || '');
+  const eA = _stripTeam(evt?.away_team || '');
+  const h = _stripTeam(home), a = _stripTeam(away);
+  const ok =
+    (eH.includes(h) && eA.includes(a)) ||
+    (eH.includes(a) && eA.includes(h)) ||
+    (h.includes(eH) && a.includes(eA)) ||
+    (a.includes(eH) && h.includes(eA));
+  return ok;
 }
 
 /**
- * Trae cuotas del evento según fixture o evt ({home,away,league,kickoff/commence})
- * Devuelve arreglo [OddsAPI v4] tal como lo espera normalizeFromOddsAPIv4()
+ * Trae cuotas del evento según {home,away,league,kickoff/commence}
+ * Devuelve arreglo [OddsAPI v4]
  */
 async function fetchOddsForFixture(fixtureOrEvt = {}) {
   const apiKey = process.env.ODDS_API_KEY;
@@ -85,36 +99,28 @@ async function fetchOddsForFixture(fixtureOrEvt = {}) {
   const league = fixtureOrEvt.league || fixtureOrEvt.league_name || '';
   const kickoff = fixtureOrEvt.kickoff || fixtureOrEvt.commence || fixtureOrEvt.commence_time || null;
 
-  // sport_key
   let sport = guessSportKeyFromLeague(league);
   if (!sport) sport = await discoverSportKeyAll(league);
-  if (!sport) return null; // sin sport no podemos continuar
+  if (!sport) return null;
 
-  // mercados a pedir
-  const regions = process.env.ODDS_REGIONS || 'eu';
+  const regions = process.env.ODDS_REGIONS || 'eu,uk,us,au';
   const markets = process.env.ODDS_MARKETS || 'h2h,both_teams_to_score,totals,double_chance';
 
   const url = `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(sport)}/odds?` +
               `apiKey=${encodeURIComponent(apiKey)}&regions=${encodeURIComponent(regions)}&markets=${encodeURIComponent(markets)}&oddsFormat=decimal&dateFormat=iso`;
 
-  const arr = await _get(url); // Array de eventos con {bookmakers, ...}
+  const arr = await _get(url);
   if (!Array.isArray(arr)) return null;
 
-  // Si no tenemos home/away, devuelve todo (caller filtrará)
   if (!home || !away || !kickoff) return arr;
 
-  // Filtrado simple por nombres y fecha (mismo día)
+  // filtro por equipos (tolerante) y mismo día UTC
   const matches = arr.filter(evt => {
-    const names = [
-      evt?.home_team, evt?.away_team, evt?.sport_title, evt?.sport_key,
-      `${evt?.home_team} vs ${evt?.away_team}`, `${evt?.away_team} vs ${evt?.home_team}`
-    ].filter(Boolean).join(' | ');
-    const teamOk = teamLikeMatch(names, home, away);
+    const teamOk = teamLikeMatch(evt, home, away);
     const dayOk = evt?.commence_time ? sameDayUTC(evt.commence_time, kickoff) : true;
     return teamOk && dayOk;
   });
 
-  // Si encontramos alguno, devolvemos ese subconjunto; sino devuelve todo para que arriba intente normalizar algo
   return matches.length ? matches : arr;
 }
 
