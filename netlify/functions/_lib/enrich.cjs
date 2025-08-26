@@ -43,7 +43,20 @@ function attachLeagueCountry(fx = {}) {
   return league && country ? `${league} (${country})` : (league || null);
 }
 
+
 async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
+  const _fixture = fixture || {};
+  let _odds = oddsRaw;
+
+  // Si no viene oddsRaw y hay clave, intenta traer desde OddsAPI
+  if (!_odds && process.env.ODDS_API_KEY) {
+    try {
+      _odds = await fetchOddsForFixture(_fixture);
+    } catch (e) {
+      if (Number(process.env.DEBUG_TRACE)) console.log('[ENRICH] fetch odds fail', e?.message || e);
+    }
+  }
+
   // fixture esperado (ejemplo):
   // { fixture_id, kickoff, league_id, league_name, country, home_id, away_id, ... }
   const topMarkets = normalizeMarkets(oddsRaw);
@@ -52,8 +65,7 @@ async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
                                                    : `Comenzó hace ${Math.abs(mins)} minutos aprox`)
                                         : null;
 
-  return {
-    fixture_id: fixture?.fixture_id ?? null,
+  return { fixture_id: fixture?.fixture_id ?? null,
     kickoff: fixture?.kickoff ?? null,
     when_text: whenTxt,
     league: attachLeagueCountry(fixture),
@@ -63,9 +75,7 @@ async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
   };
 }
 
-module.exports = {
-  enrichFixtureUsingOdds,
-};
+module.exports = { enrichFixtureUsingOdds, fetchOddsForFixture };
 
 function _fetchJson(url, headers = {}) {
   return new Promise((resolve, reject) => {
