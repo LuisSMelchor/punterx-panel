@@ -40,7 +40,11 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: JSON.stringify({ status: 'rate_limited', fixture_id: rlKey }) };
     }
 
+    const trace_id = (fixture?.fixture_id ? String(fixture.fixture_id) : 'no_fx') + '-' + Date.now().toString(36);
+    if (Number(process.env.DEBUG_TRACE)) console.log('[TRACE]', trace_id, 'evt', evt);
+
     const payload = await oneShotPayload({ evt, match, fixture });
+    if (Number(process.env.DEBUG_TRACE)) console.log('[TRACE]', trace_id, 'payload_ok', !!payload?.markets);
     const prompt = composeOneShotPrompt(payload);
     const raw = await callOneShotOpenAI(prompt);
 
@@ -113,9 +117,8 @@ exports.handler = async (event) => {
       }
     }
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
+    return { statusCode: 200, body: JSON.stringify({
+        result_trace: trace_id,
         status: sent ? 'sent' : 'preview',
         nivel,
         ev: ev2,
