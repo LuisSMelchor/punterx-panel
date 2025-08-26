@@ -1,88 +1,92 @@
-const enrich = require('./_lib/enrich.cjs');
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
+const { oneShotPayload, composeOneShotPrompt } = require('./_lib/enrich.cjs');
+const { callOneShotOpenAI, safeJson, computeEV } = require('./_lib/ai.cjs');
+const { classifyEV, isPublishable } = require('./_lib/ev-rules.cjs');
+const { fmtVIP, fmtFREE } = require('./_lib/format-msg.cjs');
 
-const buildOneShot = enrich.oneShotPayload || enrich.buildOneShotPayload;
-
-async function publishToTelegram(payload) {
-  const bot = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_VIP_ID || process.env.TELEGRAM_CHANNEL_ID;
-  if (!bot || !chatId) return { ok: false, reason: 'missing_telegram_env' };
-
-  const liga = payload?.league || payload?.enriched?.league || '-';
-  const kickoff = payload?.evt?.commence || payload?.enriched?.kickoff || '-';
-  const home = payload?.evt?.home || '-';
-  const away = payload?.evt?.away || '-';
-  const when = payload?.when_text || payload?.enriched?.when_text || null;
-
-  const text = [
-    '🎯 *One-Shot Preview*',
-    `*Liga:* ${liga}`,
-    `*Partido:* ${home} vs ${away}`,
-    `*Kickoff:* ${kickoff}`,
-    when ? `*Cuando:* ${when}` : null,
-  ].filter(Boolean).join('\n');
-
-  const url = `https://api.telegram.org/bot${bot}/sendMessage`;
-  const body = JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' });
-  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
-  const json = await res.json().catch(() => ({}));
-  return { ok: Boolean(json?.ok), response: json };
-}
+let sendTG = null;
+try { sendTG = require('../../send.js'); } catch { /* no-op si no existe */ }
 
 exports.handler = async (event) => {
   try {
+    if (process.env.FEATURE_ONESHOT !== '1') {
+      return { statusCode: 200, body: JSON.stringify({ status: 'feature_off' }) };
+    }
+
     const q = event?.queryStringParameters || {};
     const evt = {
       home: q.home || 'Charlotte FC',
       away: q.away || 'New York Red Bulls',
       league: q.league || 'Major League Soccer',
-      commence: q.commence || new Date(Date.now() + 60*60*1000).toISOString(),
+      commence: q.commence || '2025-08-24T23:00:00Z'
     };
 
-    let match = {};
-    try { match = await resolveTeamsAndLeague(evt, {}); }
-    catch (e) { match = { ok: false, method: 'none', reason: 'resolver_error', error: e?.message }; }
-
+    const match = await resolveTeamsAndLeague(evt, {});
     const fixture = {
-      fixture_id: match?.fixture_id ?? null,
+      fixture_id: match?.fixture_id,
       kickoff: evt.commence,
-      league_id: match?.league_id ?? null,
-      league_name: match?.league_name ?? evt.league,
-      country: match?.country ?? null,
-      home_id: match?.home_id ?? null,
-      away_id: match?.away_id ?? null,
+      league_id: match?.league_id,
+      league_name: match?.league_name,
+      country: match?.country,
+      home_id: match?.home_id,
+      away_id: match?.away_id,
     };
 
-    const enriched = await enrich.enrichFixtureUsingOdds({ fixture });
-    const payload = await buildOneShot({ evt, match, enriched });
+    const payload = await oneShotPayload({ evt, match, fixture });
+    const prompt = composeOneShotPrompt(payload);
+    const raw = await callOneShotOpenAI(prompt);
 
-    // No publicar si no hay datos mínimos
-    const hasMinData = Boolean((payload?.league || payload?.enriched?.league) && (payload?.evt?.commence || payload?.enriched?.kickoff));
-    const canPublish = !!(process.env.TELEGRAM_BOT_TOKEN && (process.env.TELEGRAM_VIP_ID || process.env.TELEGRAM_CHANNEL_ID));
-    if (!hasMinData || !canPublish || match?.ok === false) {
-      return {
-        statusCode: 200,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          published: false,
-          preview: true,
-          reason: !canPublish ? 'missing_telegram_env' : (!hasMinData ? 'insufficient_payload' : (match?.ok === false ? 'match_not_resolved' : 'preview')),
-          payload
-        }, null, 2),
-      };
+    const parsed = safeJson(raw);
+    if (!parsed) {
+      return { statusCode: 200, body: JSON.stringify({ status: 'json_invalido', raw }) };
     }
 
-    const pub = await publishToTelegram(payload);
+    const ev = computeEV(parsed.apuesta_sugerida, parsed.probabilidad_estim);
+    const ev2 = Number.isFinite(ev) ? Number(ev.toFixed(2)) : null;
+    const nivel = classifyEV(ev2);
+
+    const bundle = {
+      fixture: payload.fixture,
+      ia: parsed,
+      ev: ev2,
+      markets: payload.markets
+    };
+
+    let text;
+    if (nivel === 'vip') text = fmtVIP(bundle);
+    else if (nivel === 'free') text = fmtFREE(bundle);
+    else return { statusCode: 200, body: JSON.stringify({ status: 'descartado', ev: ev2, parsed }) };
+
+    // Envío (si está habilitado y send.js existe)
+    const okToSend = process.env.SEND_TELEGRAM === '1' && isPublishable(nivel) && sendTG;
+    let sent = false, target = null;
+
+    if (okToSend) {
+      const vipId = process.env.TELEGRAM_VIP_ID;      // -1002861902996 (ejemplo)
+      const freeId = process.env.TELEGRAM_FREE_ID;    // @punterxpicks (si usas @, tu send debe soportarlo)
+      target = (nivel === 'vip') ? vipId : freeId;
+      if (target) {
+        try {
+          // send.js debe exponer sendMessage(chatId, text)
+          await sendTG.sendMessage(target, text);
+          sent = true;
+        } catch (e) {
+          if (Number(process.env.DEBUG_TRACE)) console.log('[TG] send fail', e?.message || e);
+        }
+      }
+    }
+
     return {
       statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ published: pub.ok, preview: false, payload, publish_result: pub }, null, 2),
+      body: JSON.stringify({
+        status: sent ? 'sent' : 'preview',
+        nivel,
+        ev: ev2,
+        target,
+        text
+      }, null, 2)
     };
   } catch (e) {
-    return {
-      statusCode: 500,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ error: e?.message || String(e) }),
-    };
+    return { statusCode: 500, body: JSON.stringify({ error: e?.message || String(e) }) };
   }
 };
