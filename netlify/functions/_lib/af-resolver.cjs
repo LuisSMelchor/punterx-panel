@@ -81,7 +81,6 @@ function levenshtein(a, b) {
         dp[j] + 1,
         dp[j - 1] + 1,
         prev + cost
-      );
       prev = tmp;
     }
   }
@@ -852,46 +851,6 @@ async function patchedResolveTeamsAndLeague_FINAL(evt = {}, opts = {}) {
 }
 
 // Override explícito (última palabra se queda)
-try { module.exports.resolveTeamsAndLeague = patchedResolveTeamsAndLeague_FINAL; } catch(_) {}
-
-/* === S2.7 Debouncer wrapper (safe-append) === */
-try {
-  if (typeof _resolveTeamsAndLeagueBase === 'function') {
-    const _afDupe = new Map();
-    function _mkDupeKey(evt) {
-      const h = (evt?.home || '').toLowerCase().trim();
-      const a = (evt?.away || '').toLowerCase().trim();
-      const l = (evt?.league || '').toLowerCase().trim();
-      const d = evt?.commence ? new Date(evt.commence).toISOString().slice(0,10) : '';
-      return [h,a,l,d].join('|');
-    }
-    const _orig = _resolveTeamsAndLeagueBase;
-    async function resolveTeamsAndLeague(evt, opts = {}) {
-      const dupeKey = _mkDupeKey(evt);
-      if (_afDupe.has(dupeKey)) {
-        if (Number(process.env.AF_DEBUG)) console.log("[AF_DEBUG] duplicate", { dupeKey });
-        return _afDupe.get(dupeKey);
-      }
-      let res;
-      try {
-        res = await _orig(evt, opts);
-      } catch (e) {
-        if (Number(process.env.AF_DEBUG)) console.log("[AF_DEBUG] base_threw", { dupeKey, err: String(e && e.message || e) });
-        res = null;
-      }
-      const safe = (typeof res === "undefined") ? null : res;
-      if (typeof res === "undefined" && Number(process.env.AF_DEBUG)) console.log("[AF_DEBUG] base_return_undefined", { dupeKey });
-      _afDupe.set(dupeKey, safe);
-      return safe;
-    }
-    // Reexporta el wrapper (CommonJS)
-    module.exports = module.exports || {};
-    module.exports.resolveTeamsAndLeague = resolveTeamsAndLeague;
-  }
-} catch (e) {
-  // noop: si no existe la base, no rompemos el módulo
-}
-
 /* === S2.7 Debouncer wrapper (final-safe) === */
 try {
   if (module && module.exports && typeof module.exports.resolveTeamsAndLeague === 'function') {
