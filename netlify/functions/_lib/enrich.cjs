@@ -311,3 +311,19 @@ function composeOneShotPrompt(payload) {
 module.exports = { enrichFixtureUsingOdds, buildOneShotPayload, oneShotPayload, formatMarketsTop3, composeOneShotPrompt };
 
 }
+
+
+/* ===== ensure exports (idempotent) ===== */
+try {
+  if (typeof module !== 'undefined') {
+    module.exports = module.exports || {};
+    if (typeof fetchOddsForFixture === 'function' && !module.exports.fetchOddsForFixture) module.exports.fetchOddsForFixture = fetchOddsForFixture;
+    if (typeof enrichFixtureUsingOdds === 'function' && !module.exports.enrichFixtureUsingOdds) module.exports.enrichFixtureUsingOdds = enrichFixtureUsingOdds;
+    if (typeof buildOneShotPayload === 'function' && !module.exports.buildOneShotPayload) module.exports.buildOneShotPayload = buildOneShotPayload;
+    if (typeof oneShotPayload === 'function' && !module.exports.oneShotPayload) module.exports.oneShotPayload = oneShotPayload;
+    if (typeof formatMarketsTop3 === 'function' && !module.exports.formatMarketsTop3) module.exports.formatMarketsTop3 = formatMarketsTop3;
+    if (typeof composeOneShotPrompt === 'function' && !module.exports.composeOneShotPrompt) module.exports.composeOneShotPrompt = composeOneShotPrompt;
+  }
+} catch {}
+/* ===== end ensure exports ===== */
+
