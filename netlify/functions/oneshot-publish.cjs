@@ -3,6 +3,7 @@ const { oneShotPayload, composeOneShotPrompt } = require('./_lib/enrich.cjs');
 const { callOneShotOpenAI, safeJson, computeEV } = require('./_lib/ai.cjs');
 const { classifyEV, isPublishable } = require('./_lib/ev-rules.cjs');
 const { fmtVIP, fmtFREE } = require('./_lib/format-msg.cjs');
+const { savePickIfValid } = require('./_lib/db.cjs');
 
 let sendTG = null;
 try { sendTG = require('../../send.js'); } catch { /* no-op si no existe */ }
@@ -56,6 +57,35 @@ exports.handler = async (event) => {
     if (nivel === 'vip') text = fmtVIP(bundle);
     else if (nivel === 'free') text = fmtFREE(bundle);
     else return { statusCode: 200, body: JSON.stringify({ status: 'descartado', ev: ev2, parsed }) };
+
+    /* __SUPABASE_SAVE__ */
+    const equipos = `${evt.home} vs ${evt.away}`;
+    const evento = equipos;
+    const tipo_pick = parsed?.apuesta_sugerida?.mercado || '(desconocido)';
+    const apuesta = parsed?.apuesta_sugerida?.seleccion ? `${parsed.apuesta_sugerida.seleccion} @ ${parsed.apuesta_sugerida.cuota} (${parsed.apuesta_sugerida.bookie || '-'})` : '(sin sugerencia)';
+    const analisis = parsed?.datos_avanzados || '(sin análisis)';
+    const ligaTxt = bundle?.fixture?.league || (evt.league || '(liga desconocida)');
+    const nowIso = new Date().toISOString();
+
+    const row = {
+      evento,
+      analisis,
+      apuesta,
+      tipo_pick,
+      liga: ligaTxt,
+      equipos,
+      ev: ev2,
+      probabilidad: parsed?.probabilidad_estim ?? null,
+      nivel,
+      timestamp: nowIso
+    };
+
+    let saved = { ok: false, reason: 'skip' };
+    try {
+      saved = await savePickIfValid(row);
+    } catch (e) {
+      if (Number(process.env.DEBUG_TRACE)) console.log('[DB] save error', e?.message || e);
+    }
 
     // Envío (si está habilitado y send.js existe)
     const okToSend = process.env.SEND_TELEGRAM === '1' && isPublishable(nivel) && sendTG;
