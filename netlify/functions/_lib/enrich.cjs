@@ -330,31 +330,13 @@ try {
 
 
 console.log('[ENRICH_LOAD_OK]');
-
-/* ===== unified exports (idempotent) ===== */
-try {
-  // debug: imprime tipos justo antes de exportar
-  console.log('[ENRICH_EXPORT_TYPES]', {
-    oneShotPayload: typeof oneShotPayload,
-    buildOneShotPayload: typeof buildOneShotPayload,
-    enrichFixtureUsingOdds: typeof enrichFixtureUsingOdds,
-    formatMarketsTop3: typeof formatMarketsTop3,
-    composeOneShotPrompt: typeof composeOneShotPrompt,
-    fetchOddsForFixture: typeof fetchOddsForFixture
-  });
-} catch {}
-
-try {
-  if (typeof module !== 'undefined') {
-    module.exports = module.exports || {};
-    // asignación directa (si no existen, lanzará ReferenceError; por eso try/catch por función)
-    try { module.exports.oneShotPayload = oneShotPayload; } catch {}
-    try { module.exports.buildOneShotPayload = buildOneShotPayload; } catch {}
-    try { module.exports.enrichFixtureUsingOdds = enrichFixtureUsingOdds; } catch {}
-    try { module.exports.formatMarketsTop3 = formatMarketsTop3; } catch {}
-    try { module.exports.composeOneShotPrompt = composeOneShotPrompt; } catch {}
-    try { module.exports.fetchOddsForFixture = fetchOddsForFixture; } catch {}
-  }
-} catch {}
-/* ===== end unified exports ===== */
-
+/* ===== exports (clean) ===== */
+if (typeof module !== 'undefined') {
+  module.exports = module.exports || {};
+  try { module.exports.enrichFixtureUsingOdds = enrichFixtureUsingOdds; } catch {}
+  try { module.exports.buildOneShotPayload   = buildOneShotPayload;   } catch {}
+  try { module.exports.oneShotPayload        = oneShotPayload;        } catch {}
+  try { module.exports.formatMarketsTop3     = formatMarketsTop3;     } catch {}
+  try { module.exports.composeOneShotPrompt  = composeOneShotPrompt;  } catch {}
+}
+/* ===== end exports ===== */
