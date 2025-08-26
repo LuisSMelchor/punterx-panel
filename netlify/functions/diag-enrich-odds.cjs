@@ -1,4 +1,5 @@
-const enrich = require('./_lib/enrich.cjs');
+const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
+const { enrichFixtureUsingOdds } = require('./_lib/enrich.cjs');
 
 exports.handler = async (event) => {
   try {
@@ -7,26 +8,30 @@ exports.handler = async (event) => {
       home: q.home || 'Charlotte FC',
       away: q.away || 'New York Red Bulls',
       league: q.league || 'Major League Soccer',
-      commence: q.commence || new Date(Date.now() + 60*60*1000).toISOString(),
+      commence: q.commence || '2025-08-24T23:00:00Z'
     };
-
-    // Simulamos un fixture mínimo con liga desde evt (aunque no haya resolver)
-    const fixture = {
-      fixture_id: null,
+    const match = await resolveTeamsAndLeague(evt, {});
+    // NO pasamos oddsRaw → fuerza el uso del fetch interno si hay ODDS_API_KEY
+    const enriched = await enrichFixtureUsingOdds({ fixture: {
+      fixture_id: match?.fixture_id,
       kickoff: evt.commence,
-      league_name: evt.league,   // <— clave para que enriched.league no sea null
-      country: null,
-      home_id: null,
-      away_id: null,
-    };
+      league_id: match?.league_id,
+      league_name: match?.league_name,
+      country: match?.country,
+      home_id: match?.home_id,
+      away_id: match?.away_id,
+    }});
 
-    const enriched = await enrich.enrichFixtureUsingOdds({ fixture });
     return {
       statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ evt, match: { fixture_id: null, confidence: null, method: 'none' }, enriched }, null, 2),
+      body: JSON.stringify({ evt, match: {
+        fixture_id: match?.fixture_id,
+        league_name: match?.league_name,
+        confidence: match?.confidence,
+        method: match?.method
+      }, enriched }, null, 2)
     };
   } catch (e) {
-    return { statusCode: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: e?.message || String(e) }) };
+    return { statusCode: 500, body: JSON.stringify({ error: e?.message || String(e) }) };
   }
 };
