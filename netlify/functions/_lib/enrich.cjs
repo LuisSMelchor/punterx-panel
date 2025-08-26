@@ -273,24 +273,8 @@ function formatMarketsTop3(markets = {}) {
   }
   return lines.join('\n');
 }
-) {
-  const order = (process.env.ODDS_MARKETS_CANON || '1x2,btts,over_2_5,doublechance')
-    .split(',').map(x=>x.trim()).filter(Boolean);
-  const lines = [];
-  for (const key of order) {
-    const arr = Array.isArray(markets[key]) ? markets[key] : [];
-    if (!arr.length) continue;
-    const head =
-      key === '1x2' ? '1X2' :
-      key === 'btts' ? 'Ambos anotan' :
-      key === 'over_2_5' ? 'Más de 2.5 goles' :
-      key === 'doublechance' ? 'Doble oportunidad' : key;
-    const items = arr.map(o => \`\${o.bookie}: \${o.price}\`).join(' | ');
-    lines.push(\`- \${head}: \${items}\`);
-  }
-  return lines.join('\\n');
-}
 
+// --- fin formatMarketsTop3 ---
 function composeOneShotPrompt(payload) {
   const fx = payload?.fixture || {};
   const mk = payload?.markets || {};
