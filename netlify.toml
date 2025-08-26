@@ -35,3 +35,8 @@
     "prompts_punterx.md"
   ]
 
+
+# --- Scheduled function: cada 15 minutos ---
+[[scheduled.functions]]
+name = "cron-run2"
+cron = "*/15 * * * *"
