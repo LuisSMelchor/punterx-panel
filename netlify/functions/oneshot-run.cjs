@@ -1,5 +1,14 @@
 const enrich = require('./_lib/enrich.cjs');
-const oneShot = enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload;
+let oneShot = (enrich && (enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload));
+if (typeof oneShot !== 'function') {
+  oneShot = async ({ evt={}, match={}, fixture={} }) => ({
+    status: 'preview',
+    result_trace: 'local-fallback-' + Date.now().toString(36),
+    level: 'info', ev: null, markets: null,
+    meta: { reason: 'oneShot missing' }, evt, match, fixture
+  });
+}
+
 
 
 
@@ -61,9 +70,7 @@ exports.handler = async (event) => {
     }
 
     // 4) Respuesta diagnóstica
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
+    return { statusCode: netlify/functions/oneshot-run.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         input: { evt, match },
         payload,
         prompt_preview: prompt.slice(0, 600),  // para inspección rápida
@@ -71,6 +78,6 @@ exports.handler = async (event) => {
       }, null, 2)
     };
   } catch (e) {
-    return { statusCode: 500, body: JSON.stringify({ error: e?.message || String(e) }) };
+    return { statusCode: netlify/functions/oneshot-run.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: e?.message || String(e) }) };
   }
 };

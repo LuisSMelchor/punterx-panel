@@ -1,5 +1,14 @@
 const enrich = require('./_lib/enrich.cjs');
-const oneShot = enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload;
+let oneShot = (enrich && (enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload));
+if (typeof oneShot !== 'function') {
+  oneShot = async ({ evt={}, match={}, fixture={} }) => ({
+    status: 'preview',
+    result_trace: 'local-fallback-' + Date.now().toString(36),
+    level: 'info', ev: null, markets: null,
+    meta: { reason: 'oneShot missing' }, evt, match, fixture
+  });
+}
+
 
 
 
@@ -17,7 +26,7 @@ try { sendTG = require('../../send.js'); } catch { /* no-op si no existe */ }
 exports.handler = async (event) => {
   try {
     if (process.env.FEATURE_ONESHOT !== '1') {
-      return { statusCode: 200, body: JSON.stringify({ status: 'feature_off' }) };
+      return { statusCode: netlify/functions/oneshot-publish.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'feature_off' }) };
     }
 
     const q = event?.queryStringParameters || {};
@@ -42,7 +51,7 @@ exports.handler = async (event) => {
     // Rate-limit por fixture_id
     const rlKey = fixture?.fixture_id ? String(fixture.fixture_id) : null;
     if (rlKey && isRateLimited(rlKey)) {
-      return { statusCode: 200, body: JSON.stringify({ status: 'rate_limited', fixture_id: rlKey }) };
+      return { statusCode: netlify/functions/oneshot-publish.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'rate_limited', fixture_id: rlKey }) };
     }
 
     const trace_id = (fixture?.fixture_id ? String(fixture.fixture_id) : 'no_fx') + '-' + Date.now().toString(36);
@@ -55,7 +64,7 @@ exports.handler = async (event) => {
 
     const parsed = safeJson(raw);
     if (!parsed) {
-      return { statusCode: 200, body: JSON.stringify({ status: 'json_invalido', raw }) };
+      return { statusCode: netlify/functions/oneshot-publish.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'json_invalido', raw }) };
     }
 
     const ev = computeEV(parsed.apuesta_sugerida, parsed.probabilidad_estim);
@@ -72,7 +81,7 @@ exports.handler = async (event) => {
     let text;
     if (nivel === 'vip') text = fmtVIP(bundle);
     else if (nivel === 'free') text = fmtFREE(bundle);
-    else return { statusCode: 200, body: JSON.stringify({ status: 'descartado', ev: ev2, parsed }) };
+    else return { statusCode: netlify/functions/oneshot-publish.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'descartado', ev: ev2, parsed }) };
 
     /* __SUPABASE_SAVE__ */
     const equipos = `${evt.home} vs ${evt.away}`;
@@ -122,7 +131,7 @@ exports.handler = async (event) => {
       }
     }
 
-    return { statusCode: 200, body: JSON.stringify({
+    return { statusCode: netlify/functions/oneshot-publish.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         result_trace: trace_id,
         status: sent ? 'sent' : 'preview',
         nivel,
@@ -132,6 +141,6 @@ exports.handler = async (event) => {
       }, null, 2)
     };
   } catch (e) {
-    return { statusCode: 500, body: JSON.stringify({ error: e?.message || String(e) }) };
+    return { statusCode: netlify/functions/oneshot-publish.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: e?.message || String(e) }) };
   }
 };

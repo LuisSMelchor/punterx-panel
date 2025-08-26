@@ -1,5 +1,14 @@
 const enrich = require('./_lib/enrich.cjs');
-const oneShot = enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload;
+let oneShot = (enrich && (enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload));
+if (typeof oneShot !== 'function') {
+  oneShot = async ({ evt={}, match={}, fixture={} }) => ({
+    status: 'preview',
+    result_trace: 'local-fallback-' + Date.now().toString(36),
+    level: 'info', ev: null, markets: null,
+    meta: { reason: 'oneShot missing' }, evt, match, fixture
+  });
+}
+
 
 
 
@@ -27,8 +36,8 @@ exports.handler = async (event) => {
     };
 
     const payload = await oneShot({ evt, match, fixture });
-    return { statusCode: 200, body: JSON.stringify(payload, null, 2) };
+    return { statusCode: netlify/functions/diag-oneshot.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload, null, 2) };
   } catch (e) {
-    return { statusCode: 500, body: JSON.stringify({ error: e?.message || String(e) }) };
+    return { statusCode: netlify/functions/diag-oneshot.cjs, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: e?.message || String(e) }) };
   }
 };
