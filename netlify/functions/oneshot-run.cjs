@@ -1,9 +1,6 @@
-'use strict';
-const enrich = require('./_lib/enrich.cjs');
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
-
-// Alias seguro: si no hay oneShotPayload, usa buildOneShotPayload
-const buildOneShot = enrich.oneShotPayload || enrich.buildOneShotPayload;
+const { oneShotPayload, composeOneShotPrompt } = require('./_lib/enrich.cjs');
+const { callOneShotOpenAI, safeJson, computeEV, classifyEV } = require('./_lib/ai.cjs');
 
 exports.handler = async (event) => {
   try {
@@ -12,74 +9,63 @@ exports.handler = async (event) => {
       home: q.home || 'Charlotte FC',
       away: q.away || 'New York Red Bulls',
       league: q.league || 'Major League Soccer',
-      commence: q.commence || new Date(Date.now() + 60*60*1000).toISOString(),
+      commence: q.commence || '2025-08-24T23:00:00Z'
     };
 
-    // 1) Resolver AF (opcional; no debe bloquear enriquecimiento)
-    let match = {};
-    try {
-      match = await resolveTeamsAndLeague(evt, {});
-    } catch (e) {
-      match = { ok: false, method: 'none', reason: 'resolver_error', error: e?.message };
-    }
-
-    // 2) Determinar kickoff (preferir AF si lo trae; si no, el evt.commence)
-    const kickoff =
-      match?.kickoff ||
-      match?.fixture?.date ||
-      evt.commence;
-
-    // 3) Armar fixture mínimo con los campos que el enriquecedor espera
+    const match = await resolveTeamsAndLeague(evt, {});
     const fixture = {
-      fixture_id: match?.fixture_id ?? null,
-      kickoff,
-      league_name: evt.league,     // ¡IMPORTANTE!
-      country: null,
-      home_name: evt.home,         // ¡IMPORTANTE!
-      away_name: evt.away,         // ¡IMPORTANTE!
-      home_id: match?.homeId ?? null,
-      away_id: match?.awayId ?? null,
+      fixture_id: match?.fixture_id,
+      kickoff: evt.commence,
+      league_id: match?.league_id,
+      league_name: match?.league_name,
+      country: match?.country,
+      home_id: match?.home_id,
+      away_id: match?.away_id,
     };
 
-    // 4) Enriquecer con Odds (aunque AF no haya resuelto)
-    let enriched = {};
-    try {
-      enriched = await enrich.enrichFixtureUsingOdds({ fixture });
-    } catch (e) {
-      enriched = { error: e?.message || String(e) };
+    // 1) payload + prompt
+    const payload = await oneShotPayload({ evt, match, fixture });
+    const prompt = composeOneShotPrompt(payload);
+
+    // 2) Llamada a OpenAI (si no hay clave, retorna null)
+    const raw = await callOneShotOpenAI(prompt);
+
+    // 3) Validación JSON + EV + clasificación
+    const parsed = safeJson(raw);
+    let result = {
+      raw,                       // respuesta cruda de IA (string o null)
+      parsed: null,              // JSON parseado (forma esperada) o null
+      ev_calculado: null,
+      nivel: 'descartado',
+      reason: null
+    };
+
+    if (!parsed) {
+      result.reason = 'json_invalido';
+    } else {
+      // recalculamos EV con nuestra fórmula y overwritte si aplica
+      const prob = parsed.probabilidad_estim;
+      const apuesta = parsed.apuesta_sugerida;
+      const ev = computeEV(apuesta, prob);
+      result.parsed = parsed;
+      result.ev_calculado = Number.isFinite(ev) ? Number(ev.toFixed(2)) : null;
+
+      const nivel = classifyEV(result.ev_calculado);
+      result.nivel = nivel;
+      result.reason = nivel === 'descartado' ? 'ev_insuficiente' : 'ok';
     }
 
-    // 5) Payload/Preview
-    const payload = {
-      status: 'preview',
-      level: 'info',
-      evt,
-      match,
-      enriched,
-      markets: {}, // reservado si luego quieres incluir markets_raw
-      when_text: enriched?.when_text ?? null,
-      league: enriched?.league ?? null,
-      result_trace: `oneshot-${Math.random().toString(36).slice(2, 9)}`,
-    };
-
-    // (Opcional) si tienes un formateador:
-    try {
-      if (typeof buildOneShot === 'function') {
-        // no se publica aquí, sólo generamos el objeto listo
-        Object.assign(payload, buildOneShot({ evt, match, enriched }));
-      }
-    } catch (_) {}
-
+    // 4) Respuesta diagnóstica
     return {
       statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload, null, 2),
+      body: JSON.stringify({
+        input: { evt, match },
+        payload,
+        prompt_preview: prompt.slice(0, 600),  // para inspección rápida
+        result
+      }, null, 2)
     };
   } catch (e) {
-    return {
-      statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ error: e?.message || String(e) }),
-    };
+    return { statusCode: 500, body: JSON.stringify({ error: e?.message || String(e) }) };
   }
 };
