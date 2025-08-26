@@ -861,18 +861,18 @@ async function patchedResolveTeamsAndLeague_FINAL(evt = {}, opts = {}) {
 
   if (DBG) console.warn('[AF_DEBUG] FINAL NULL after all strategies', { home, away, liga, commence });
   return null;
+
 /* === Sx.safe-null === */
 module.exports.resolveTeamsAndLeague = (function(orig){
   const f = module.exports.resolveTeamsAndLeague || orig;
-  return async function wrapped(evt,opts){
-    const r = await f(evt,opts);
+  return async function wrapped(evt, opts){
+    const r = await f(evt, opts);
     if (r) return r;
-    return { method:'none', fixture_id:null, confidence:null, debug:{ reason:'null_return' } };
-  }
+    return { method: 'none', fixture_id: null, confidence: null, debug: { reason: 'null_return' } };
+  };
 })(module.exports.resolveTeamsAndLeague);
 /* === Sx.safe-null end === */
 
- // Override explícito (última palabra se queda)
 /* === S2.7 Debouncer wrapper (final-safe) === */
 try {
   if (module && module.exports && typeof module.exports.resolveTeamsAndLeague === 'function') {
