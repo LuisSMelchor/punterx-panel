@@ -69,9 +69,6 @@ async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
 
   const league_text = attachLeagueCountry(_fixture);
 
-  const _fixture = fixture || {};
-  let _odds = oddsRaw;
-
   // Si no viene oddsRaw y hay clave, intenta traer desde OddsAPI
   if (!_odds && process.env.ODDS_API_KEY) {
     try {
@@ -84,7 +81,7 @@ async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
   // fixture esperado (ejemplo):
   // { fixture_id, kickoff, league_id, league_name, country, home_id, away_id, ... }
   const topMarkets = normalizeMarkets(oddsRaw);
-  const mins = minutesUntil(fixture?.kickoff);
+
   const whenTxt = Number.isFinite(mins) ? (mins >= 0 ? `Comienza en ${mins} minutos aprox`
                                                    : `Comenzó hace ${Math.abs(mins)} minutos aprox`)
                                         : null;
