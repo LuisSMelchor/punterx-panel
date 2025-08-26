@@ -1,5 +1,5 @@
 'use strict';
-
+const https = require('https');
 /**
  * Stub de enriquecimiento con OddsAPI (one-shot).
  * No realiza requests; opera sobre `oddsRaw` ya provisto.
@@ -66,3 +66,26 @@ async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
 module.exports = {
   enrichFixtureUsingOdds,
 };
+
+function _fetchJson(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, { method: 'GET', headers }, (res) => {
+      let data = '';
+      res.on('data', (d) => data += d);
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function fetchOddsForFixture(fixture){
+  const apiKey = process.env.ODDS_API_KEY;
+  if (!apiKey) return null;
+  const sport   = process.env.SPORT_KEY     || 'soccer';
+  const regions = process.env.ODDS_REGIONS  || 'us,eu';
+  const markets = process.env.ODDS_MARKETS  || 'h2h,btts,over_2_5,doublechance';
+  const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=${regions}&markets=${markets}&oddsFormat=decimal&dateFormat=iso&apiKey=${apiKey}`;
+  try { return await _fetchJson(url); }
+  catch (e) { if (Number(process.env.DEBUG_TRACE)) console.log('[ENRICH] OddsAPI error', e?.message || e); return null; }
+}
