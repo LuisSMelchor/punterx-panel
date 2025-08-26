@@ -17,6 +17,10 @@ async function callOneShotOpenAI(prompt) {
     max_tokens: 500
   });
 
+  return await _retryAI(() => _postOpenAI(body, key));
+}
+
+function _postOpenAI(body, key) {
   return new Promise((resolve, reject) => {
     const req = https.request('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -24,7 +28,8 @@ async function callOneShotOpenAI(prompt) {
         'Authorization': `Bearer ${key}`,
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body)
-      }
+      },
+      timeout: Number(process.env.HTTP_TIMEOUT_MS || 6500)
     }, (res) => {
       let data = '';
       res.on('data', d => data += d);
@@ -36,6 +41,7 @@ async function callOneShotOpenAI(prompt) {
         } catch (e) { reject(e); }
       });
     });
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
     req.on('error', reject);
     req.write(body);
     req.end();
@@ -78,3 +84,12 @@ module.exports = {
   computeEV,
   classifyEV
 };
+
+async function _retryAI(fn) {
+  let last;
+  for (let i=0;i<2;i++){ // 1 reintento
+    try { return await fn(); }
+    catch(e){ last = e; await new Promise(r=>setTimeout(r, 400)); }
+  }
+  throw last;
+}
