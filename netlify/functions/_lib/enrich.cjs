@@ -26,16 +26,9 @@ function normalizeMarkets(oddsRaw = {}) {
   // Espera estructura estilo OddsAPI normalizada antes:
   // { markets: { '1x2': [offers...], 'btts': [...], 'over_2_5': [...], ... } }
   const markets = oddsRaw?.markets || {};
-  const out = {};
-  for (const [mkt, offers] of Object.entries(markets)) {
-    out[mkt] = pickTop3(offers).map(o => ({
-      bookie: o.bookmaker,
-      price: o.price,
-      last_update: o.last_update
-    }));
-  }
-  return out;
+  const out = {
 }
+
 
 function attachLeagueCountry(fx = {}) {
   const league = fx?.league_name || fx?.league || null;
@@ -86,16 +79,15 @@ async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
                                                    : `Comenzó hace ${Math.abs(mins)} minutos aprox`)
                                         : null;
 
-  return { fixture_id: fixture?.fixture_id ?? null,
-    , when_text
-    , league: league_text
-    , markets_top3
-    kickoff: fixture?.kickoff ?? null,
-    when_text: whenTxt,
-    league: attachLeagueCountry(fixture),
-    home_id: fixture?.home_id ?? null,
-    away_id: fixture?.away_id ?? null,
-    markets_top3: topMarkets,
+  
+  return {
+    fixture_id: _fixture?.fixture_id ?? null,
+    kickoff: _fixture?.kickoff ?? null,
+    when_text,
+    league: league_text,
+    home_id: _fixture?.home_id ?? null,
+    away_id: _fixture?.away_id ?? null,
+    markets_top3,
   };
 }
 
@@ -191,17 +183,9 @@ function normalizeMarketsFlexible(oddsRaw) {
 
 function toTop3ByMarket(markets = {}) {
   const allow = new Set(preferredCanonMarkets());
-  const out = {};
-  for (const [mkt, offers] of Object.entries(markets)) {
-    if (!allow.has(mkt)) continue; // filtra solo los canónicos
-    out[mkt] = pickTop3(offers).map(o => ({
-      bookie: o.bookmaker,
-      price: o.price,
-      last_update: o.last_update
-    }));
-  }
-  return out;
+  const out = {
 }
+
 ;
   for (const [mkt, offers] of Object.entries(markets)) {
     out[mkt] = pickTop3(offers).map(o => ({
