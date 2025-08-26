@@ -847,8 +847,10 @@ try {
         return _afDupe.get(dupeKey);
       }
       const res = await _orig(evt, opts);
-      _afDupe.set(dupeKey, res);
-      return res;
+      const safe = (typeof res === "undefined") ? null : res;
+      if (typeof res === "undefined" && Number(process.env.AF_DEBUG)) console.log("[AF_DEBUG] base_return_undefined", { dupeKey });
+      _afDupe.set(dupeKey, safe);
+      return safe;
     }
     // Reexporta el wrapper (CommonJS)
     module.exports = module.exports || {};
