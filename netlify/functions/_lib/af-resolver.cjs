@@ -861,6 +861,7 @@ async function patchedResolveTeamsAndLeague_FINAL(evt = {}, opts = {}) {
 
   if (DBG) console.warn('[AF_DEBUG] FINAL NULL after all strategies', { home, away, liga, commence });
   return null;
+}
 
 /* === Sx.safe-null === */
 module.exports.resolveTeamsAndLeague = (function(orig){
@@ -899,7 +900,6 @@ try {
         res = null;
       }
       const safe = (typeof res === 'undefined') ? null : res;
-      if (typeof res === 'undefined' && Number(process.env.AF_DEBUG)) console.log('[AF_DEBUG] base_return_undefined', { dupeKey });
       _afDupe.set(dupeKey, safe);
       return safe;
     };
