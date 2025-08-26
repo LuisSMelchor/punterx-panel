@@ -39,9 +39,46 @@ function tokenSet(str = '') {
   );
 }
 
-function jaccard(aStr, bStr) {
-  const A = tokenSet(aStr), B = tokenSet(bStr);
-  if (!A.size || !B.size) return 0;
+function tokenize(s) {
+  return normalizeName(s).split(/\s+/).filter(Boolean);
+}
+
+// Levenshtein distance básico
+function levenshtein(a, b) {
+  a = normalizeName(a); b = normalizeName(b);
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[j] = Math.min(
+        dp[j] + 1,
+        dp[j - 1] + 1,
+        prev + cost
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+function ratio(a, b) {
+  a = normalizeName(a); b = normalizeName(b);
+  if (!a && !b) return 1;
+  const dist = levenshtein(a, b);
+  const L = Math.max(a.length, b.length) || 1;
+  return 1 - (dist / L);
+}
+
+function jaccardTokens(a, b) {
+  const A = new Set(tokenize(a));
+  const B = new Set(tokenize(b));
+  if (A.size === 0 && B.size === 0) return 1;
   let inter = 0;
   for (const t of A) if (B.has(t)) inter++;
   const union = A.size + B.size - inter;
@@ -826,46 +863,6 @@ async function patchedResolveTeamsAndLeague_FINAL(evt = {}, opts = {}) {
 }
 
 // Override explícito (última palabra se queda)
-try { module.exports.resolveTeamsAndLeague = patchedResolveTeamsAndLeague_FINAL; } catch(_) {}
-
-/* === S2.7 Debouncer wrapper (safe-append) === */
-try {
-  if (typeof _resolveTeamsAndLeagueBase === 'function') {
-    const _afDupe = new Map();
-    function _mkDupeKey(evt) {
-      const h = (evt?.home || '').toLowerCase().trim();
-      const a = (evt?.away || '').toLowerCase().trim();
-      const l = (evt?.league || '').toLowerCase().trim();
-      const d = evt?.commence ? new Date(evt.commence).toISOString().slice(0,10) : '';
-      return [h,a,l,d].join('|');
-    }
-    const _orig = _resolveTeamsAndLeagueBase;
-    async function resolveTeamsAndLeague(evt, opts = {}) {
-      const dupeKey = _mkDupeKey(evt);
-      if (_afDupe.has(dupeKey)) {
-        if (Number(process.env.AF_DEBUG)) console.log("[AF_DEBUG] duplicate", { dupeKey });
-        return _afDupe.get(dupeKey);
-      }
-      let res;
-      try {
-        res = await _orig(evt, opts);
-      } catch (e) {
-        if (Number(process.env.AF_DEBUG)) console.log("[AF_DEBUG] base_threw", { dupeKey, err: String(e && e.message || e) });
-        res = null;
-      }
-      const safe = (typeof res === "undefined") ? null : res;
-      if (typeof res === "undefined" && Number(process.env.AF_DEBUG)) console.log("[AF_DEBUG] base_return_undefined", { dupeKey });
-      _afDupe.set(dupeKey, safe);
-      return safe;
-    }
-    // Reexporta el wrapper (CommonJS)
-    module.exports = module.exports || {};
-    module.exports.resolveTeamsAndLeague = resolveTeamsAndLeague;
-  }
-} catch (e) {
-  // noop: si no existe la base, no rompemos el módulo
-}
-
 /* === S2.7 Debouncer wrapper (final-safe) === */
 try {
   if (module && module.exports && typeof module.exports.resolveTeamsAndLeague === 'function') {
