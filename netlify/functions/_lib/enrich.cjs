@@ -106,25 +106,29 @@ module.exports = { enrichFixtureUsingOdds, fetchOddsForFixture, marketKeyCanonic
 
 function _fetchJson(url, headers = {}) {
   return new Promise((resolve, reject) => {
-    const req = https.request(url, { method: 'GET', headers }, (res) => {
-      let data = '';
-      res.on('data', (d) => data += d);
-      res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
-    });
+    const req = https.request(url, { method: 'GET', headers, timeout: Number(process.env.HTTP_TIMEOUT_MS || 6500) },
+      (res) => {
+        let data = '';
+        res.on('data', (d) => (data += d));
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); }
+          catch (e) { reject(e); }
+        });
+      }
+    );
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
     req.on('error', reject);
     req.end();
   });
 }
 
-async function fetchOddsForFixture(fixture){
-  const apiKey = process.env.ODDS_API_KEY;
-  if (!apiKey) return null;
-  const sport   = process.env.SPORT_KEY     || 'soccer';
-  const regions = process.env.ODDS_REGIONS  || 'us,eu';
-  const markets = process.env.ODDS_MARKETS  || 'h2h,btts,over_2_5,doublechance';
-  const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=${regions}&markets=${markets}&oddsFormat=decimal&dateFormat=iso&apiKey=${apiKey}`;
-  try { return await _fetchJson(url); }
-  catch (e) { if (Number(process.env.DEBUG_TRACE)) console.log('[ENRICH] OddsAPI error', e?.message || e); return null; }
+async function _retry(fn, { tries = 3, delayMs = 300 } = {}) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try { return await fn(); }
+    catch (e) { lastErr = e; if (i < tries - 1) await new Promise(r => setTimeout(r, delayMs)); }
+  }
+  throw lastErr;
 }
 
 
