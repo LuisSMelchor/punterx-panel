@@ -91,7 +91,7 @@ async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
   };
 }
 
-module.exports = { enrichFixtureUsingOdds, fetchOddsForFixture, marketKeyCanonical, preferredCanonMarkets, normalizeFromOddsAPIv4, toTop3ByMarket, buildOneShotPayload, oneShotPayload, formatMarketsTop3, composeOneShotPrompt };
+
 
 function _fetchJson(url, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -308,7 +308,7 @@ function composeOneShotPrompt(payload) {
   return prompt;
 }
 
-module.exports = { enrichFixtureUsingOdds, buildOneShotPayload, oneShotPayload, formatMarketsTop3, composeOneShotPrompt };
+
 
 }
 
@@ -326,4 +326,20 @@ try {
   }
 } catch {}
 /* ===== end ensure exports ===== */
+
+
+
+/* ===== unified exports (idempotent) ===== */
+try {
+  if (typeof module !== 'undefined') {
+    module.exports = module.exports || {};
+    if (typeof fetchOddsForFixture === 'function') module.exports.fetchOddsForFixture = fetchOddsForFixture;
+    if (typeof enrichFixtureUsingOdds === 'function') module.exports.enrichFixtureUsingOdds = enrichFixtureUsingOdds;
+    if (typeof buildOneShotPayload === 'function') module.exports.buildOneShotPayload = buildOneShotPayload;
+    if (typeof oneShotPayload === 'function') module.exports.oneShotPayload = oneShotPayload;
+    if (typeof formatMarketsTop3 === 'function') module.exports.formatMarketsTop3 = formatMarketsTop3;
+    if (typeof composeOneShotPrompt === 'function') module.exports.composeOneShotPrompt = composeOneShotPrompt;
+  }
+} catch {}
+/* ===== end unified exports ===== */
 
