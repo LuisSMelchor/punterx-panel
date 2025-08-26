@@ -102,7 +102,7 @@ async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
   };
 }
 
-module.exports = { enrichFixtureUsingOdds, fetchOddsForFixture };
+module.exports = { enrichFixtureUsingOdds, fetchOddsForFixture, marketKeyCanonical, preferredCanonMarkets, normalizeFromOddsAPIv4, toTop3ByMarket };
 
 function _fetchJson(url, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -127,33 +127,57 @@ async function fetchOddsForFixture(fixture){
   catch (e) { if (Number(process.env.DEBUG_TRACE)) console.log('[ENRICH] OddsAPI error', e?.message || e); return null; }
 }
 
+
 function normalizeFromOddsAPIv4(oddsApiArray = []) {
-  // oddsApiArray: [{bookmakers:[{markets:[{key,outcomes:[{name,price}]}]}], commence_time, home_team, away_team, ...}]
   const out = { markets: {} };
   for (const evt of (Array.isArray(oddsApiArray) ? oddsApiArray : [])) {
     const bms = Array.isArray(evt.bookmakers) ? evt.bookmakers : [];
     for (const bm of bms) {
       const bk = bm?.title || bm?.key || 'Unknown';
       const mkts = Array.isArray(bm.markets) ? bm.markets : [];
-      for (const m of mkts) {
-        const key = (m?.key || '').toLowerCase(); // ej: 'h2h', 'btts', 'totals'
-        const outs = Array.isArray(m?.outcomes) ? m.outcomes : [];
-        if (!out.markets[key]) out.markets[key] = [];
-        for (const o of outs) {
-          const price = typeof o?.price === 'number' ? o.price : Number(o?.price);
-          if (!Number.isFinite(price)) continue;
-          out.markets[key].push({
-            bookmaker: bk,
-            price,
-            last_update: bm?.last_update || evt?.last_update || null,
-            outcome: o?.name || null
-          });
+      for (const mkt of mkts) {
+        const rawKey = mkt?.key || '';
+        const canon = marketKeyCanonical(rawKey);
+        const outs = Array.isArray(mkt?.outcomes) ? mkt.outcomes : [];
+        // 1) Mercado directo (h2h, btts, doublechance)
+        if (canon !== 'totals') {
+          if (!out.markets[canon]) out.markets[canon] = [];
+          for (const o of outs) {
+            const price = typeof o?.price === 'number' ? o.price : Number(o?.price);
+            if (!Number.isFinite(price)) continue;
+            out.markets[canon].push({
+              bookmaker: bk,
+              price,
+              last_update: bm?.last_update || evt?.last_update || null,
+              outcome: o?.name || null
+            });
+          }
+        } else {
+          // 2) totals → derivar over_2_5 cuando point=2.5 y outcome "Over"
+          const point = (typeof mkt?.point === 'number' ? mkt.point : Number(mkt?.point));
+          if (Number.isFinite(point) && Math.abs(point - 2.5) < 1e-6) {
+            if (!out.markets['over_2_5']) out.markets['over_2_5'] = [];
+            for (const o of outs) {
+              const name = String(o?.name || '').toLowerCase().trim();
+              if (name === 'over') {
+                const price = typeof o?.price === 'number' ? o.price : Number(o?.price);
+                if (!Number.isFinite(price)) continue;
+                out.markets['over_2_5'].push({
+                  bookmaker: bk,
+                  price,
+                  last_update: bm?.last_update || evt?.last_update || null,
+                  outcome: 'Over 2.5'
+                });
+              }
+            }
+          }
         }
       }
     }
   }
   return out;
 }
+
 
 function normalizeMarketsFlexible(oddsRaw) {
   if (!oddsRaw) return {};
@@ -163,8 +187,21 @@ function normalizeMarketsFlexible(oddsRaw) {
   return oddsRaw?.markets || {};
 }
 
+
 function toTop3ByMarket(markets = {}) {
+  const allow = new Set(preferredCanonMarkets());
   const out = {};
+  for (const [mkt, offers] of Object.entries(markets)) {
+    if (!allow.has(mkt)) continue; // filtra solo los canónicos
+    out[mkt] = pickTop3(offers).map(o => ({
+      bookie: o.bookmaker,
+      price: o.price,
+      last_update: o.last_update
+    }));
+  }
+  return out;
+}
+;
   for (const [mkt, offers] of Object.entries(markets)) {
     out[mkt] = pickTop3(offers).map(o => ({
       bookie: o.bookmaker,
@@ -173,4 +210,18 @@ function toTop3ByMarket(markets = {}) {
     }));
   }
   return out;
+}
+
+function marketKeyCanonical(key='') {
+  const k = String(key || '').toLowerCase().trim();
+  if (k === 'h2h') return '1x2';
+  if (k === 'both_teams_to_score' || k === 'btts') return 'btts';
+  if (k === 'doublechance' || k === 'double_chance') return 'doublechance';
+  if (k === 'totals') return 'totals';
+  return k; // por defecto, conserva
+}
+
+function preferredCanonMarkets() {
+  const raw = process.env.ODDS_MARKETS_CANON || '1x2,btts,over_2_5,doublechance';
+  return raw.split(',').map(x => x.trim()).filter(Boolean);
 }
