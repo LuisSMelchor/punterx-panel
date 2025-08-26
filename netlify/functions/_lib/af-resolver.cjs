@@ -58,10 +58,11 @@ function levenshtein(a, b) {
       const tmp = dp[j];
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
       dp[j] = Math.min(
-        dp[j] + 1,
-        dp[j - 1] + 1,
-        prev + cost
-      prev = tmp;
+          dp[j] + 1,
+          dp[j - 1] + 1,
+          prev + cost
+        );
+        prev = tmp;
     }
   }
   return dp[n];
