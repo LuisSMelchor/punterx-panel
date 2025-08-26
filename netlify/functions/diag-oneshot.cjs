@@ -1,7 +1,9 @@
 const enrich = require('./_lib/enrich.cjs');
 const oneShot = enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload;
+
+const oneShot = enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload;
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
-const enrich = require('./_lib/enrich.cjs');
+
 exports.handler = async (event) => {
   try {
     const q = event?.queryStringParameters || {};

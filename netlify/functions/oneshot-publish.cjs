@@ -1,7 +1,9 @@
 const enrich = require('./_lib/enrich.cjs');
 const oneShot = enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload;
+
+const oneShot = enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload;
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
-const enrich = require('./_lib/enrich.cjs');
+
 const { callOneShotOpenAI, safeJson, computeEV } = require('./_lib/ai.cjs');
 const { classifyEV, isPublishable } = require('./_lib/ev-rules.cjs');
 const { fmtVIP, fmtFREE } = require('./_lib/format-msg.cjs');
