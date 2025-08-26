@@ -1,5 +1,7 @@
+const enrich = require('./_lib/enrich.cjs');
+const oneShot = enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload;
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
-const { oneShotPayload, composeOneShotPrompt } = require('./_lib/enrich.cjs');
+const enrich = require('./_lib/enrich.cjs');
 const { callOneShotOpenAI, safeJson, computeEV } = require('./_lib/ai.cjs');
 const { classifyEV, isPublishable } = require('./_lib/ev-rules.cjs');
 const { fmtVIP, fmtFREE } = require('./_lib/format-msg.cjs');
@@ -43,7 +45,7 @@ exports.handler = async (event) => {
     const trace_id = (fixture?.fixture_id ? String(fixture.fixture_id) : 'no_fx') + '-' + Date.now().toString(36);
     if (Number(process.env.DEBUG_TRACE)) console.log('[TRACE]', trace_id, 'evt', evt);
 
-    const payload = await oneShotPayload({ evt, match, fixture });
+    const payload = await oneShot({ evt, match, fixture });
     if (Number(process.env.DEBUG_TRACE)) console.log('[TRACE]', trace_id, 'payload_ok', !!payload?.markets);
     const prompt = composeOneShotPrompt(payload);
     const raw = await callOneShotOpenAI(prompt);

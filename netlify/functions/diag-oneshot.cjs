@@ -1,6 +1,7 @@
+const enrich = require('./_lib/enrich.cjs');
+const oneShot = enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload;
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
-const { oneShotPayload } = require('./_lib/enrich.cjs');
-
+const enrich = require('./_lib/enrich.cjs');
 exports.handler = async (event) => {
   try {
     const q = event?.queryStringParameters || {};
@@ -22,7 +23,7 @@ exports.handler = async (event) => {
       away_id: match?.away_id,
     };
 
-    const payload = await oneShotPayload({ evt, match, fixture });
+    const payload = await oneShot({ evt, match, fixture });
     return { statusCode: 200, body: JSON.stringify(payload, null, 2) };
   } catch (e) {
     return { statusCode: 500, body: JSON.stringify({ error: e?.message || String(e) }) };

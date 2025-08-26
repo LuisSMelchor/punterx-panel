@@ -1,5 +1,7 @@
+const enrich = require('./_lib/enrich.cjs');
+const oneShot = enrich.oneShotPayload || enrich.oneShotPayload2 || enrich.buildOneShotPayload;
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
-const { oneShotPayload, composeOneShotPrompt } = require('./_lib/enrich.cjs');
+const enrich = require('./_lib/enrich.cjs');
 const { callOneShotOpenAI, safeJson, computeEV, classifyEV } = require('./_lib/ai.cjs');
 
 exports.handler = async (event) => {
@@ -24,7 +26,7 @@ exports.handler = async (event) => {
     };
 
     // 1) payload + prompt
-    const payload = await oneShotPayload({ evt, match, fixture });
+    const payload = await oneShot({ evt, match, fixture });
     const prompt = composeOneShotPrompt(payload);
 
     // 2) Llamada a OpenAI (si no hay clave, retorna null)
