@@ -1,30 +1,14 @@
 const { resolveTeamsAndLeague } = require('../netlify/functions/_lib/af-resolver.cjs');
 
-(async () => {
-  // Usar variables que no choquen con el entorno del sistema (HOME=/home/codespace, etc.)
-  const evt = {
-    home: process.env.HOME_TEAM || 'Charlotte FC',
-    away: process.env.AWAY_TEAM || 'New York Red Bulls',
-    league: process.env.LEAGUE_NAME || 'Major League Soccer',
-    commence: process.env.COMMENCE_UTC || '2025-08-24T23:00:00Z'
-  };
-
+async function run(evt) {
   const out = await resolveTeamsAndLeague(evt, {});
-  console.log('RESULT:');
-  console.dir(out, { depth: 6 });
+  const method = out?.method || 'null';
+  const conf = typeof out?.confidence === 'number' ? out.confidence.toFixed(2) : 'NA';
+  console.log(`[SMOKE] ${evt.home} vs ${evt.away} | ${evt.league} | ${evt.commence} -> method=${method} conf=${conf} fx=${out?.fixture_id || 'null'}`);
+}
 
-  // Resumen legible (si el resolver expone debug)
-  const dbg = out?.debug || {};
-  console.log('\nSUMMARY:',
-    JSON.stringify({
-      method: out?.method,
-      fixture_id: out?.fixture_id,
-      confidence: out?.confidence,
-      fixturesChecked: dbg.fixturesChecked,
-      searchChecked: dbg.searchChecked
-    }, null, 2)
-  );
-})().catch(e => {
-  console.error('SMOKE ERROR:', e?.message || e);
-  process.exit(1);
-});
+(async () => {
+  await run({ home:'Charlotte FC', away:'New York Red Bulls', league:'Major League Soccer', commence:'2025-08-24T23:00:00Z' });
+  await run({ home:'Charlotte FC', away:'New York Red Bulls', league:'Major League Soccer', commence:'2025-08-19T23:00:00Z' });
+  // agrega más casos cuando quieras
+})();
