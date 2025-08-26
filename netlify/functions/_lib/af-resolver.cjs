@@ -281,7 +281,7 @@ function resolveFixtureFromList(partido, afList) {
  * Busca por nombres (normalizados internamente por el propio módulo) y
  * usa el selector ya existente para elegir el fixture correcto.
  */
-async function _resolveTeamsAndLeagueBase(evt = {}, opts = {}) {
+async function resolveTeamsAndLeague(evt = {}, opts = {}) {
   const home = evt.home || evt.home_team || (evt.teams && evt.teams.home && evt.teams.home.name) || '';
   const away = evt.away || evt.away_team || (evt.teams && evt.teams.away && evt.teams.away.name) || '';
   const liga = evt.liga || evt.league || evt.league_name || '';
@@ -296,7 +296,7 @@ async function _resolveTeamsAndLeagueBase(evt = {}, opts = {}) {
   return resolveFixtureFromList(list, { home, away, liga, commence, ...opts });
 }
 
-module.exports = { afApi, searchFixturesByNames, resolveFixtureFromList, resolveTeamsAndLeague: _resolveTeamsAndLeagueBase, sim, pickTeamId };
+module.exports = { afApi, searchFixturesByNames, resolveFixtureFromList, resolveTeamsAndLeague: resolveTeamsAndLeague, sim, pickTeamId };
 
 
 /** Similaridad tipo Dice (bigrams) sobre strings normalizados */
@@ -843,10 +843,16 @@ try {
     async function resolveTeamsAndLeague(evt, opts = {}) {
       const dupeKey = _mkDupeKey(evt);
       if (_afDupe.has(dupeKey)) {
-        if (Number(process.env.AF_DEBUG)) console.log('[AF_DEBUG] duplicate', { dupeKey });
+        if (Number(process.env.AF_DEBUG)) console.log("[AF_DEBUG] duplicate", { dupeKey });
         return _afDupe.get(dupeKey);
       }
-      const res = await _orig(evt, opts);
+      let res;
+      try {
+        res = await _orig(evt, opts);
+      } catch (e) {
+        if (Number(process.env.AF_DEBUG)) console.log("[AF_DEBUG] base_threw", { dupeKey, err: String(e && e.message || e) });
+        res = null;
+      }
       const safe = (typeof res === "undefined") ? null : res;
       if (typeof res === "undefined" && Number(process.env.AF_DEBUG)) console.log("[AF_DEBUG] base_return_undefined", { dupeKey });
       _afDupe.set(dupeKey, safe);
@@ -859,3 +865,36 @@ try {
 } catch (e) {
   // noop: si no existe la base, no rompemos el módulo
 }
+
+/* === S2.7 Debouncer wrapper (final-safe) === */
+try {
+  if (module && module.exports && typeof module.exports.resolveTeamsAndLeague === 'function') {
+    const _orig = module.exports.resolveTeamsAndLeague;
+    const _afDupe = new Map();
+    function _mkDupeKey(evt) {
+      const h = (evt?.home || '').toLowerCase().trim();
+      const a = (evt?.away || '').toLowerCase().trim();
+      const l = (evt?.league || '').toLowerCase().trim();
+      const d = evt?.commence ? new Date(evt.commence).toISOString().slice(0,10) : '';
+      return [h,a,l,d].join('|');
+    }
+    module.exports.resolveTeamsAndLeague = async function debouncedResolve(evt, opts = {}) {
+      const dupeKey = _mkDupeKey(evt);
+      if (_afDupe.has(dupeKey)) {
+        if (Number(process.env.AF_DEBUG)) console.log('[AF_DEBUG] duplicate', { dupeKey });
+        return _afDupe.get(dupeKey);
+      }
+      let res;
+      try {
+        res = await _orig(evt, opts);
+      } catch (e) {
+        if (Number(process.env.AF_DEBUG)) console.log('[AF_DEBUG] base_threw', { dupeKey, err: String(e && e.message || e) });
+        res = null;
+      }
+      const safe = (typeof res === 'undefined') ? null : res;
+      if (typeof res === 'undefined' && Number(process.env.AF_DEBUG)) console.log('[AF_DEBUG] base_return_undefined', { dupeKey });
+      _afDupe.set(dupeKey, safe);
+      return safe;
+    };
+  }
+} catch (_) { /* noop */ }
