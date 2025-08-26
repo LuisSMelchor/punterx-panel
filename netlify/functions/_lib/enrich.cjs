@@ -253,6 +253,28 @@ async function oneShotPayload({ evt, match, fixture }) {
 
 function formatMarketsTop3(markets = {}) {
   const order = (process.env.ODDS_MARKETS_CANON || '1x2,btts,over_2_5,doublechance')
+    .split(',').map(function(x){ return x.trim(); }).filter(Boolean);
+  const lines = [];
+  for (var idx = 0; idx < order.length; idx++) {
+    var key = order[idx];
+    var arr = Array.isArray(markets[key]) ? markets[key] : [];
+    if (!arr.length) continue;
+    var head = (key === '1x2') ? '1X2'
+             : (key === 'btts') ? 'Ambos anotan'
+             : (key === 'over_2_5') ? 'Más de 2.5 goles'
+             : (key === 'doublechance') ? 'Doble oportunidad'
+             : key;
+    var items = arr.map(function(o){
+      var b = (o && o.bookie != null) ? String(o.bookie) : '';
+      var p = (o && o.price  != null) ? String(o.price)  : '';
+      return b + ': ' + p;
+    }).join(' | ');
+    lines.push('- ' + head + ': ' + items);
+  }
+  return lines.join('\n');
+}
+) {
+  const order = (process.env.ODDS_MARKETS_CANON || '1x2,btts,over_2_5,doublechance')
     .split(',').map(x=>x.trim()).filter(Boolean);
   const lines = [];
   for (const key of order) {
