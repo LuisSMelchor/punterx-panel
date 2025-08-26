@@ -281,7 +281,7 @@ function resolveFixtureFromList(partido, afList) {
  * Busca por nombres (normalizados internamente por el propio módulo) y
  * usa el selector ya existente para elegir el fixture correcto.
  */
-async function resolveTeamsAndLeague(evt = {}, opts = {}) {
+async function _resolveTeamsAndLeagueBase(evt = {}, opts = {}) {
   const home = evt.home || evt.home_team || (evt.teams && evt.teams.home && evt.teams.home.name) || '';
   const away = evt.away || evt.away_team || (evt.teams && evt.teams.away && evt.teams.away.name) || '';
   const liga = evt.liga || evt.league || evt.league_name || '';
@@ -827,3 +827,33 @@ async function patchedResolveTeamsAndLeague_FINAL(evt = {}, opts = {}) {
 
 // Override explícito (última palabra se queda)
 try { module.exports.resolveTeamsAndLeague = patchedResolveTeamsAndLeague_FINAL; } catch(_) {}
+
+/* === S2.7 Debouncer wrapper (safe-append) === */
+try {
+  if (typeof _resolveTeamsAndLeagueBase === 'function') {
+    const _afDupe = new Map();
+    function _mkDupeKey(evt) {
+      const h = (evt?.home || '').toLowerCase().trim();
+      const a = (evt?.away || '').toLowerCase().trim();
+      const l = (evt?.league || '').toLowerCase().trim();
+      const d = evt?.commence ? new Date(evt.commence).toISOString().slice(0,10) : '';
+      return [h,a,l,d].join('|');
+    }
+    const _orig = _resolveTeamsAndLeagueBase;
+    async function resolveTeamsAndLeague(evt, opts = {}) {
+      const dupeKey = _mkDupeKey(evt);
+      if (_afDupe.has(dupeKey)) {
+        if (Number(process.env.AF_DEBUG)) console.log('[AF_DEBUG] duplicate', { dupeKey });
+        return _afDupe.get(dupeKey);
+      }
+      const res = await _orig(evt, opts);
+      _afDupe.set(dupeKey, res);
+      return res;
+    }
+    // Reexporta el wrapper (CommonJS)
+    module.exports = module.exports || {};
+    module.exports.resolveTeamsAndLeague = resolveTeamsAndLeague;
+  }
+} catch (e) {
+  // noop: si no existe la base, no rompemos el módulo
+}
