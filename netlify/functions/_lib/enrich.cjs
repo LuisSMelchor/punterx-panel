@@ -1,5 +1,5 @@
 'use strict';
-const { callOpenAIOneShot, validateAIJson, computeEV, classifyByEV } = require('./ai.cjs');
+const { callOpenAIOnce } = require('./ai.cjs');
 const https = require('https');
 /**
  * Stub de enriquecimiento con OddsAPI (one-shot).
@@ -315,7 +315,7 @@ module.exports = { enrichFixtureUsingOdds, buildOneShotPayload, oneShotPayload, 
 
 async function runOneShotAI({ prompt, payload }) {
   // Llama a OpenAI (si hay KEY), valida y calcula EV/clase.
-  const out = await callOpenAIOneShot({ prompt });
+  const out = await callOpenAIOnce({ prompt });
   if (!out || !validateAIJson(out)) {
     return { ok:false, reason:'invalid-ai-json', raw: out || null };
   }
