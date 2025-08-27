@@ -3,6 +3,7 @@
 const { oneShotPayload, composeOneShotPrompt } = require('./_lib/enrich.cjs');
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
 const { callOpenAIOnce } = require('./_lib/ai.cjs');
+const { sendTelegramText } = require('./_lib/tx.cjs');
 
 function safeExtractFirstJson(text='') {
   try { return JSON.parse(text); } catch {}
@@ -215,6 +216,33 @@ if (Number.isFinite(evOut) && evOut >= 15) {
   message_free = canalMsg;
 }
 
+// Envío automático a Telegram (solo si está habilitado por env)
+let send_report = null;
+if (String(process.env.SEND_ENABLED) === '1') {
+  const vipId = process.env.TG_VIP_CHAT_ID || null;
+  const freeId = process.env.TG_FREE_CHAT_ID || null;
+
+  send_report = { enabled: true, results: [] };
+
+  if (message_vip && vipId) {
+    const r = await sendTelegramText({ chatId: vipId, text: message_vip });
+    send_report.results.push({ target: 'VIP', ok: r.ok, parts: r.parts, errors: r.errors });
+  } else if (message_vip && !vipId) {
+    send_report = send_report || {};
+    send_report.missing_vip_id = true;
+  }
+
+  if (message_free && freeId) {
+    const r = await sendTelegramText({ chatId: freeId, text: message_free });
+    send_report.results.push({ target: 'FREE', ok: r.ok, parts: r.parts, errors: r.errors });
+  } else if (message_free && !freeId) {
+    send_report = send_report || {};
+    send_report.missing_free_id = true;
+  }
+} else {
+  send_report = { enabled: false };
+}
+
 return {
   statusCode: 200,
   body: JSON.stringify({
@@ -227,7 +255,8 @@ return {
     nivel,
     meta: payload.meta,
     message_vip,
-    message_free
+    message_free,
+    send_report
   })
 };
   } catch (e) {
