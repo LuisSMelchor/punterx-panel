@@ -285,7 +285,7 @@ exports.handler = async (event) => {
       if (isFiniteNum(prob) && isFiniteNum(oddsToUse)) {
         ev = calcEV(prob, oddsToUse);
       }
-    }
+    
 
     const nivel = classifyByEV(ev);
 
@@ -338,7 +338,7 @@ if (String(process.env.SEND_ENABLED) === '1') {
     send_report = send_report || {};
     send_report.missing_free_id = true;
   }
-} else {
+ else {
   send_report = { enabled: false };
 }
 
