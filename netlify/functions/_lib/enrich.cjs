@@ -243,9 +243,11 @@ function buildOneShotPayload({ evt = {}, match = {}, enriched = {} } = {}) {
   };
 }
 
-async function oneShotPayload({ evt, match, fixture 
+async function oneShotPayload({
+  ;payload = await ensureMarketsWithOddsAPI(payload, evt);
+ evt, match, fixture 
   // Ensure markets via OddsAPI before returning
-  payload = await ensureMarketsWithOddsAPI(payload, evt);
+
 }) {
   // Si ya viene enriched desde fuera, respétalo:
   let enriched;
