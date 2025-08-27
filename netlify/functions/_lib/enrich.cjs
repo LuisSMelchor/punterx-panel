@@ -320,6 +320,29 @@ async function runOneShotAI({ prompt, payload }) {
   // Llama a OpenAI (si hay KEY), valida y calcula EV/clase.
   const out = await callOpenAIOnce({ prompt });
   if (!out || !validateAIJson(out)) {
+  // Fallback odds por nombres si no hay markets y tenemos clave
+  try {
+    const apiKey = process.env.ODDS_API_KEY;
+    if (apiKey && (!payload.markets || !Object.keys(payload.markets||{}).length)) {
+      const sport = process.env.SPORT_KEY || 'soccer_epl';
+      const regions = process.env.ODDS_REGIONS || 'us,eu,uk,au';
+      const markets = process.env.ODDS_MARKETS || 'h2h,totals,btts';
+      const fb = await oddsFallbackByNames({
+        sport, regions, markets, apiKey,
+        home: evt.home, away: evt.away
+      });
+      if (fb?.ok && fb.markets) {
+        payload.markets = fb.markets;
+        payload.meta = payload.meta || {};
+        payload.meta.odds_source = 'oddsapi:fallback-names';
+        payload.meta.odds_event = fb.event;
+      }
+    }
+  } catch (e) {
+    payload.meta = payload.meta || {};
+    payload.meta.odds_fallback_error = e?.message || String(e);
+  }
+
     return { ok:false, reason:'invalid-ai-json', raw: out || null };
   }
   // EV principal
