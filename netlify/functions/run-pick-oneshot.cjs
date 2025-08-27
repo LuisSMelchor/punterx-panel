@@ -152,9 +152,8 @@ Hora estimada: ${horaStr}`;
 
   const probStr = Number.isFinite(prob) ? `${prob}%` : '—';
   const evStr = Number.isFinite(ev) ? `${ev}%` : '—';
-  const bookiesStr = bookies ? `Top 3 bookies:\n${bookies}` : 'Top 3 bookies: —';
-
-  const bookiesStrFree = includeBookiesInFree ? bookiesStr : 'Top 3 bookies: —';
+  const bookiesStr = bookies ? `Top 3 bookies:\n${bookies}` : '';
+const bookiesStrFree = (includeBookiesInFree && bookies) ? bookiesStr : '';
 
   // Canal (Informativo)
   const canalHeader = '📡 RADAR DE VALOR';
