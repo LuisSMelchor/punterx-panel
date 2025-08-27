@@ -1,78 +1,114 @@
 'use strict';
-const { oneShotPayload, composeOneShotPrompt, runOneShotAI, getTop3BookiesForEvent } = require('./_lib/enrich.cjs');
-const { formatVipMessage, formatFreeMessage } = require('./_lib/format.cjs');
-const { savePickToSupabase } = require('./_lib/store.cjs');
 
-function classify(ev) {
-  if (typeof ev !== 'number') return 'Descartar';
-  if (ev >= 15) return 'VIP';
-  if (ev >= 10) return 'Gratis';
-  return 'Descartar';
+const { oneShotPayload, composeOneShotPrompt } = require('./_lib/enrich.cjs');
+const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
+const { callOpenAIOnce } = require('./_lib/ai.cjs');
+
+function safeExtractFirstJson(text='') {
+  try { return JSON.parse(text); } catch {}
+  const s = String(text);
+  let depth = 0, start = -1;
+  for (let i=0;i<s.length;i++){
+    const ch = s[i];
+    if (ch === '{') { if (depth===0) start=i; depth++; }
+    else if (ch === '}') { depth--; if (depth===0 && start>=0) {
+      const cand = s.slice(start,i+1);
+      try { return JSON.parse(cand); } catch {}
+      start = -1;
+    }}
+  }
+  return null;
+}
+
+function isFiniteNum(n){ return typeof n==='number' && Number.isFinite(n); }
+
+function calcEV(probPct, odds) {
+  if (!isFiniteNum(probPct) || !isFiniteNum(odds) || odds<=1) return null;
+  const p = probPct/100;
+  return Math.round(((p*odds - 1) * 100) * 10)/10;
+}
+
+function classifyByEV(ev) {
+  if (!isFiniteNum(ev)) return 'N/A';
+  if (ev >= 40) return 'Ultra Elite';
+  if (ev >= 30) return 'Élite Mundial';
+  if (ev >= 20) return 'Avanzado';
+  if (ev >= 15) return 'Competitivo';
+  if (ev >= 10) return 'Informativo';
+  return 'Descartado';
 }
 
 exports.handler = async (event) => {
   try {
     const q = event?.queryStringParameters || {};
     const evt = {
-      home: q.home || 'Charlotte FC',
-      away: q.away || 'New York Red Bulls',
-      league: q.league || 'Major League Soccer',
-      commence: q.commence || '2025-08-24T23:00:00Z'
+      home: q.home,
+      away: q.away,
+      league: q.league,
+      commence: q.commence
     };
 
-    // Enriquecimiento mínimo de demo; en próximos pasos conectaremos OddsAPI/API-FOOTBALL
-    const payload = await oneShotPayload({ evt, match: {}, fixture: {} });
-    try {
-      const top3 = await getTop3BookiesForEvent(evt);
-      if (Array.isArray(top3) && top3.length) payload.odds_top3 = top3;
-    } catch { }
-    const prompt  = composeOneShotPrompt(payload);
-    const ai = await runOneShotAI({ prompt, payload });
-
-    // Si no corrió la IA (falta OPENAI_API_KEY), devolvemos info mínima
-    if (!ai?.ok) {
-      return { statusCode: 200, body: JSON.stringify({ ok:false, reason: ai?.reason || 'no-ai', payload, prompt }) };
-    }
-
-    const ev = (typeof ai.result?.ev_estimado === 'number') ? ai.result.ev_estimado : null;
-    const lane = classify(ev);
-
-    let message = '';
-    if (lane === 'VIP') {
-      message = formatVipMessage({ payload, ai });
-    } else if (lane === 'Gratis') {
-      message = formatFreeMessage({ payload, ai });
-    } else {
-      message = 'Sin valor suficiente (EV < 10%).';
-    }
-
-    // Guardar en Supabase (si hay ENV); respeta tu esquema
-    const row = {
-      evento: `${payload.equipos?.local} vs ${payload.equipos?.visita}`,
-      analisis: message,
-      apuesta: ai.result?.apuesta_sugerida?.seleccion || null,
-      tipo_pick: lane,
-      liga: payload.liga + (payload.pais ? ` (${payload.pais})` : ''),
-      equipos: `${payload.equipos?.local} vs ${payload.equipos?.visita}`,
-      ev: ev,
-      probabilidad: ai.result?.probabilidad_estim ?? null,
-      nivel: ai.result?.nivel ?? null,
-      timestamp: new Date().toISOString()
+    // 1) Resolver IDs con AF-resolver
+    const match = await resolveTeamsAndLeague(evt, {});
+    const fixture = {
+      fixture_id: match?.fixture_id,
+      kickoff: evt.commence,
+      league_id: match?.league_id,
+      league_name: match?.league_name,
+      country: match?.country,
+      home_id: match?.home_id,
+      away_id: match?.away_id,
     };
-    const saved = await savePickToSupabase(row);
+
+    // 2) Payload + prompt one-shot
+    const payload = await oneShotPayload({ evt, match, fixture });
+    const prompt = composeOneShotPrompt(payload);
+
+    // 3) Llamada IA
+    const ai = await callOpenAIOnce({ prompt });
+    if (!ai.ok) {
+      return { statusCode: 200, body: JSON.stringify({ ok:false, reason: ai.reason, payload, prompt }) };
+    }
+
+    // 4) Parseo duro del JSON
+    const parsed = safeExtractFirstJson(ai.raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return { statusCode: 200, body: JSON.stringify({ ok:false, reason:'invalid-ai-json', payload, prompt }) };
+    }
+
+    // 5) Validación mínima + EV + clasificación
+    const ap = parsed.apuesta_sugerida || {};
+    const mercado = ap.mercado || null;
+    const cuota = Number(ap.cuota);
+    let prob = Number(parsed.probabilidad_estim);
+    let ev = Number(parsed.ev_estimado);
+
+    if (!isFiniteNum(ev)) {
+      let oddsToUse = isFiniteNum(cuota) ? cuota : null;
+      if (!isFiniteNum(oddsToUse) && mercado && payload?.markets?.[mercado]?.length) {
+        oddsToUse = payload.markets[mercado][0]?.price;
+      }
+      if (isFiniteNum(prob) && isFiniteNum(oddsToUse)) {
+        ev = calcEV(prob, oddsToUse);
+      }
+    }
+
+    const nivel = classifyByEV(ev);
 
     return {
       statusCode: 200,
       body: JSON.stringify({
         ok: true,
-        lane,
-        ev,
-        message,
-        saved,
-        preview: { payload, ai: ai.result }
-      }, null, 2)
+        reason: 'ok',
+        fixture: payload.fixture,
+        markets_top3: payload.markets,
+        ai_json: parsed,
+        ev_estimado: ev,
+        nivel,
+        meta: payload.meta,
+      })
     };
   } catch (e) {
-    return { statusCode: 500, body: JSON.stringify({ error: e?.message || String(e) }) };
+    return { statusCode: 500, body: JSON.stringify({ ok:false, reason:'server-error', error: e?.message || String(e) }) };
   }
 };
