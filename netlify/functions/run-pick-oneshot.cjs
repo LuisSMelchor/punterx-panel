@@ -11,11 +11,14 @@ function safeExtractFirstJson(text='') {
   for (let i=0;i<s.length;i++){
     const ch = s[i];
     if (ch === '{') { if (depth===0) start=i; depth++; }
-    else if (ch === '}') { depth--; if (depth===0 && start>=0) {
-      const cand = s.slice(start,i+1);
-      try { return JSON.parse(cand); } catch {}
-      start = -1;
-    }}
+    else if (ch === '}') {
+      depth--;
+      if (depth===0 && start>=0) {
+        const cand = s.slice(start,i+1);
+        try { return JSON.parse(cand); } catch {}
+        start = -1;
+      }
+    }
   }
   return null;
 }
@@ -48,7 +51,7 @@ exports.handler = async (event) => {
       commence: q.commence
     };
 
-    // 1) Resolver IDs con AF-resolver
+    // 1) Resolver con AF (si no resuelve, seguimos igual; no es bloqueante para IA)
     const match = await resolveTeamsAndLeague(evt, {});
     const fixture = {
       fixture_id: match?.fixture_id,
@@ -64,10 +67,16 @@ exports.handler = async (event) => {
     const payload = await oneShotPayload({ evt, match, fixture });
     const prompt = composeOneShotPrompt(payload);
 
-    // 3) Llamada IA
+    // 3) IA (si falla, devolvemos razón y diagnostic)
     const ai = await callOpenAIOnce({ prompt });
     if (!ai.ok) {
-      return { statusCode: 200, body: JSON.stringify({ ok:false, reason: ai.reason, status: ai.status, statusText: ai.statusText, raw: ai.raw, payload, prompt }) };
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
+          ok:false, reason: ai.reason, status: ai.status, statusText: ai.statusText, raw: ai.raw,
+          payload, prompt
+        })
+      };
     }
 
     // 4) Parseo duro del JSON
@@ -76,30 +85,25 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: JSON.stringify({ ok:false, reason:'invalid-ai-json', payload, prompt }) };
     }
 
-    // 5) Validación mínima + EV + clasificación
+    // 5) Validación mínima + normalización + EV + clasificación
     const ap = parsed.apuesta_sugerida || {};
     const mercado = ap.mercado || null;
     const cuota = Number(ap.cuota);
     let prob = Number(parsed.probabilidad_estim);
-let ev = Number(parsed.ev_estimado);
+    let ev = Number(parsed.ev_estimado);
 
-// Normalización: prob (0-1 -> 0-100) y EV (fracción -> %)
-if (isFiniteNum(prob) && prob <= 1) prob = prob * 100;
-if (isFiniteNum(ev) && Math.abs(ev) <= 1) {
-  ev = ev * 100;
-  // redondeo a 0.1
-  ev = Math.round(ev * 10) / 10;
-}
+    // Normalización: prob (0-1 -> %) y EV fraccional (-> %)
+    if (isFiniteNum(prob) && prob <= 1) prob = prob * 100;
+    if (isFiniteNum(ev) && Math.abs(ev) <= 1) {
+      ev = Math.round(ev * 1000) / 10; // *100 y redondeo a 0.1
+    }
 
+    // Recalcular EV si falta
     if (!isFiniteNum(ev)) {
-  let oddsToUse = isFiniteNum(cuota) ? cuota : null;
-  if (!isFiniteNum(oddsToUse) && mercado && payload?.markets?.[mercado]?.length) {
-    oddsToUse = payload.markets[mercado][0]?.price;
-  }
-  if (isFiniteNum(prob) && isFiniteNum(oddsToUse)) {
-    ev = calcEV(prob, oddsToUse);
-  }
-}
+      let oddsToUse = isFiniteNum(cuota) ? cuota : null;
+      if (!isFiniteNum(oddsToUse) && mercado && payload?.markets?.[mercado]?.length) {
+        oddsToUse = payload.markets[mercado][0]?.price; // mejor cuota
+      }
       if (isFiniteNum(prob) && isFiniteNum(oddsToUse)) {
         ev = calcEV(prob, oddsToUse);
       }
