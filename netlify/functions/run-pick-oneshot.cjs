@@ -70,7 +70,7 @@ function marketKeyFromName(name) {
   if (/(resultados*final|1x2|moneyline|ganador|h2h|resultado$|h 2 h)/.test(n)) return 'h2h';
 
   // Totales / Más-Menos / Over-Under
-  if (/(total(es)?|mas/?menos|mas menos|over|under|o/u|goles|.+2.5|.+3.5|.+1.5)/.test(n)) return 'totals';
+  if ( /(total(?:es)?|mas\/?.?menos|mas menos|over|under|o\/u|goles)/.test(n) ) return 'totals';
 
   // Ambos marcan / BTTS
   if (/(amboss*equiposs*marcan|amboss*marcan|btts)/.test(n)) return 'btts';
