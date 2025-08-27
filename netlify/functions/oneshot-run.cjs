@@ -56,7 +56,8 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         input: { evt, match },
         payload,
-        prompt_preview: prompt.slice(0, 600), // para inspección rápida
+        prompt_preview: prompt.slice(0, 600),,
+        preview_text: formatMarketsTop3(payload?.markets_top3 || []) // para inspección rápida
         result
       }, null, 2)
     };
