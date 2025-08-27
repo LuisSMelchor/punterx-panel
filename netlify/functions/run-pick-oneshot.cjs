@@ -3,7 +3,11 @@
 const { oneShotPayload, composeOneShotPrompt } = require('./_lib/enrich.cjs');
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
 const { callOpenAIOnce } = require('./_lib/ai.cjs');
-const { sendTelegramText } = require('./_lib/tx.cjs');
+let sendTelegramText = null;
+try {
+  // opcional: solo si existe el helper
+  ({ sendTelegramText } = require('./_lib/tx.cjs'));
+} catch {}
 
 function safeExtractFirstJson(text='') {
   try { return JSON.parse(text); } catch {}
@@ -26,23 +30,13 @@ function safeExtractFirstJson(text='') {
 
 function isFiniteNum(n){ return typeof n==='number' && Number.isFinite(n); }
 
+// EV% = ((prob/100) * odds - 1) * 100
 function calcEV(probPct, odds) {
-  if (!isFiniteNum(probPct) || !isFiniteNum(odds) || odds<=1) return null;
-  const p = probPct/100;
-  return Math.round(((p*odds - 1) * 100) * 10)/10;
+  if (!isFiniteNum(probPct) || !isFiniteNum(odds) || odds <= 1) return null;
+  const ev = ((probPct/100)*odds - 1) * 100;
+  return Math.round(ev * 10) / 10; // 1 decimal
 }
 
-function classifyByEV(ev) {
-  if (!isFiniteNum(ev)) return 'N/A';
-  if (ev >= 40) return 'Ultra Elite';
-  if (ev >= 30) return 'Élite Mundial';
-  if (ev >= 20) return 'Avanzado';
-  if (ev >= 15) return 'Competitivo';
-  if (ev >= 10) return 'Informativo';
-  return 'Descartado';
-}
-
-// Helpers S2.7
 function minutesFromNow(iso) {
   const t = new Date(iso).getTime() - Date.now();
   return Math.max(0, Math.round(t/60000));
@@ -79,32 +73,73 @@ function marketKeyFromName(name) {
 }
 
 function top3FromMarkets(markets, chosen) {
+  // markets: { [key]: [ {book, price, label?}, ... ] }
   const keys = Object.keys(markets||{});
   if (!keys.length) return '';
 
-  // Resolver chosen: puede venir en ES o como clave ya normalizada
-  let mkey = chosen ? (marketKeyFromName(chosen) || (keys.includes(chosen) ? chosen : null)) : null;
-
-  // Heurística adicional si aún no hay clave
-  if (!mkey && chosen) {
-    const n = _normStr(chosen);
-    if (n.includes('resultado')) mkey = 'h2h';
-    else if (n.includes('gol') || n.includes('over') || n.includes('under') || n.includes('total')) mkey = 'totals';
-    else if (n.includes('ambos') || n.includes('btts')) mkey = 'btts';
+  let mkey = null;
+  if (chosen) {
+    // chosen puede venir en ES o ya como clave
+    mkey = marketKeyFromName(chosen) || (keys.includes(chosen) ? chosen : null);
+    if (!mkey) {
+      const n = _normStr(chosen);
+      if (n.includes('resultado')) mkey = 'h2h';
+      else if (n.includes('gol') || n.includes('over') || n.includes('under') || n.includes('total')) mkey = 'totals';
+      else if (n.includes('ambos') || n.includes('btts')) mkey = 'btts';
+    }
   }
 
-  // Fallback: primer mercado disponible
-  if (!mkey || !markets[mkey]?.length) mkey = keys[0];
+  if (!mkey || !markets[mkey]?.length) {
+    mkey = keys[0]; // fallback primer mercado disponible
+  }
 
   const arr = (markets[mkey]||[]).slice(0,3);
   return arr.map((x,i)=>`${i+1}. ${x?.book||'N/A'} — ${x?.price ?? '—'}`).join('\n');
 }
+
+function classifyByEV(ev) {
+  if (!isFiniteNum(ev)) return 'N/A';
+  if (ev >= 40) return 'Ultra Elite';
+  if (ev >= 30) return 'Élite Mundial';
+  if (ev >= 20) return 'Avanzado';
+  if (ev >= 15) return 'Competitivo';
+  if (ev >= 10) return 'Informativo';
+  return 'Descartado';
+}
+
 function buildMessages({liga, pais, home, away, kickoff_iso, ev, prob, nivel, markets, ap_sugerida, apuestas_extra}) {
   const ligaStr = pais ? `${liga} (${pais})` : liga;
   const horaStr = fmtComienzaEn(kickoff_iso);
   const bookies = top3FromMarkets(markets, ap_sugerida?.mercado);
 
-const canalMsg =
+  // Frase IA breve
+  const sel = ap_sugerida?.seleccion ? String(ap_sugerida.seleccion) : '';
+  const cuo = (ap_sugerida?.cuota != null) ? `${ap_sugerida.cuota}` : '—';
+  const evStrBrief = (Number.isFinite(ev) ? `${ev}%` : '—');
+  const probStrBrief = (Number.isFinite(prob) ? `${prob}%` : '—');
+  const iaTagline = sel ? `${sel} @ ${cuo} | EV ${evStrBrief} | P(${probStrBrief})` : 'Valor detectado por IA';
+
+  const datosBasicos =
+`Liga: ${ligaStr}
+Partido: ${home} vs ${away}
+Hora estimada: ${horaStr}`;
+
+  const apuestaSug = ap_sugerida
+    ? `Apuesta sugerida: ${ap_sugerida.mercado} — ${ap_sugerida.seleccion} (cuota ${ap_sugerida.cuota ?? '—'})`
+    : 'Apuesta sugerida: —';
+
+  const extras = Array.isArray(apuestas_extra) && apuestas_extra.length
+    ? apuestas_extra.map(x=>`• ${x.mercado}: ${x.seleccion} (cuota ${x.cuota ?? '—'})`).join('\n')
+    : '—';
+
+  const probStr = Number.isFinite(prob) ? `${prob}%` : '—';
+  const evStr = Number.isFinite(ev) ? `${ev}%` : '—';
+  const bookiesStr = bookies ? `Top 3 bookies:\n${bookies}` : 'Top 3 bookies: —';
+
+  // Canal (Informativo)
+  const canalHeader = '📡 RADAR DE VALOR';
+  const canalCta = '👉 Únete al grupo VIP y prueba 15 días gratis.';
+  const canalMsg =
 `${canalHeader}
 ${datosBasicos}
 
@@ -115,7 +150,7 @@ ${bookiesStr}
 
 ${canalCta}`;
 
-  // Mensaje VIP (>=15%)
+  // VIP (>=15%)
   const vipHeader = `🎯 PICK NIVEL: ${nivel}`;
   const vipDisclaimer = '⚠️ Apuesta con responsabilidad. Esto no es consejo financiero.';
   const vipMsg =
@@ -140,145 +175,146 @@ ${vipDisclaimer}`;
 
   return { canalMsg, vipMsg };
 }
+
 exports.handler = async (event) => {
   try {
-    const q = event?.queryStringParameters || {};
+    const qs = event?.queryStringParameters || {};
     const evt = {
-      home: q.home,
-      away: q.away,
-      league: q.league,
-      commence: q.commence
+      home: qs.home || '',
+      away: qs.away || '',
+      league: qs.league || '',
+      commence: qs.commence || new Date(Date.now() + 60*60*1000).toISOString()
     };
 
-    // 1) Resolver con AF (si no resuelve, seguimos igual; no es bloqueante para IA)
+    // Resolver (puede no encontrar IDs; enrich.cjs ya tiene fallback de odds por nombres)
     const match = await resolveTeamsAndLeague(evt, {});
     const fixture = {
-      fixture_id: match?.fixture_id,
+      fixture_id: match?.fixture_id || null,
       kickoff: evt.commence,
-      league_id: match?.league_id,
-      league_name: match?.league_name,
-      country: match?.country,
-      home_id: match?.home_id,
-      away_id: match?.away_id,
+      league_id: match?.league_id || null,
+      league_name: match?.league_name || evt.league || null,
+      country: match?.country || null,
+      home_id: match?.home_id || null,
+      away_id: match?.away_id || null,
     };
 
-    // 2) Payload + prompt one-shot
     const payload = await oneShotPayload({ evt, match, fixture });
-    const prompt = composeOneShotPrompt(payload);
 
-    // 3) IA (si falla, devolvemos razón y diagnostic)
+    // Prompt IA y llamada
+    const prompt = composeOneShotPrompt(payload);
     const ai = await callOpenAIOnce({ prompt });
+
     if (!ai.ok) {
       return {
         statusCode: 200,
         body: JSON.stringify({
-          ok:false, reason: ai.reason, status: ai.status, statusText: ai.statusText, raw: ai.raw,
-          payload, prompt
+          ok:false,
+          reason: ai.reason,
+          status: ai.status,
+          statusText: ai.statusText,
+          raw: ai.raw,
+          payload,
+          prompt
         })
       };
     }
 
-    // 4) Parseo duro del JSON
-    const parsed = safeExtractFirstJson(ai.raw);
-    if (!parsed || typeof parsed !== 'object') {
+    const parsed = safeExtractFirstJson(ai.raw || '');
+    if (!parsed) {
       return { statusCode: 200, body: JSON.stringify({ ok:false, reason:'invalid-ai-json', payload, prompt }) };
     }
 
-    // 5) Validación mínima + normalización + EV + clasificación
-    const ap = parsed.apuesta_sugerida || {};
-    const mercado = ap.mercado || null;
-    const cuota = Number(ap.cuota);
+    // Normalización
     let prob = Number(parsed.probabilidad_estim);
     let ev = Number(parsed.ev_estimado);
+    if (isFiniteNum(prob) && prob <= 1) prob = prob * 100; // 0–1 → %
+    if (isFiniteNum(ev) && Math.abs(ev) <= 1) ev = Math.round(ev * 1000) / 10; // fracción → %
 
-    // Normalización: prob (0-1 -> %) y EV fraccional (-> %)
-    if (isFiniteNum(prob) && prob <= 1) prob = prob * 100;
-    if (isFiniteNum(ev) && Math.abs(ev) <= 1) {
-      ev = Math.round(ev * 1000) / 10; // *100 y redondeo a 0.1
-    }
+    const ap_sugerida = parsed.apuesta_sugerida || null;
+    const apuestas_extra = Array.isArray(parsed.apuestas_extra) ? parsed.apuestas_extra : [];
 
     // Recalcular EV si falta
     if (!isFiniteNum(ev)) {
-      let oddsToUse = isFiniteNum(cuota) ? cuota : null;
-      if (!isFiniteNum(oddsToUse) && mercado && payload?.markets?.[mercado]?.length) {
-        oddsToUse = payload.markets[mercado][0]?.price; // mejor cuota
+      let oddsToUse = isFiniteNum(Number(ap_sugerida?.cuota)) ? Number(ap_sugerida.cuota) : null;
+
+      if (!isFiniteNum(oddsToUse) && ap_sugerida?.mercado && payload?.markets) {
+        const mk = marketKeyFromName(ap_sugerida.mercado);
+        const arr = payload.markets?.[mk] || [];
+        if (arr.length) oddsToUse = Number(arr[0]?.price);
       }
+
+      if (!isFiniteNum(oddsToUse)) {
+        const k0 = Object.keys(payload.markets||{})[0];
+        if (k0 && payload.markets[k0]?.length) oddsToUse = Number(payload.markets[k0][0]?.price);
+      }
+
       if (isFiniteNum(prob) && isFiniteNum(oddsToUse)) {
         ev = calcEV(prob, oddsToUse);
       }
-    
+    }
 
-    const nivel = classifyByEV(ev);
+    const evOut = isFiniteNum(ev) ? ev : null;
+    const nivel = classifyByEV(evOut);
 
-    // Construcción de mensajes finales (S2.7)
-const liga = payload?.fixture?.league_name || payload?.liga || '';
-const pais = payload?.fixture?.country || payload?.pais || null;
-const home = payload?.fixture?.home_name || payload?.local || (payload?.equipos?.local) || 'Local';
-const away = payload?.fixture?.away_name || payload?.visita || (payload?.equipos?.visita) || 'Visita';
-const kickoff_iso = payload?.fixture?.kickoff || payload?.kickoff_iso || new Date().toISOString();
-const ap_sugerida = parsed?.apuesta_sugerida || null;
-const apuestas_extra = parsed?.apuestas_extra || [];
-const probOut = Number.isFinite(prob) ? Math.round(prob*10)/10 : prob;   // ej: 63.2%
-const evOut = Number.isFinite(ev) ? Math.round(ev*10)/10 : ev;           // ej: 18.7%
+    const liga = payload.league_name || payload.fixture?.league_name || evt.league || '';
+    const pais = payload.country || payload.fixture?.country || null;
+    const kickoff_iso = evt.commence || payload.fixture?.kickoff;
 
-const { canalMsg, vipMsg } = buildMessages({
-  liga, pais, home, away, kickoff_iso,
-  ev: evOut, prob: probOut, nivel,
-  markets: payload?.markets || {},
-  ap_sugerida, apuestas_extra
-});
+    const { canalMsg, vipMsg } = buildMessages({
+      liga, pais,
+      home: evt.home, away: evt.away,
+      kickoff_iso,
+      ev: evOut,
+      prob: isFiniteNum(prob) ? Math.round(prob*10)/10 : null,
+      nivel,
+      markets: payload.markets || {},
+      ap_sugerida,
+      apuestas_extra
+    });
 
-// Reglas: VIP si EV >= 15; Canal si 10 <= EV < 15; si <10 no se envía mensaje final.
-let message_vip = null, message_free = null;
-if (Number.isFinite(evOut) && evOut >= 15) {
-  message_vip = vipMsg;
-} else if (Number.isFinite(evOut) && evOut >= 10) {
-  message_free = canalMsg;
-}
+    // Envío automático a Telegram (si habilitado)
+    let send_report = { enabled: false };
+    if (String(process.env.SEND_ENABLED) === '1' && typeof sendTelegramText === 'function') {
+      const vipId = process.env.TG_VIP_CHAT_ID || null;
+      const freeId = process.env.TG_FREE_CHAT_ID || null;
+      send_report = { enabled:true, results: [] };
 
-// Envío automático a Telegram (solo si está habilitado por env)
-let send_report = null;
-if (String(process.env.SEND_ENABLED) === '1') {
-  const vipId = process.env.TG_VIP_CHAT_ID || null;
-  const freeId = process.env.TG_FREE_CHAT_ID || null;
+      if (nivel === 'Informativo') {
+        if (freeId) {
+          const r = await sendTelegramText({ chatId: freeId, text: canalMsg });
+          send_report.results.push({ target: 'FREE', ok: r.ok, parts: r.parts, errors: r.errors });
+        } else {
+          send_report.missing_free_id = true;
+        }
+      } else {
+        if (vipId) {
+          const r = await sendTelegramText({ chatId: vipId, text: vipMsg });
+          send_report.results.push({ target: 'VIP', ok: r.ok, parts: r.parts, errors: r.errors });
+        } else {
+          send_report.missing_vip_id = true;
+        }
+      }
+    }
 
-  send_report = { enabled: true, results: [] };
+    const message_vip = (nivel === 'Informativo') ? null : vipMsg;
+    const message_free = (nivel === 'Informativo') ? canalMsg : null;
 
-  if (message_vip && vipId) {
-    const r = await sendTelegramText({ chatId: vipId, text: message_vip });
-    send_report.results.push({ target: 'VIP', ok: r.ok, parts: r.parts, errors: r.errors });
-  } else if (message_vip && !vipId) {
-    send_report = send_report || {};
-    send_report.missing_vip_id = true;
-  }
-
-  if (message_free && freeId) {
-    const r = await sendTelegramText({ chatId: freeId, text: message_free });
-    send_report.results.push({ target: 'FREE', ok: r.ok, parts: r.parts, errors: r.errors });
-  } else if (message_free && !freeId) {
-    send_report = send_report || {};
-    send_report.missing_free_id = true;
-  }
- else {
-  send_report = { enabled: false };
-}
-
-return {
-  statusCode: 200,
-  body: JSON.stringify({
-    ok: true,
-    reason: 'ok',
-    fixture: payload.fixture,
-    markets_top3: payload.markets,
-    ai_json: parsed,
-    ev_estimado: evOut,
-    nivel,
-    meta: payload.meta,
-    message_vip,
-    message_free,
-    send_report
-  })
-};
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        ok: true,
+        reason: 'ok',
+        fixture: payload.fixture,
+        markets_top3: payload.markets,
+        ai_json: parsed,
+        ev_estimado: evOut,
+        nivel,
+        meta: payload.meta,
+        message_vip,
+        message_free,
+        send_report
+      })
+    };
   } catch (e) {
     return { statusCode: 500, body: JSON.stringify({ ok:false, reason:'server-error', error: e?.message || String(e) }) };
   }
