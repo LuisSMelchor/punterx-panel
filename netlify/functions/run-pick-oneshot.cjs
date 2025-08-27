@@ -52,6 +52,7 @@ function fmtComienzaEn(iso) {
   return `Comienza en ${m} minutos aprox`;
 }
 
+
 // Normaliza string: minúsculas, sin tildes, solo [a-z0-9 ]
 function _normStr(x) {
   return String(x||'')
@@ -66,20 +67,49 @@ function marketKeyFromName(name) {
   const n = _normStr(name);
   if (!n) return null;
 
-  // H2H / Resultado Final / 1X2
-  if (/(resultados*final|1x2|moneyline|ganador|h2h|resultado$|h 2 h)/.test(n)) return 'h2h';
+  // H2H / Resultado Final / 1X2 / Moneyline
+  if (/(^| )resultado( final)?($| )|(^| )1x2($| )|(^| )moneyline($| )|(^| )ganador($| )|(^| )h ?2 ?h($| )/.test(n)) return 'h2h';
 
-  // Totales / Más-Menos / Over-Under
-  if ( /(total(?:es)?|mas\/?.?menos|mas menos|over|under|o\/u|goles)/.test(n) ) return 'totals';
+  // Totales / Más-Menos / Over-Under / Goles
+  if (/(^| )(total(es)?|mas\/?menos|mas menos|over|under|o\/u|goles)($| )/.test(n)) return 'totals';
 
   // Ambos marcan / BTTS
-  if (/(amboss*equiposs*marcan|amboss*marcan|btts)/.test(n)) return 'btts';
+  if (/(^| )(ambos equipos marcan|ambos marcan|btts)($| )/.test(n)) return 'btts';
 
   return null;
 }
 
 function top3FromMarkets(markets, chosen) {
-  // markets: { [key]: [ {book, price, label?}, ... ] }
+  const keys = Object.keys(markets||{});
+  if (!keys.length) return '';
+
+  // Resolver chosen: puede venir en ES o como clave ya normalizada
+  let mkey = chosen ? (marketKeyFromName(chosen) || (keys.includes(chosen) ? chosen : null)) : null;
+
+  // Heurística adicional si aún no hay clave
+  if (!mkey && chosen) {
+    const n = _normStr(chosen);
+    if (n.includes('resultado')) mkey = 'h2h';
+    else if (n.includes('gol') || n.includes('over') || n.includes('under') || n.includes('total')) mkey = 'totals';
+    else if (n.includes('ambos') || n.includes('btts')) mkey = 'btts';
+  }
+
+  // Fallback: primer mercado disponible
+  if (!mkey || !markets[mkey]?.length) mkey = keys[0];
+
+  const arr = (markets[mkey]||[]).slice(0,3);
+  return arr.map((x,i)=>`${i+1}. ${x?.book||'N/A'} — ${x?.price ?? '—'}`).join('\n');
+}
+// Normaliza string: minúsculas, sin tildes, solo [a-z0-9 ]
+function _normStr(x) {
+  return String(x||'')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9]+/g,' ')
+    .trim();
+}
+
+// Mapea nombres ES/variantes → claves oddsapi
   // chosen: nombre humano (ES) o clave; resolvemos ambos
   const keys = Object.keys(markets||{});
   if (!keys.length) return '';
