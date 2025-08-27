@@ -1,5 +1,5 @@
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
-const const { oneShotPayload, composeOneShotPrompt } = require('./_lib/oneshot-adapter.cjs');
+const { oneShotPayload, composeOneShotPrompt } = require('./_lib/oneshot-adapter.cjs');
 const { callOneShotOpenAI, safeJson, computeEV, classifyEV } = require('./_lib/ai.cjs');
 
 exports.handler = async (event) => {
