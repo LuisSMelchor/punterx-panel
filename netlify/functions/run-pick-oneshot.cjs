@@ -41,6 +41,84 @@ function classifyByEV(ev) {
   return 'Descartado';
 }
 
+// Helpers S2.7
+function minutesFromNow(iso) {
+  const t = new Date(iso).getTime() - Date.now();
+  return Math.max(0, Math.round(t/60000));
+}
+function fmtComienzaEn(iso) {
+  const m = minutesFromNow(iso);
+  return `Comienza en ${m} minutos aprox`;
+}
+function top3FromMarkets(markets, chosen) {
+  // markets: { [mercado]: [ {book, price}, ... ] }
+  // chosen: string (mercado) o null
+  const mkey = chosen && markets?.[chosen]?.length ? chosen
+             : Object.keys(markets||{})[0];
+  const arr = (markets?.[mkey]||[]).slice(0,3);
+  return arr.map((x,i)=>`${i+1}. ${x?.book||'N/A'} — ${x?.price ?? '—'}`).join('\n');
+}
+function buildMessages({liga, pais, home, away, kickoff_iso, ev, prob, nivel, markets, ap_sugerida, apuestas_extra}) {
+  const ligaStr = pais ? `${liga} (${pais})` : liga;
+  const horaStr = fmtComienzaEn(kickoff_iso);
+  const bookies = top3FromMarkets(markets, ap_sugerida?.mercado);
+
+  // Bloques base
+  const datosBasicos =
+`Liga: ${ligaStr}
+Partido: ${home} vs ${away}
+Hora estimada: ${horaStr}`;
+
+  const apuestaSug = ap_sugerida
+    ? `Apuesta sugerida: ${ap_sugerida.mercado} — ${ap_sugerida.seleccion} (cuota ${ap_sugerida.cuota ?? '—'})`
+    : 'Apuesta sugerida: —';
+
+  const extras = Array.isArray(apuestas_extra) && apuestas_extra.length
+    ? apuestas_extra.map(x=>`• ${x.mercado}: ${x.seleccion} (cuota ${x.cuota ?? '—'})`).join('\n')
+    : '—';
+
+  const probStr = isFiniteNum(prob) ? `${prob}%` : '—';
+  const evStr = isFiniteNum(ev) ? `${ev}%` : '—';
+
+  const bookiesStr = bookies ? `Top 3 bookies:\n${bookies}` : 'Top 3 bookies: —';
+
+  // Mensaje Canal (10–14.9% = Informativo)
+  const canalHeader = '📡 RADAR DE VALOR';
+  const canalCta = '👉 Únete al grupo VIP y prueba 15 días gratis.';
+  const canalMsg =
+`${canalHeader}
+${datosBasicos}
+
+Análisis de los expertos: (IA)
+Frase IA: (generada automáticamente)
+
+${canalCta}`;
+
+  // Mensaje VIP (>=15%)
+  const vipHeader = `🎯 PICK NIVEL: ${nivel}`;
+  const vipDisclaimer = '⚠️ Apuesta con responsabilidad. Esto no es consejo financiero.';
+  const vipMsg =
+`${vipHeader}
+${datosBasicos}
+
+EV estimado: ${evStr}
+Probabilidad estimada: ${probStr}
+
+${apuestaSug}
+
+Apuestas extra:
+${extras}
+
+Datos avanzados (IA):
+- Diagnóstico IA en base a datos
+- Tendencias y contexto del partido
+
+${bookiesStr}
+
+${vipDisclaimer}`;
+
+  return { canalMsg, vipMsg };
+}
 exports.handler = async (event) => {
   try {
     const q = event?.queryStringParameters || {};
@@ -111,19 +189,47 @@ exports.handler = async (event) => {
 
     const nivel = classifyByEV(ev);
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        ok: true,
-        reason: 'ok',
-        fixture: payload.fixture,
-        markets_top3: payload.markets,
-        ai_json: parsed,
-        ev_estimado: ev,
-        nivel,
-        meta: payload.meta,
-      })
-    };
+    // Construcción de mensajes finales (S2.7)
+const liga = payload?.fixture?.league_name || payload?.liga || '';
+const pais = payload?.fixture?.country || payload?.pais || null;
+const home = payload?.fixture?.home_name || payload?.local || (payload?.equipos?.local) || 'Local';
+const away = payload?.fixture?.away_name || payload?.visita || (payload?.equipos?.visita) || 'Visita';
+const kickoff_iso = payload?.fixture?.kickoff || payload?.kickoff_iso || new Date().toISOString();
+const ap_sugerida = parsed?.apuesta_sugerida || null;
+const apuestas_extra = parsed?.apuestas_extra || [];
+const probOut = Number.isFinite(prob) ? Math.round(prob*10)/10 : prob;   // ej: 63.2%
+const evOut = Number.isFinite(ev) ? Math.round(ev*10)/10 : ev;           // ej: 18.7%
+
+const { canalMsg, vipMsg } = buildMessages({
+  liga, pais, home, away, kickoff_iso,
+  ev: evOut, prob: probOut, nivel,
+  markets: payload?.markets || {},
+  ap_sugerida, apuestas_extra
+});
+
+// Reglas: VIP si EV >= 15; Canal si 10 <= EV < 15; si <10 no se envía mensaje final.
+let message_vip = null, message_free = null;
+if (Number.isFinite(evOut) && evOut >= 15) {
+  message_vip = vipMsg;
+} else if (Number.isFinite(evOut) && evOut >= 10) {
+  message_free = canalMsg;
+}
+
+return {
+  statusCode: 200,
+  body: JSON.stringify({
+    ok: true,
+    reason: 'ok',
+    fixture: payload.fixture,
+    markets_top3: payload.markets,
+    ai_json: parsed,
+    ev_estimado: evOut,
+    nivel,
+    meta: payload.meta,
+    message_vip,
+    message_free
+  })
+};
   } catch (e) {
     return { statusCode: 500, body: JSON.stringify({ ok:false, reason:'server-error', error: e?.message || String(e) }) };
   }
