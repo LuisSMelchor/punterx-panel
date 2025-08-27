@@ -2,6 +2,8 @@ const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
 const { oneShotPayload, composeOneShotPrompt } = require('./_lib/oneshot-adapter.cjs');
 const { callOneShotOpenAI, safeJson, computeEV, classifyEV } = require('./_lib/ai.cjs');
 
+
+const { formatMarketsTop3 } = require('./_lib/format-markets.cjs');
 exports.handler = async (event) => {
   try {
     const q = event?.queryStringParameters || {};
