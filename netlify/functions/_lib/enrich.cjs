@@ -327,10 +327,7 @@ async function runOneShotAI({ prompt, payload }) {
       const sport = process.env.SPORT_KEY || 'soccer_epl';
       const regions = process.env.ODDS_REGIONS || 'us,eu,uk,au';
       const markets = process.env.ODDS_MARKETS || 'h2h,totals,btts';
-      const fb = await oddsFallbackByNames({
-        sport, regions, markets, apiKey,
-        home: evt.home, away: evt.away
-      });
+      const fb = await oddsFallbackByNames({ sport, regions, markets, apiKey, home: evt.home, away: evt.away, ap_sugerida: null });
       if (fb?.ok && fb.markets) {
         payload.markets = fb.markets;
         payload.meta = payload.meta || {};
@@ -508,47 +505,85 @@ async function getTop3BookiesForEvent(evt = {}) {
 
 
 
-async function oddsFallbackByNames({ sport, regions, markets, apiKey, home, away }) {
-  const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=${regions}&markets=${markets}&oddsFormat=decimal&dateFormat=iso&apiKey=${apiKey}`;
+async function oddsFallbackByNames({ sport, regions, markets, apiKey, home, away, ap_sugerida }) {
+  // filtra mercados bulk a soportados por /odds
+  const supportedBulk = ['h2h','totals','spreads'];
+  const bulkMarkets = String(markets||'h2h,totals')
+    .split(',')
+    .map(x=>x.trim())
+    .filter(x => supportedBulk.includes(x))
+    .join(',');
+
+  const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=${regions}&markets=${bulkMarkets}&oddsFormat=decimal&dateFormat=iso&apiKey=${apiKey}`;
   const r = await _fetchPony(url);
   if (!r.ok) return { ok:false, status:r.status, text: await r.text().catch(()=>null) };
   const arr = await r.json().catch(()=>null);
   if (!Array.isArray(arr) || !arr.length) return { ok:false, reason:'no-events' };
 
-  // normalizar nombres simples
   const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
   const H = norm(home), A = norm(away);
 
-  // busca el evento más parecido por nombres
+  // scoring simple por nombres
+  function score(ev) {
+    const h = norm(ev.home_team), a = norm(ev.away_team);
+    let sc = 0;
+    if (h && H && h.includes(H)) sc += 2;
+    if (a && A && a.includes(A)) sc += 2;
+    // bonus por orden home/away
+    if (h && H && h.startsWith(H)) sc += 1;
+    if (a && A && a.startsWith(A)) sc += 1;
+    return sc;
+  }
+
   let best = null, bestScore = -1;
   for (const ev of arr) {
-    const h = norm(ev.home_team), a = norm(ev.away_team);
-    let score = 0;
-    if (H && h.includes(H)) score += 1;
-    if (A && a.includes(A)) score += 1;
-    if (h === H) score += 2;
-    if (a === A) score += 2;
-    if (score > bestScore) { bestScore = score; best = ev; }
+    const sc = score(ev);
+    if (sc > bestScore) { best = ev; bestScore = sc; }
   }
-  if (!best) return { ok:false, reason:'no-match' };
+  if (!best) return { ok:false, reason:'no-best-match' };
 
-  // armar markets_top3
+  // Agregamos marketsMap (enfocado en H2H para la selección sugerida)
   const marketsMap = {};
-  for (const b of (best.bookmakers||[])) {
-    for (const m of (b.markets||[])) {
-      const key = m.key; // 'h2h', 'totals', 'btts'
-      for (const o of (m.outcomes||[])) {
-        const label = o.name || o.description || o.point || 'sel';
-        const price = o.price;
-        const book = b.title || b.key;
+  const apSel = ap_sugerida?.seleccion ? norm(ap_sugerida.seleccion) : null;
+
+  // Recorre bookmakers/markets del evento elegido
+  for (const bm of (best.bookmakers || [])) {
+    const book = bm.title || bm.key || 'book';
+    for (const mk of (bm.markets || [])) {
+      const key = (mk.key || '').toLowerCase(); // h2h/totals/spreads
+      if (!['h2h','totals','spreads'].includes(key)) continue;
+
+      // outcomes: lista con { name, price, point? }
+      for (const out of (mk.outcomes || [])) {
+        const label = norm(out.name || '');
+        const price = Number(out.price);
+        if (!Number.isFinite(price)) continue;
+
+        // Para h2h, si hay selección, preferimos outcomes que matcheen la selección (Chelsea / Arsenal)
+        if (key === 'h2h' && apSel) {
+          // si la selección menciona explícitamente al home o al away, intenta matchear
+          const matchSel =
+              (H && apSel.includes(H) && label.includes(norm(best.home_team))) ||
+              (A && apSel.includes(A) && label.includes(norm(best.away_team))) ||
+              // fallback: si la selección contiene el label textual del outcome
+              apSel.includes(label);
+
+          if (!matchSel) continue;
+        }
+
         marketsMap[key] = marketsMap[key] || [];
-        marketsMap[key].push({ book, label, price });
+        marketsMap[key].push({ book, price, label: out.name || null });
       }
     }
   }
+
+  // ordena cada mercado por mejor cuota descendente y deja topN recorte para no inflar
   for (const k of Object.keys(marketsMap)) {
-    marketsMap[k].sort((a,b)=> (b.price||0)-(a.price||0));
-    marketsMap[k] = marketsMap[k].slice(0,3);
+    marketsMap[k] = marketsMap[k]
+      .sort((a,b)=> (b.price||0) - (a.price||0))
+      .slice(0, 20);
   }
-  return { ok:true, event: { id: best.id, home: best.home_team, away: best.away_team, commence: best.commence_time }, markets: marketsMap };
+
+  return { ok:true, event: { id: best.id, commence: best.commence_time }, markets: marketsMap };
 }
+
