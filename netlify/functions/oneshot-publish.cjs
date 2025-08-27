@@ -10,6 +10,24 @@ let sendTG = null;
 try { sendTG = require('../../send.js'); } catch { /* no-op si no existe */ }
 
 exports.handler = async (event) => {
+  /* GUARD: publish safety */
+  try {
+    const P = process.env || {};
+    if (String(P.PUBLISH_PREVIEW_ONLY || '') === '1') {
+      return { statusCode: 200, body: JSON.stringify({ ok:false, reason:'guard_no_publish', cause:'PUBLISH_PREVIEW_ONLY' }) };
+    }
+    const body = (()=>{ try { return JSON.parse(event?.body||'{}'); } catch { return {}; } })();
+    if (!hasMinData(body)) {
+      return { statusCode: 200, body: JSON.stringify({ ok:false, reason:'guard_no_publish', cause:'min_data_missing' }) };
+    }
+    if (!hasTelegramEnv()) {
+      return { statusCode: 200, body: JSON.stringify({ ok:false, reason:'guard_no_publish', cause:'telegram_env_missing' }) };
+    }
+  } catch (_) {
+    return { statusCode: 200, body: JSON.stringify({ ok:false, reason:'guard_no_publish', cause:'guard_error' }) };
+  }
+  /* /GUARD */
+
   try {
     if (process.env.FEATURE_ONESHOT !== '1') {
       return { statusCode: 200, body: JSON.stringify({ status: 'feature_off' }) };
