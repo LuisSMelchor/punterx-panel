@@ -9,3 +9,5 @@ tools/*.js
 # local backups/tools
 netlify/functions/_lib/match-helper.cjs.bak.*
 tools/*.js
+
+/punterx-panel/
