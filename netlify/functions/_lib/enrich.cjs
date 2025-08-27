@@ -92,7 +92,7 @@ async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
   };
 }
 
-module.exports = { enrichFixtureUsingOdds, fetchOddsForFixture, marketKeyCanonical, preferredCanonMarkets, normalizeFromOddsAPIv4, toTop3ByMarket, buildOneShotPayload, oneShotPayload, formatMarketsTop3, composeOneShotPrompt, runOneShotAI };
+module.exports = { enrichFixtureUsingOdds, fetchOddsForFixture, marketKeyCanonical, preferredCanonMarkets, normalizeFromOddsAPIv4, toTop3ByMarket, buildOneShotPayload, oneShotPayload, formatMarketsTop3, composeOneShotPrompt, runOneShotAI, getTop3BookiesForEvent };
 
 function _fetchJson(url, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -422,3 +422,61 @@ try {
     // runOneShotAI se mantiene el existente si ya estaba
   });
 } catch(_e) {}
+
+
+
+/* __ODDS_TOP3_UTILS__ */
+function __norm(x){ return String(x||'').trim().toLowerCase(); }
+function __similar(a,b){ a=__norm(a); b=__norm(b); return a && b && (a===b || a.includes(b) || b.includes(a)); }
+function __pickGameFromOdds(evt, list=[]) {
+  // Busca por nombres y/o fallback por cercanía de fecha si viene commence_time
+  const h = __norm(evt.home), a = __norm(evt.away);
+  let best = null, bestScore = -1;
+  for (const g of list) {
+    const th = __norm(g?.home_team), ta = __norm(g?.away_team);
+    let score = 0;
+    if (__similar(th, h)) score += 1;
+    if (__similar(ta, a)) score += 1;
+    // bonus por fecha si coincide dia
+    try {
+      const gd = new Date(g.commence_time).toISOString().slice(0,10);
+      const ed = new Date(evt.commence).toISOString().slice(0,10);
+      if (gd === ed) score += 0.5;
+    } catch {}
+    if (score > bestScore) { best = g; bestScore = score; }
+  }
+  return best;
+}
+
+function __extractTop3H2H(game) {
+  // Toma mercado 'h2h' y calcula el mejor precio por bookie (home/away/draw), luego ordena desc y toma top3
+  const out = [];
+  const books = game?.bookmakers || [];
+  for (const b of books) {
+    const m = (b?.markets || []).find(m => m?.key === 'h2h');
+    if (!m || !Array.isArray(m.outcomes)) continue;
+    const best = m.outcomes.reduce((mx, o) => (typeof o.price === 'number' && o.price > mx ? o.price : mx), -Infinity);
+    if (best > 0 && Number.isFinite(best)) out.push({ name: b.title || b.key || 'book', odds: best });
+  }
+  out.sort((x,y)=> y.odds - x.odds);
+  return out.slice(0,3);
+}
+
+
+
+
+/* __GET_TOP3_PUBLIC__ */
+async function getTop3BookiesForEvent(evt = {}) {
+  try {
+    if (!process.env.ODDS_API_KEY) return [];
+    const list = await fetchOddsForFixture(evt); // usa helper existente
+    if (!Array.isArray(list) || !list.length) return [];
+    const game = __pickGameFromOdds(evt, list);
+    if (!game) return [];
+    return __extractTop3H2H(game);
+  } catch (e) {
+    if (Number(process.env.DEBUG_TRACE)) console.log('[ODDS][top3] error', e?.message || e);
+    return [];
+  }
+}
+
