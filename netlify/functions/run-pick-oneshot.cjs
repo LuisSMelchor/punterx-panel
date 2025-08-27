@@ -64,6 +64,13 @@ function buildMessages({liga, pais, home, away, kickoff_iso, ev, prob, nivel, ma
   const horaStr = fmtComienzaEn(kickoff_iso);
   const bookies = top3FromMarkets(markets, ap_sugerida?.mercado);
 
+  // Frase IA breve a partir de la sugerencia
+  const sel = ap_sugerida?.seleccion ? String(ap_sugerida.seleccion) : '';
+  const cuo = (ap_sugerida?.cuota != null) ? `${ap_sugerida.cuota}` : '—';
+  const evStrBrief = (Number.isFinite(ev) ? `${ev}%` : '—');
+  const probStrBrief = (Number.isFinite(prob) ? `${prob}%` : '—');
+  const iaTagline = sel ? `${sel} @ ${cuo} | EV ${evStrBrief} | P(${probStrBrief})` : 'Valor detectado por IA';
+
   // Bloques base
   const datosBasicos =
 `Liga: ${ligaStr}
@@ -78,13 +85,14 @@ Hora estimada: ${horaStr}`;
     ? apuestas_extra.map(x=>`• ${x.mercado}: ${x.seleccion} (cuota ${x.cuota ?? '—'})`).join('\n')
     : '—';
 
-  const probStr = isFiniteNum(prob) ? `${prob}%` : '—';
-  const evStr = isFiniteNum(ev) ? `${ev}%` : '—';
+  const probStr = Number.isFinite(prob) ? `${prob}%` : '—';
+  const evStr = Number.isFinite(ev) ? `${ev}%` : '—';
 
   const bookiesStr = bookies ? `Top 3 bookies:\n${bookies}` : 'Top 3 bookies: —';
 
-  // Mensaje Canal (10–14.9% = Informativo)
+  // Mensaje Canal (10–14.9% = Informativo) — ahora con bookies y tagline IA
   const canalHeader = '📡 RADAR DE VALOR';
+
   const canalCta = '👉 Únete al grupo VIP y prueba 15 días gratis.';
   const canalMsg =
 `${canalHeader}
