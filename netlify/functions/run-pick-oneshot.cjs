@@ -73,38 +73,46 @@ function marketKeyFromName(name) {
 }
 
 function top3FromMarkets(markets, chosen, apS) {
-  // markets: { [key]: [ {book, price, label?}, ... ] }
-  const keys = Object.keys(markets||{});
-  if (!keys.length) return '';
+  if (!markets || typeof markets !== "object") return null;
 
+  // 1) Resolver clave de mercado: chosen (mapeado) -> h2h -> totals -> spreads -> primer key
   let mkey = null;
   if (chosen) {
-    // chosen puede venir en ES o ya como clave
-    mkey = marketKeyFromName(chosen) || (keys.includes(chosen) ? chosen : null);
-    if (!mkey) {
-      const n = _normStr(chosen);
-      if (n.includes('resultado')) mkey = 'h2h';
-      else if (n.includes('gol') || n.includes('over') || n.includes('under') || n.includes('total')) mkey = 'totals';
-      else if (n.includes('ambos') || n.includes('btts')) mkey = 'btts';
+    try {
+      const cand = marketKeyFromName(chosen);
+      if (cand && Array.isArray(markets[cand]) && markets[cand].length) mkey = cand;
+    } catch {}
+  }
+  if (!mkey) {
+    for (const k of ["h2h","totals","spreads"]) {
+      if (Array.isArray(markets[k]) && markets[k].length) { mkey = k; break; }
     }
   }
+  if (!mkey) {
+    const keys = Object.keys(markets||{});
+    if (keys.length && Array.isArray(markets[keys[0]]) && markets[keys[0]].length) mkey = keys[0];
+  }
+  if (!mkey) return null;
 
-  if (!mkey || !markets[mkey]?.length) {
-    mkey = keys[0]; // fallback primer mercado disponible
+  // 2) Copia y, si hay labels + selección IA, prioriza outcomes que machéan la selección
+  let arr = (markets[mkey] || []).slice();
+  const norm = (x) => String(x||"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+  const sel = apS && apS.seleccion ? norm(apS.seleccion) : null;
+  if (sel && arr.length && Object.prototype.hasOwnProperty.call(arr[0]||{}, "label")) {
+    const withSel = arr.filter(x => sel.includes(norm(x.label)));
+    const withoutSel = arr.filter(x => !sel.includes(norm(x.label)));
+    arr = withSel.concat(withoutSel);
   }
 
-  let arr = (markets[mkey]||[]).slice();
-  // filtrar por selección si hay labels y apS.seleccion
-  const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
-  const sel = apS?.seleccion ? norm(apS.seleccion) : null;
-  if (sel && arr.length && arr[0] && 'label' in arr[0]) {
-    arr = arr.filter(x => sel.includes(norm(x.label))).concat(
-      arr.filter(x => !sel.includes(norm(x.label))) // fallback por si queda vacío
-    );
-  }
-  // ordenar por mejor cuota desc y tomar top 3
-  arr = arr.sort((a,b)=>(b.price||0)-(a.price||0)).slice(0,3);
-  return arr.map((x,i)=>`${i+1}. ${x?.book||'N/A'} — ${x?.price ?? '—'}`).join('\n');
+  // 3) Ordenar por mejor cuota y tomar Top 3
+  arr = arr.sort((a,b)=>(Number(b.price)||0)-(Number(a.price)||0)).slice(0,3);
+  if (!arr.length) return null;
+
+  const lines = arr.map((x,i)=>{
+    const label = x && x.label ? " (" + x.label + ")" : "";
+    return (i+1) + ". " + (x.book||"book") + " — " + (x.price||"-") + label;
+  }).join("\n");
+  return lines;
 }
 
 function classifyByEV(ev) {
