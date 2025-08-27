@@ -67,7 +67,7 @@ exports.handler = async (event) => {
     // 3) Llamada IA
     const ai = await callOpenAIOnce({ prompt });
     if (!ai.ok) {
-      return { statusCode: 200, body: JSON.stringify({ ok:false, reason: ai.reason, payload, prompt }) };
+      return { statusCode: 200, body: JSON.stringify({ ok:false, reason: ai.reason, status: ai.status, statusText: ai.statusText, raw: ai.raw, payload, prompt }) };
     }
 
     // 4) Parseo duro del JSON
