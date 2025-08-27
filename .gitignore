@@ -10,7 +10,5 @@ tools/*.js
 netlify/functions/_lib/match-helper.cjs.bak.*
 tools/*.js
 
-# local backups
-*.bak.*
-*.BAK.*
-.backup.*
+# editor backups
+*.bak
