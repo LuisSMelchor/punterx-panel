@@ -363,3 +363,62 @@ try {
     runOneShotAI: (typeof runOneShotAI === 'function') ? runOneShotAI : undefined
   });
 } catch(_e) {}
+
+
+/* __ONESHOT_IMPL_V2__ */
+function __oneShotPayload2({ evt = {}, match = {}, fixture = {} }) {
+  const kickoff = fixture.kickoff || evt.commence || null;
+  function minutesUntil(iso){ try{ return Math.round((new Date(iso).getTime() - Date.now())/60000);}catch{return null;} }
+  return {
+    liga: match.league_name || evt.league || 'N/D',
+    pais: match.country || fixture.country || null,
+    equipos: {
+      local: evt.home || match.home_name || 'Local',
+      visita: evt.away || match.away_name || 'Visita',
+      home_id: match.home_id || fixture.home_id || null,
+      away_id: match.away_id || fixture.away_id || null
+    },
+    kickoff_iso: kickoff,
+    comienza_en_min: kickoff ? minutesUntil(kickoff) : null,
+    // Se llenará en pasos siguientes con OddsAPI/API-FOOTBALL
+    odds_top3: [],
+    markets_raw: null
+  };
+}
+
+function __composeOneShotPrompt2(payload) {
+  const meta = {
+    liga: payload.liga,
+    pais: payload.pais,
+    local: payload.equipos?.local,
+    visita: payload.equipos?.visita,
+    kickoff_iso: payload.kickoff_iso,
+    comienza_en_min: payload.comienza_en_min
+  };
+  return [
+    "Eres un asistente de análisis de fútbol para picks de alto valor.",
+    "RESPONDE SOLO con un JSON válido, sin texto extra.",
+    "Formato estrictamente requerido:",
+    "{",
+    '  "apuesta_sugerida": { "mercado": "string", "seleccion": "string", "cuota": number },',
+    '  "apuestas_extra": [ { "mercado": "string", "seleccion": "string", "cuota": number } ],',
+    '  "probabilidad_estim": number,',
+    '  "ev_estimado": number',
+    "}",
+    "Notas:",
+    "- La probabilidad y EV pueden ser estimados con criterio razonable.",
+    "- Si no hay valor evidente, sugiere cuota/probabilidad coherentes, nada extremo.",
+    "Contexto del partido (solo referencia, no lo repitas):",
+    JSON.stringify(meta)
+  ].join("\n");
+}
+
+// Reasignamos exports canónicamente a nuestras nuevas impls sin romper otros exports
+try {
+  const __m = (typeof module !== 'undefined' && module.exports) ? module.exports : {};
+  module.exports = Object.assign({}, __m, {
+    oneShotPayload: __oneShotPayload2,
+    composeOneShotPrompt: __composeOneShotPrompt2
+    // runOneShotAI se mantiene el existente si ya estaba
+  });
+} catch(_e) {}
