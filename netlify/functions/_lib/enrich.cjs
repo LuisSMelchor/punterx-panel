@@ -244,10 +244,9 @@ function buildOneShotPayload({ evt = {}, match = {}, enriched = {} } = {}) {
 }
 
 async function oneShotPayload({
-  ;payload = await ensureMarketsWithOddsAPI(payload, evt);
+
  evt, match, fixture 
   // Ensure markets via OddsAPI before returning
-
 }) {
   // Si ya viene enriched desde fuera, respétalo:
   let enriched;
@@ -743,3 +742,6 @@ async function ensureMarketsWithOddsAPI(payload, evt) {
     return payload;
   }
 }
+
+
+try { module.exports.ensureMarketsWithOddsAPI = ensureMarketsWithOddsAPI; } catch (_) { exports.ensureMarketsWithOddsAPI = ensureMarketsWithOddsAPI; }

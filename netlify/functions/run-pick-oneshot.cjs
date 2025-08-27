@@ -1,6 +1,6 @@
 'use strict';
 
-const { oneShotPayload, composeOneShotPrompt } = require('./_lib/enrich.cjs');
+const { oneShotPayload, composeOneShotPrompt, ensureMarketsWithOddsAPI } = require('./_lib/enrich.cjs');
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
 const { callOpenAIOnce } = require('./_lib/ai.cjs');
 let sendTelegramText = null;
@@ -218,7 +218,8 @@ exports.handler = async (event) => {
       away_id: match?.away_id || null,
     };
 
-    const payload = await oneShotPayload({ evt, match, fixture });
+    let payload = await oneShotPayload({ evt, match, fixture });
+  payload = await ensureMarketsWithOddsAPI(payload, evt);
 if (Number(process.env.DEBUG_TRACE)) {
   try {
     const keys = Object.keys(payload.markets || {});
