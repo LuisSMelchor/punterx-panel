@@ -1,4 +1,5 @@
 'use strict';
+const { callOpenAIOneShot, validateAIJson, computeEV, classifyByEV } = require('./ai.cjs');
 const https = require('https');
 /**
  * Stub de enriquecimiento con OddsAPI (one-shot).
@@ -91,7 +92,7 @@ async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
   };
 }
 
-module.exports = { enrichFixtureUsingOdds, fetchOddsForFixture, marketKeyCanonical, preferredCanonMarkets, normalizeFromOddsAPIv4, toTop3ByMarket, buildOneShotPayload, oneShotPayload, formatMarketsTop3, composeOneShotPrompt };
+module.exports = { enrichFixtureUsingOdds, fetchOddsForFixture, marketKeyCanonical, preferredCanonMarkets, normalizeFromOddsAPIv4, toTop3ByMarket, buildOneShotPayload, oneShotPayload, formatMarketsTop3, composeOneShotPrompt, runOneShotAI };
 
 function _fetchJson(url, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -310,4 +311,29 @@ function composeOneShotPrompt(payload) {
 
 module.exports = { enrichFixtureUsingOdds, buildOneShotPayload, oneShotPayload, formatMarketsTop3, composeOneShotPrompt };
 
+}
+
+async function runOneShotAI({ prompt, payload }) {
+  // Llama a OpenAI (si hay KEY), valida y calcula EV/clase.
+  const out = await callOpenAIOneShot({ prompt });
+  if (!out || !validateAIJson(out)) {
+    return { ok:false, reason:'invalid-ai-json', raw: out || null };
+  }
+  // EV principal
+  const odds = Number(out?.apuesta_sugerida?.cuota);
+  const prob = Number(out?.probabilidad_estim);
+  const ev = computeEV(prob, odds);
+
+  // Enriquecer respuesta IA con EV y nivel
+  const nivel = classifyByEV(ev);
+
+  // Asegura campos mínimos
+  return {
+    ok: true,
+    result: {
+      ...out,
+      ev_estimado: (typeof out.ev_estimado === 'number') ? out.ev_estimado : ev,
+      nivel
+    }
+  };
 }
