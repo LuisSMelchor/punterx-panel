@@ -1,5 +1,5 @@
 'use strict';
-const { oneShotPayload, composeOneShotPrompt, runOneShotAI } = require('./_lib/enrich.cjs');
+const { oneShotPayload, composeOneShotPrompt, runOneShotAI, getTop3BookiesForEvent } = require('./_lib/enrich.cjs');
 const { formatVipMessage, formatFreeMessage } = require('./_lib/format.cjs');
 const { savePickToSupabase } = require('./_lib/store.cjs');
 
@@ -22,6 +22,10 @@ exports.handler = async (event) => {
 
     // Enriquecimiento mínimo de demo; en próximos pasos conectaremos OddsAPI/API-FOOTBALL
     const payload = await oneShotPayload({ evt, match: {}, fixture: {} });
+    try {
+      const top3 = await getTop3BookiesForEvent(evt);
+      if (Array.isArray(top3) && top3.length) payload.odds_top3 = top3;
+    } catch { }
     const prompt  = composeOneShotPrompt(payload);
     const ai = await runOneShotAI({ prompt, payload });
 
