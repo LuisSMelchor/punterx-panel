@@ -72,7 +72,7 @@ function marketKeyFromName(name) {
   return null;
 }
 
-function top3FromMarkets(markets, chosen) {
+function top3FromMarkets(markets, chosen, apS) {
   // markets: { [key]: [ {book, price, label?}, ... ] }
   const keys = Object.keys(markets||{});
   if (!keys.length) return '';
@@ -93,7 +93,17 @@ function top3FromMarkets(markets, chosen) {
     mkey = keys[0]; // fallback primer mercado disponible
   }
 
-  const arr = (markets[mkey]||[]).slice(0,3);
+  let arr = (markets[mkey]||[]).slice();
+  // filtrar por selección si hay labels y apS.seleccion
+  const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const sel = apS?.seleccion ? norm(apS.seleccion) : null;
+  if (sel && arr.length && arr[0] && 'label' in arr[0]) {
+    arr = arr.filter(x => sel.includes(norm(x.label))).concat(
+      arr.filter(x => !sel.includes(norm(x.label))) // fallback por si queda vacío
+    );
+  }
+  // ordenar por mejor cuota desc y tomar top 3
+  arr = arr.sort((a,b)=>(b.price||0)-(a.price||0)).slice(0,3);
   return arr.map((x,i)=>`${i+1}. ${x?.book||'N/A'} — ${x?.price ?? '—'}`).join('\n');
 }
 
@@ -110,7 +120,7 @@ function classifyByEV(ev) {
 function buildMessages({liga, pais, home, away, kickoff_iso, ev, prob, nivel, markets, ap_sugerida, apuestas_extra, includeBookiesInFree=false}) {
   const ligaStr = pais ? `${liga} (${pais})` : liga;
   const horaStr = fmtComienzaEn(kickoff_iso);
-  const bookies = top3FromMarkets(markets, ap_sugerida?.mercado);
+  const bookies = top3FromMarkets(markets, ap_sugerida?.mercado, ap_sugerida);
 
   // Frase IA breve
   const sel = ap_sugerida?.seleccion ? String(ap_sugerida.seleccion) : '';
