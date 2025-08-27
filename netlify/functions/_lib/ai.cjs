@@ -21,15 +21,20 @@ async function callOpenAIOnce({ prompt }) {
       'Content-Type':'application/json',
       'Authorization':`Bearer ${key}`,
     },
-    body: JSON.stringify({
+    body: JSON.stringify((() => {
+    const base = {
       model: DEFAULT_MODEL,
-      response_format: { type: 'json_object' },
       temperature: 0.2,
       messages: [
         { role: 'system', content: 'Responde SOLO con un JSON válido. Nada de texto extra.' },
         { role: 'user', content: prompt }
       ]
-    })
+    };
+    if (!process.env.AI_NO_JSON_FORMAT) {
+      base.response_format = { type: 'json_object' };
+    }
+    return base;
+  })())
   });
   if (!res.ok) {
     const text = await res.text().catch(()=>null);
