@@ -587,3 +587,56 @@ async function oddsFallbackByNames({ sport, regions, markets, apiKey, home, away
   return { ok:true, event: { id: best.id, commence: best.commence_time }, markets: marketsMap };
 }
 
+
+
+async function _oddsFindEventByNames({ sport, apiKey, home, away }) {
+  const url = 'https://api.the-odds-api.com/v4/sports/' + sport + '/events?apiKey=' + apiKey;
+  const r = await _fetchPony(url);
+  if (!r.ok) return { ok:false, status:r.status, text: await r.text().catch(()=>null) };
+  const arr = await r.json().catch(()=>[]);
+  if (!Array.isArray(arr) || !arr.length) return { ok:false, reason:'no-events' };
+
+  const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const H = norm(home), A = norm(away);
+  let best = null, bestScore = -1;
+  for (const ev of arr) {
+    const h = norm(ev.home_team), a = norm(ev.away_team);
+    let score = 0;
+    if (h && (H.includes(h) || h.includes(H))) score++;
+    if (a && (A.includes(a) || a.includes(A))) score++;
+    if (score > bestScore) { best = ev; bestScore = score; }
+  }
+  if (!best) return { ok:false, reason:'no-match' };
+  return { ok:true, event: { id: best.id, sport: best.sport_key || sport, commence: best.commence_time, home: best.home_team, away: best.away_team } };
+}
+
+async function _oddsEventOdds({ sport, eventId, regions, markets, apiKey }) {
+  const supported = ['h2h','totals','spreads'];
+  const bulk = String(markets||'h2h,totals').split(',').map(x=>x.trim()).filter(x=>supported.includes(x)).join(',');
+  const url = 'https://api.the-odds-api.com/v4/sports/' + sport + '/events/' + eventId +
+              '/odds?regions=' + encodeURIComponent(regions) +
+              '&markets=' + encodeURIComponent(bulk) +
+              '&oddsFormat=decimal&apiKey=' + apiKey;
+  const r = await _fetchPony(url);
+  if (!r.ok) return { ok:false, status:r.status, text: await r.text().catch(()=>null) };
+  const obj = await r.json().catch(()=>null);
+  if (!obj || !Array.isArray(obj.bookmakers)) return { ok:false, reason:'no-bookmakers' };
+
+  const agg = {};
+  for (const bm of obj.bookmakers||[]) {
+    for (const m of bm.markets||[]) {
+      if (!agg[m.key]) agg[m.key] = [];
+      for (const out of m.outcomes||[]) {
+        if (m.key === 'h2h') {
+          agg[m.key].push({ book: bm.title || bm.key || 'book', price: out.price, label: out.name });
+        } else if (m.key === 'totals') {
+          const lbl = (out.name ? out.name : '') + ' ' + (out.point != null ? out.point : '');
+          agg[m.key].push({ book: bm.title || bm.key || 'book', price: out.price, label: lbl.trim() });
+        } else {
+          agg[m.key].push({ book: bm.title || bm.key || 'book', price: out.price });
+        }
+      }
+    }
+  }
+  return { ok:true, markets: agg, event: { id: obj.id } };
+}
