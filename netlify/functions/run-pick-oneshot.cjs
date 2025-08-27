@@ -52,7 +52,6 @@ function fmtComienzaEn(iso) {
   return `Comienza en ${m} minutos aprox`;
 }
 
-
 // Normaliza string: minúsculas, sin tildes, solo [a-z0-9 ]
 function _normStr(x) {
   return String(x||'')
@@ -98,47 +97,6 @@ function top3FromMarkets(markets, chosen) {
   if (!mkey || !markets[mkey]?.length) mkey = keys[0];
 
   const arr = (markets[mkey]||[]).slice(0,3);
-  return arr.map((x,i)=>`${i+1}. ${x?.book||'N/A'} — ${x?.price ?? '—'}`).join('\n');
-}
-// Normaliza string: minúsculas, sin tildes, solo [a-z0-9 ]
-function _normStr(x) {
-  return String(x||'')
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-    .replace(/[^a-z0-9]+/g,' ')
-    .trim();
-}
-
-// Mapea nombres ES/variantes → claves oddsapi
-  // chosen: nombre humano (ES) o clave; resolvemos ambos
-  const keys = Object.keys(markets||{});
-  if (!keys.length) return '';
-
-  // Si viene un nombre ES, mapear; si ya es clave válida, usarla
-  let mkey = marketKeyFromName(chosen) || (keys.includes(chosen) ? chosen : null);
-
-  // Si no, intenta deducir por coincidencias aproximadas
-  if (!mkey && chosen) {
-    const n = _normStr(chosen);
-    if (n.includes('resultado')) mkey = 'h2h';
-    else if (n.includes('gol') || n.includes('over') || n.includes('under') || n.includes('total')) mkey = 'totals';
-    else if (n.includes('ambos') || n.includes('btts')) mkey = 'btts';
-  }
-
-  if (!mkey || !markets[mkey]?.length) {
-    // Fallback: usa el primer mercado disponible
-    mkey = keys[0];
-  }
-
-  const arr = (markets[mkey]||[]).slice(0,3);
-  return arr.map((x,i)=>`${i+1}. ${x?.book||'N/A'} — ${x?.price ?? '—'}`).join('\n');
-}
-(markets, chosen) {
-  // markets: { [mercado]: [ {book, price}, ... ] }
-  // chosen: string (mercado) o null
-  const mkey = chosen && markets?.[chosen]?.length ? chosen
-             : Object.keys(markets||{})[0];
-  const arr = (markets?.[mkey]||[]).slice(0,3);
   return arr.map((x,i)=>`${i+1}. ${x?.book||'N/A'} — ${x?.price ?? '—'}`).join('\n');
 }
 function buildMessages({liga, pais, home, away, kickoff_iso, ev, prob, nivel, markets, ap_sugerida, apuestas_extra}) {
