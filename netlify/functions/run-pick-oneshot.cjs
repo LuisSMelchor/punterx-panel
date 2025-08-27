@@ -107,7 +107,7 @@ function classifyByEV(ev) {
   return 'Descartado';
 }
 
-function buildMessages({liga, pais, home, away, kickoff_iso, ev, prob, nivel, markets, ap_sugerida, apuestas_extra}) {
+function buildMessages({liga, pais, home, away, kickoff_iso, ev, prob, nivel, markets, ap_sugerida, apuestas_extra, includeBookiesInFree=false}) {
   const ligaStr = pais ? `${liga} (${pais})` : liga;
   const horaStr = fmtComienzaEn(kickoff_iso);
   const bookies = top3FromMarkets(markets, ap_sugerida?.mercado);
@@ -136,6 +136,8 @@ Hora estimada: ${horaStr}`;
   const evStr = Number.isFinite(ev) ? `${ev}%` : '—';
   const bookiesStr = bookies ? `Top 3 bookies:\n${bookies}` : 'Top 3 bookies: —';
 
+  const bookiesStrFree = includeBookiesInFree ? bookiesStr : 'Top 3 bookies: —';
+
   // Canal (Informativo)
   const canalHeader = '📡 RADAR DE VALOR';
   const canalCta = '👉 Únete al grupo VIP y prueba 15 días gratis.';
@@ -146,7 +148,7 @@ ${datosBasicos}
 Análisis de los expertos (IA):
 ${iaTagline}
 
-${bookiesStr}
+${bookiesStrFree}
 
 ${canalCta}`;
 
@@ -260,44 +262,48 @@ exports.handler = async (event) => {
     const pais = payload.country || payload.fixture?.country || null;
     const kickoff_iso = evt.commence || payload.fixture?.kickoff;
 
-    const { canalMsg, vipMsg } = buildMessages({
-      liga, pais,
-      home: evt.home, away: evt.away,
-      kickoff_iso,
-      ev: evOut,
-      prob: isFiniteNum(prob) ? Math.round(prob*10)/10 : null,
-      nivel,
-      markets: payload.markets || {},
-      ap_sugerida,
-      apuestas_extra
-    });
+    const includeBookiesInFree = String(process.env.FREE_INCLUDE_BOOKIES) === '1';
+const { canalMsg, vipMsg } = buildMessages({
+  liga, pais,
+  home: evt.home, away: evt.away,
+  kickoff_iso,
+  ev: evOut,
+  prob: isFiniteNum(prob) ? Math.round(prob*10)/10 : null,
+  nivel,
+  markets: payload.markets || {},
+  ap_sugerida,
+  apuestas_extra,
+  includeBookiesInFree
+});
 
     // Envío automático a Telegram (si habilitado)
     let send_report = { enabled: false };
-    if (String(process.env.SEND_ENABLED) === '1' && typeof sendTelegramText === 'function') {
+const minVipEv = Number.isFinite(Number(process.env.MIN_VIP_EV)) ? Number(process.env.MIN_VIP_EV) : 15;
+const sendToVip = (evOut != null && evOut >= minVipEv);
+if (String(process.env.SEND_ENABLED) === '1' && typeof sendTelegramText === 'function') {
       const vipId = process.env.TG_VIP_CHAT_ID || null;
       const freeId = process.env.TG_FREE_CHAT_ID || null;
       send_report = { enabled:true, results: [] };
 
-      if (nivel === 'Informativo') {
-        if (freeId) {
-          const r = await sendTelegramText({ chatId: freeId, text: canalMsg });
-          send_report.results.push({ target: 'FREE', ok: r.ok, parts: r.parts, errors: r.errors });
-        } else {
-          send_report.missing_free_id = true;
-        }
-      } else {
-        if (vipId) {
-          const r = await sendTelegramText({ chatId: vipId, text: vipMsg });
-          send_report.results.push({ target: 'VIP', ok: r.ok, parts: r.parts, errors: r.errors });
-        } else {
-          send_report.missing_vip_id = true;
-        }
-      }
+      if (sendToVip) {
+  if (vipId) {
+    const r = await sendTelegramText({ chatId: vipId, text: vipMsg });
+    send_report.results.push({ target: 'VIP', ok: r.ok, parts: r.parts, errors: r.errors });
+  } else {
+    send_report.missing_vip_id = true;
+  }
+} else {
+  if (freeId) {
+    const r = await sendTelegramText({ chatId: freeId, text: canalMsg });
+    send_report.results.push({ target: 'FREE', ok: r.ok, parts: r.parts, errors: r.errors });
+  } else {
+    send_report.missing_free_id = true;
+  }
+}
     }
 
-    const message_vip = (nivel === 'Informativo') ? null : vipMsg;
-    const message_free = (nivel === 'Informativo') ? canalMsg : null;
+    const message_vip = sendToVip ? vipMsg : null;
+const message_free = sendToVip ? null : canalMsg;
 
     return {
       statusCode: 200,
