@@ -51,7 +51,59 @@ function fmtComienzaEn(iso) {
   const m = minutesFromNow(iso);
   return `Comienza en ${m} minutos aprox`;
 }
+
+// Normaliza string: minúsculas, sin tildes, solo [a-z0-9 ]
+function _normStr(x) {
+  return String(x||'')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9]+/g,' ')
+    .trim();
+}
+
+// Mapea nombres ES/variantes → claves oddsapi
+function marketKeyFromName(name) {
+  const n = _normStr(name);
+  if (!n) return null;
+
+  // H2H / Resultado Final / 1X2
+  if (/(resultados*final|1x2|moneyline|ganador|h2h|resultado$|h 2 h)/.test(n)) return 'h2h';
+
+  // Totales / Más-Menos / Over-Under
+  if (/(total(es)?|mas/?menos|mas menos|over|under|o/u|goles|.+2.5|.+3.5|.+1.5)/.test(n)) return 'totals';
+
+  // Ambos marcan / BTTS
+  if (/(amboss*equiposs*marcan|amboss*marcan|btts)/.test(n)) return 'btts';
+
+  return null;
+}
+
 function top3FromMarkets(markets, chosen) {
+  // markets: { [key]: [ {book, price, label?}, ... ] }
+  // chosen: nombre humano (ES) o clave; resolvemos ambos
+  const keys = Object.keys(markets||{});
+  if (!keys.length) return '';
+
+  // Si viene un nombre ES, mapear; si ya es clave válida, usarla
+  let mkey = marketKeyFromName(chosen) || (keys.includes(chosen) ? chosen : null);
+
+  // Si no, intenta deducir por coincidencias aproximadas
+  if (!mkey && chosen) {
+    const n = _normStr(chosen);
+    if (n.includes('resultado')) mkey = 'h2h';
+    else if (n.includes('gol') || n.includes('over') || n.includes('under') || n.includes('total')) mkey = 'totals';
+    else if (n.includes('ambos') || n.includes('btts')) mkey = 'btts';
+  }
+
+  if (!mkey || !markets[mkey]?.length) {
+    // Fallback: usa el primer mercado disponible
+    mkey = keys[0];
+  }
+
+  const arr = (markets[mkey]||[]).slice(0,3);
+  return arr.map((x,i)=>`${i+1}. ${x?.book||'N/A'} — ${x?.price ?? '—'}`).join('\n');
+}
+(markets, chosen) {
   // markets: { [mercado]: [ {book, price}, ... ] }
   // chosen: string (mercado) o null
   const mkey = chosen && markets?.[chosen]?.length ? chosen
@@ -92,14 +144,23 @@ Hora estimada: ${horaStr}`;
 
   // Mensaje Canal (10–14.9% = Informativo) — ahora con bookies y tagline IA
   const canalHeader = '📡 RADAR DE VALOR';
+const canalCta = '👉 Únete al grupo VIP y prueba 15 días gratis.';
 
-  const canalCta = '👉 Únete al grupo VIP y prueba 15 días gratis.';
-  const canalMsg =
+// Frase IA breve a partir de la sugerencia
+const sel = ap_sugerida?.seleccion ? String(ap_sugerida.seleccion) : '';
+const cuo = (ap_sugerida?.cuota != null) ? `${ap_sugerida.cuota}` : '—';
+const evStrBrief = (Number.isFinite(ev) ? `${ev}%` : '—');
+const probStrBrief = (Number.isFinite(prob) ? `${prob}%` : '—');
+const iaTagline = sel ? `${sel} @ ${cuo} | EV ${evStrBrief} | P(${probStrBrief})` : 'Valor detectado por IA';
+
+const canalMsg =
 `${canalHeader}
 ${datosBasicos}
 
-Análisis de los expertos: (IA)
-Frase IA: (generada automáticamente)
+Análisis de los expertos (IA):
+${iaTagline}
+
+${bookiesStr}
 
 ${canalCta}`;
 
