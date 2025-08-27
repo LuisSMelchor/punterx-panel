@@ -1,77 +1,82 @@
 'use strict';
-const https = require('https');
 
-// --- Caller de OpenAI (one-shot). Si no hay OPENAI_API_KEY, devuelve null.
-async function callOneShotOpenAI(prompt) {
-  const key = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-  if (!key) return null;
-  const body = JSON.stringify({
-    model,
-    messages: [
-      { role: 'system', content: 'Responde exclusivamente con un JSON. Sin texto adicional.' },
-      { role: 'user', content: prompt }
-    ],
-    temperature: 0.2,
-    max_tokens: 500
-  });
-  return new Promise((resolve, reject) => {
-    const req = https.request('https://api.openai.com/v1/chat/completions', {
+// Usa fetch nativo (Node 18+). No expongas la KEY.
+const OPENAI_URL = process.env.OPENAI_URL || 'https://api.openai.com/v1/chat/completions';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-thinking'; // ajustable
+const TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 20000);
+
+/** Llama a OpenAI con un prompt one-shot y espera SOLO JSON en content */
+async function callOpenAIOneShot({ prompt }) {
+  if (!process.env.OPENAI_API_KEY || !prompt) return null;
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort('timeout'), TIMEOUT_MS);
+  try {
+    const res = await fetch(OPENAI_URL, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body)
-      }
-    }, (res) => {
-      let data = '';
-      res.on('data', d => data += d);
-      res.on('end', () => {
-        try {
-          const j = JSON.parse(data);
-          const txt = j?.choices?.[0]?.message?.content?.trim() || '';
-          resolve(txt || null);
-        } catch (e) {
-          reject(e);
-        }
-      });
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: 'Responde SOLO con un JSON válido. Sin texto extra.' },
+          { role: 'user', content: prompt }
+        ]
+      }),
+      signal: ctrl.signal
     });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
-
-// --- Parse + validación mínima de JSON
-function safeJson(str) {
-  try {
-    const j = typeof str === 'string' ? JSON.parse(str) : (str || {});
-    if (!j || typeof j !== 'object') return null;
-    // Chequeos mínimos de campos esperados
-    if (!('apuesta_sugerida' in j)) return null;
-    if (!('probabilidad_estim' in j)) return null;
-    if (!('ev_estimado' in j)) j.ev_estimado = null;  // recalculamos si hace falta
-    if (!('apuestas_extra' in j)) j.apuestas_extra = [];
-    return j;
-  } catch {
+    const data = await res.json();
+    const raw = data?.choices?.[0]?.message?.content?.trim();
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      // Intento de reparación mínima si vino con código o backticks
+      const fixed = raw.replace(/^```json\s*|\s*```$/g, '');
+      return JSON.parse(fixed);
+    }
+  } catch (e) {
+    if (Number(process.env.DEBUG_TRACE)) console.log('[AI] error', e?.message || e);
     return null;
+  } finally {
+    clearTimeout(to);
   }
 }
 
-// --- EV (%): (p/100 * cuota - 1) * 100
-function computeEV(apuesta, probPct) {
-  const cuota = Number(apuesta?.cuota);
-  const p = Number(probPct);
-  if (!Number.isFinite(cuota) || !Number.isFinite(p)) return null;
-  return (p/100 * cuota - 1) * 100;
+/** Valida forma mínima del JSON de la IA */
+function validateAIJson(o = {}) {
+  const okNum = (x) => x === null || typeof x === 'number';
+  const okStr = (x) => typeof x === 'string' && x.length > 0;
+  const main = o?.apuesta_sugerida;
+  if (!main || !okStr(main.mercado) || !okStr(main.seleccion) || !okNum(main.cuota)) return false;
+  if (o.apuestas_extra && !Array.isArray(o.apuestas_extra)) return false;
+  return true;
 }
 
-// --- Clasificación por niveles (VIP/Gratis/Descartado) según EV
-function classifyEV(evPct) {
-  if (!Number.isFinite(evPct)) return 'descartado';
-  if (evPct >= 15) return 'vip';
-  if (evPct >= 10) return 'free';
-  return 'descartado';
+/** EV % = (p*odds - 1)*100, con p en [0,1] */
+function computeEV(probPct, odds) {
+  if (typeof probPct !== 'number' || typeof odds !== 'number') return null;
+  const p = Math.max(0, Math.min(1, probPct / 100));
+  const ev = (p * odds - 1) * 100;
+  return Math.round(ev * 100) / 100;
 }
 
-module.exports = { callOneShotOpenAI, safeJson, computeEV, classifyEV };
+/** Clasificación por niveles según tus umbrales */
+function classifyByEV(ev) {
+  if (ev == null) return 'Informativo';
+  if (ev >= 40) return 'Ultra Elite';
+  if (ev >= 30) return 'Élite Mundial';
+  if (ev >= 20) return 'Avanzado';
+  if (ev >= 15) return 'Competitivo';
+  if (ev >= 10) return 'Informativo';
+  return 'Descartar';
+}
+
+module.exports = {
+  callOpenAIOneShot,
+  validateAIJson,
+  computeEV,
+  classifyByEV
+};
