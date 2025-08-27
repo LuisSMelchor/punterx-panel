@@ -33,7 +33,7 @@ async function callOpenAIOnce({ prompt }) {
   });
   if (!res.ok) {
     const text = await res.text().catch(()=>null);
-    return { ok:false, reason:'openai-http-error', raw:text };
+    return { ok:false, reason:'openai-http-error', status: res.status, statusText: res.statusText, raw:text };
   }
   const json = await res.json().catch(()=>null);
   const content = json?.choices?.[0]?.message?.content ?? '';
