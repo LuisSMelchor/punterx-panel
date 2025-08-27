@@ -1,4 +1,7 @@
 'use strict';
+
+const _fetchPony = (...args) =>
+  (global.fetch ? global.fetch(...args) : import('node-fetch').then(({default: f}) => f(...args)));
 const { callOpenAIOnce } = require('./ai.cjs');
 const https = require('https');
 /**
@@ -480,3 +483,49 @@ async function getTop3BookiesForEvent(evt = {}) {
   }
 }
 
+
+
+async function oddsFallbackByNames({ sport, regions, markets, apiKey, home, away }) {
+  const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=${regions}&markets=${markets}&oddsFormat=decimal&dateFormat=iso&apiKey=${apiKey}`;
+  const r = await _fetchPony(url);
+  if (!r.ok) return { ok:false, status:r.status, text: await r.text().catch(()=>null) };
+  const arr = await r.json().catch(()=>null);
+  if (!Array.isArray(arr) || !arr.length) return { ok:false, reason:'no-events' };
+
+  // normalizar nombres simples
+  const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const H = norm(home), A = norm(away);
+
+  // busca el evento más parecido por nombres
+  let best = null, bestScore = -1;
+  for (const ev of arr) {
+    const h = norm(ev.home_team), a = norm(ev.away_team);
+    let score = 0;
+    if (H && h.includes(H)) score += 1;
+    if (A && a.includes(A)) score += 1;
+    if (h === H) score += 2;
+    if (a === A) score += 2;
+    if (score > bestScore) { bestScore = score; best = ev; }
+  }
+  if (!best) return { ok:false, reason:'no-match' };
+
+  // armar markets_top3
+  const marketsMap = {};
+  for (const b of (best.bookmakers||[])) {
+    for (const m of (b.markets||[])) {
+      const key = m.key; // 'h2h', 'totals', 'btts'
+      for (const o of (m.outcomes||[])) {
+        const label = o.name || o.description || o.point || 'sel';
+        const price = o.price;
+        const book = b.title || b.key;
+        marketsMap[key] = marketsMap[key] || [];
+        marketsMap[key].push({ book, label, price });
+      }
+    }
+  }
+  for (const k of Object.keys(marketsMap)) {
+    marketsMap[k].sort((a,b)=> (b.price||0)-(a.price||0));
+    marketsMap[k] = marketsMap[k].slice(0,3);
+  }
+  return { ok:true, event: { id: best.id, home: best.home_team, away: best.away_team, commence: best.commence_time }, markets: marketsMap };
+}
