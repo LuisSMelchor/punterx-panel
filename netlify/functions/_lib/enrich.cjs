@@ -337,3 +337,18 @@ async function runOneShotAI({ prompt, payload }) {
     }
   };
 }
+
+
+/* __EXPORT_FIX_ONESHOT__ */
+try {
+  // Asegura que existen referencias (no falla si ya están)
+  if (typeof oneShotPayload !== 'function') { global.oneShotPayload = oneShotPayload; }
+  if (typeof composeOneShotPrompt !== 'function') { global.composeOneShotPrompt = composeOneShotPrompt; }
+  if (typeof runOneShotAI !== 'function') { global.runOneShotAI = runOneShotAI; }
+  module.exports = {
+    ...(module.exports || {}),
+    oneShotPayload: (typeof oneShotPayload === 'function') ? oneShotPayload : global.oneShotPayload,
+    composeOneShotPrompt: (typeof composeOneShotPrompt === 'function') ? composeOneShotPrompt : global.composeOneShotPrompt,
+    runOneShotAI: (typeof runOneShotAI === 'function') ? runOneShotAI : global.runOneShotAI
+  };
+} catch(_) {}
