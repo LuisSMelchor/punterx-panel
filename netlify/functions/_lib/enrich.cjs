@@ -230,7 +230,7 @@ function buildOneShotPayload({ evt = {}, match = {}, enriched = {} } = {}) {
   const markets = enriched?.markets_top3 || {};
 
   // Paquete canónico y compacto
-  payload = await ensureMarketsWithOddsAPI(payload, evt);
+
   return {
     fixture: fx,
     markets,
@@ -243,7 +243,10 @@ function buildOneShotPayload({ evt = {}, match = {}, enriched = {} } = {}) {
   };
 }
 
-async function oneShotPayload({ evt, match, fixture }) {
+async function oneShotPayload({ evt, match, fixture 
+  // Ensure markets via OddsAPI before returning
+  payload = await ensureMarketsWithOddsAPI(payload, evt);
+}) {
   // Si ya viene enriched desde fuera, respétalo:
   let enriched;
   if (fixture && typeof fixture === 'object') {
