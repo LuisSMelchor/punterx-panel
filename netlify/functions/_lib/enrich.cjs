@@ -589,6 +589,7 @@ async function oddsFallbackByNames({ sport, regions, markets, apiKey, home, away
 
 
 
+
 async function _oddsFindEventByNames({ sport, apiKey, home, away }) {
   const url = 'https://api.the-odds-api.com/v4/sports/' + sport + '/events?apiKey=' + apiKey;
   const r = await _fetchPony(url);
@@ -598,17 +599,31 @@ async function _oddsFindEventByNames({ sport, apiKey, home, away }) {
 
   const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
   const H = norm(home), A = norm(away);
-  let best = null, bestScore = -1;
+
+  // solo aceptamos eventos que contengan AMBOS equipos (en cualquier orden)
+  let exact = null;
   for (const ev of arr) {
     const h = norm(ev.home_team), a = norm(ev.away_team);
-    let score = 0;
-    if (h && (H.includes(h) || h.includes(H))) score++;
-    if (a && (A.includes(a) || a.includes(A))) score++;
-    if (score > bestScore) { best = ev; bestScore = score; }
+    const dir1 = h.includes(H) && a.includes(A);
+    const dir2 = h.includes(A) && a.includes(H);
+    if (dir1 || dir2) {
+      exact = ev;
+      break; // primer match exacto
+    }
   }
-  if (!best) return { ok:false, reason:'no-match' };
-  return { ok:true, event: { id: best.id, sport: best.sport_key || sport, commence: best.commence_time, home: best.home_team, away: best.away_team } };
+  if (!exact) return { ok:false, reason:'no-exact-both-names' };
+
+  return {
+    ok: true,
+    event: {
+      id: exact.id,
+      home: exact.home_team,
+      away: exact.away_team,
+      commence: exact.commence_time
+    }
+  };
 }
+
 
 async function _oddsEventOdds({ sport, eventId, regions, markets, apiKey }) {
   const supported = ['h2h','totals','spreads'];
