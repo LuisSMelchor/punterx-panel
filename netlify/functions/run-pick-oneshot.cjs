@@ -219,8 +219,17 @@ exports.handler = async (event) => {
     };
 
     const payload = await oneShotPayload({ evt, match, fixture });
-
-    // Prompt IA y llamada
+if (Number(process.env.DEBUG_TRACE)) {
+  try {
+    const keys = Object.keys(payload.markets || {});
+    console.log('[DEBUG] odds_source:', payload.meta && payload.meta.odds_source);
+    console.log('[DEBUG] markets keys:', keys);
+    for (const k of keys) {
+      console.log('[DEBUG] sample', k, (payload.markets[k]||[]).slice(0,3));
+    }
+  } catch (e) { console.log('[DEBUG] markets print error:', e && e.message); }
+}
+// Prompt IA y llamada
     const prompt = composeOneShotPrompt(payload);
     const ai = await callOpenAIOnce({ prompt });
 
