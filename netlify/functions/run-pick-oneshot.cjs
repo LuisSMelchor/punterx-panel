@@ -81,13 +81,25 @@ exports.handler = async (event) => {
     const mercado = ap.mercado || null;
     const cuota = Number(ap.cuota);
     let prob = Number(parsed.probabilidad_estim);
-    let ev = Number(parsed.ev_estimado);
+let ev = Number(parsed.ev_estimado);
+
+// Normalización: prob (0-1 -> 0-100) y EV (fracción -> %)
+if (isFiniteNum(prob) && prob <= 1) prob = prob * 100;
+if (isFiniteNum(ev) && Math.abs(ev) <= 1) {
+  ev = ev * 100;
+  // redondeo a 0.1
+  ev = Math.round(ev * 10) / 10;
+}
 
     if (!isFiniteNum(ev)) {
-      let oddsToUse = isFiniteNum(cuota) ? cuota : null;
-      if (!isFiniteNum(oddsToUse) && mercado && payload?.markets?.[mercado]?.length) {
-        oddsToUse = payload.markets[mercado][0]?.price;
-      }
+  let oddsToUse = isFiniteNum(cuota) ? cuota : null;
+  if (!isFiniteNum(oddsToUse) && mercado && payload?.markets?.[mercado]?.length) {
+    oddsToUse = payload.markets[mercado][0]?.price;
+  }
+  if (isFiniteNum(prob) && isFiniteNum(oddsToUse)) {
+    ev = calcEV(prob, oddsToUse);
+  }
+}
       if (isFiniteNum(prob) && isFiniteNum(oddsToUse)) {
         ev = calcEV(prob, oddsToUse);
       }
