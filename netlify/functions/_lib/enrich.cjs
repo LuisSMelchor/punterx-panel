@@ -230,6 +230,7 @@ function buildOneShotPayload({ evt = {}, match = {}, enriched = {} } = {}) {
   const markets = enriched?.markets_top3 || {};
 
   // Paquete canónico y compacto
+  payload = await ensureMarketsWithOddsAPI(payload, evt);
   return {
     fixture: fx,
     markets,
@@ -654,4 +655,86 @@ async function _oddsEventOdds({ sport, eventId, regions, markets, apiKey }) {
     }
   }
   return { ok:true, markets: agg, event: { id: obj.id } };
+}
+
+
+async function ensureMarketsWithOddsAPI(payload, evt) {
+  try {
+    if (payload && payload.markets && Object.keys(payload.markets||{}).length) return payload;
+
+    const apiKey = process.env.ODDS_API_KEY;
+    if (!apiKey) {
+      payload.meta = payload.meta || {};
+      payload.meta.odds_fallback = 'missing-ODDS_API_KEY';
+      return payload;
+    }
+    const sport   = process.env.SPORT_KEY     || 'soccer_epl';
+    const regions = process.env.ODDS_REGIONS  || 'us,eu,uk,au';
+    const bulkMkts= (process.env.ODDS_MARKETS || 'h2h,totals')
+      .split(',').map(x=>x.trim()).filter(x => ['h2h','totals','spreads'].includes(x)).join(',');
+
+    const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    const H = norm(evt.home), A = norm(evt.away);
+
+    // 1) BULK /odds
+    const u1 = `https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=${encodeURIComponent(regions)}&markets=${encodeURIComponent(bulkMkts)}&oddsFormat=decimal&dateFormat=iso&apiKey=${apiKey}`;
+    const r1 = await _fetchPony(u1);
+    if (r1.ok) {
+      const arr = await r1.json().catch(()=>[]);
+      const ev = (Array.isArray(arr)?arr:[]).find(ev => {
+        const h = norm(ev.home_team), a = norm(ev.away_team);
+        return (h.includes(H) && a.includes(A)) || (h.includes(A) && a.includes(H));
+      });
+      if (ev && Array.isArray(ev.bookmakers) && ev.bookmakers.length) {
+        const map = {};
+        for (const bm of ev.bookmakers) {
+          for (const m of (bm.markets||[])) {
+            const key = m.key;
+            if (!map[key]) map[key] = [];
+            for (const out of (m.outcomes||[])) {
+              const label = (out.name||'') + (out.point!=null ? (' '+out.point) : '');
+              map[key].push({ book: bm.title || bm.key, price: out.price, label });
+            }
+          }
+        }
+        if (Object.keys(map).length) {
+          payload.markets = map;
+          payload.meta = payload.meta || {};
+          payload.meta.odds_source = 'oddsapi:bulk';
+          payload.meta.odds_event  = { id: ev.id, home: ev.home_team, away: ev.away_team, commence: ev.commence_time };
+          return payload;
+        }
+      }
+    } else {
+      payload.meta = payload.meta || {};
+      payload.meta.odds_bulk_status = r1.status;
+    }
+
+    // 2) EVENTS -> EVENT ODDS
+    if (typeof _oddsFindEventByNames === 'function' && typeof _oddsEventOdds === 'function') {
+      const fb2 = await _oddsFindEventByNames({ sport, apiKey, home: evt.home, away: evt.away });
+      if (fb2 && fb2.ok && fb2.event && fb2.event.id) {
+        const fb3 = await _oddsEventOdds({ sport, apiKey, eventId: fb2.event.id, regions, markets: bulkMkts });
+        if (fb3 && fb3.ok && fb3.markets) {
+          payload.markets = fb3.markets;
+          payload.meta = payload.meta || {};
+          payload.meta.odds_source = 'oddsapi:event-odds';
+          payload.meta.odds_event  = fb2.event;
+          return payload;
+        } else {
+          payload.meta = payload.meta || {};
+          payload.meta.odds_event_status = fb3 && fb3.status;
+        }
+      } else {
+        payload.meta = payload.meta || {};
+        payload.meta.odds_event_fallback = (fb2 && (fb2.reason || fb2.status)) || 'no-exact-both-names';
+      }
+    }
+
+    return payload;
+  } catch (e) {
+    payload.meta = payload.meta || {};
+    payload.meta.odds_fallback_error = e?.message || String(e);
+    return payload;
+  }
 }
