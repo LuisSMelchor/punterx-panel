@@ -352,3 +352,14 @@ try {
     runOneShotAI: (typeof runOneShotAI === 'function') ? runOneShotAI : global.runOneShotAI
   };
 } catch(_) {}
+
+
+/* __EXPORTS_CANONICAL__ */
+try {
+  const __m = (typeof module !== 'undefined' && module.exports) ? module.exports : {};
+  module.exports = Object.assign({}, __m, {
+    oneShotPayload: (typeof oneShotPayload === 'function') ? oneShotPayload : undefined,
+    composeOneShotPrompt: (typeof composeOneShotPrompt === 'function') ? composeOneShotPrompt : undefined,
+    runOneShotAI: (typeof runOneShotAI === 'function') ? runOneShotAI : undefined
+  });
+} catch(_e) {}
