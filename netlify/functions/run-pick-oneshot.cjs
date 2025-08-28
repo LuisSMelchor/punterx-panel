@@ -471,7 +471,7 @@ return {
 return { 
 
 statusCode: (String(process.env.ALLOW_500_ONESHOT)==='1'?500:200), body: JSON.stringify({
-   send_report: (() => {
+send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
     enabled,
@@ -482,7 +482,13 @@ statusCode: (String(process.env.ALLOW_500_ONESHOT)==='1'?500:200), body: JSON.st
   if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
   if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
-})(), ok:false, reason:'server-error', error: e?.message || String(e) }) };
+})(),
+payload: (typeof payload !== 'undefined' ? payload : null),
+ok: false,
+reason: 'server-error',
+error: e?.message || String(e),
+meta: (typeof payload !== 'undefined' && payload && payload.meta) ? payload.meta : {}
+}) };
   }
 };
 
