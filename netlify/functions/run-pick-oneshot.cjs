@@ -340,28 +340,61 @@ sendTelegramText({ chatId: vipId, text: vipMsg });
 message_free = sendToVip ? null : canalMsg;
 
   // === FINAL_GATE_START ===
-  (() => {
-    const vipMin = Number(process.env.MIN_VIP_EV || 15);
-    const hasBookies = !!(typeof bookies !== 'undefined' && String(bookies||'').trim().length);
+(() => {
+  const vipMin = Number(process.env.MIN_VIP_EV || '15');
 
-    let target = 'none';
-    if (!hasBookies) {
-      // Sin odds: nunca VIP. FREE sólo si nivel == Informativo.
-      target = (nivel === 'Informativo') ? 'free' : 'none';
-    } else {
-      if (nivel === 'Informativo') target = 'free';
-      else if (evOut >= vipMin)   target = 'vip';
+  // 0) EV robusto (acepta evOut, ev, ev_estimado %, ai_json.ev_estimado fracción)
+  let evNum = 0;
+  try {
+    if (typeof evOut !== 'undefined') evNum = Number(evOut);
+    else if (typeof ev !== 'undefined') evNum = Number(ev);
+    else if (typeof ev_estimado !== 'undefined') evNum = Number(ev_estimado);
+    else if (typeof ai_json !== 'undefined' && ai_json && ai_json.ev_estimado != null) {
+      const v = Number(ai_json.ev_estimado);
+      evNum = (v <= 1 ? v * 100 : v);
     }
+  } catch (_) {}
 
-    const clean = (txt) => String(txt||'')
-      .replace(/\n{3,}/g,'\n\n')
-      .replace(/[ \t]+\n/g,'\n')
+  // 1) ¿hay bookies?
+  const hasBookies = !!(typeof bookies !== 'undefined' && String(bookies || '').trim().length);
+
+  // 2) Determinar destino
+  let target = 'none';
+  if (!hasBookies) {
+    // Sin odds: nunca VIP. FREE sólo si nivel == Informativo.
+    target = (nivel === 'Informativo') ? 'free' : 'none';
+  } else {
+    if (nivel === 'Informativo')      target = 'free';
+    else if (evNum >= vipMin)         target = 'vip';
+    else                              target = 'none';
+  }
+
+  // 3) Limpieza y FREE sin bookies
+  const clean = (txt) => String(txt || '')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .trimEnd();
+  const stripBookiesForFree = (txt) => {
+    if (!txt) return txt;
+    return txt
+      .replace(/(?:\n+)?Top\s*3\s*bookies[\s\S]*$/i, '')
+      .replace(/\n{3,}/g, '\n\n')
       .trimEnd();
+  };
 
-    message_free = (target === 'free') ? clean(canalMsg) : null;
-    message_vip  = (target === 'vip')  ? clean(vipMsg)   : null;
-  })();
-  // === FINAL_GATE_END ===
+  // 4) Asignación final (sin redeclarar)
+  if (target === 'free') {
+    message_free = clean(stripBookiesForFree(canalMsg));
+    message_vip  = null;
+  } else if (target === 'vip') {
+    message_vip  = clean(vipMsg);
+    message_free = null;
+  } else {
+    message_free = null;
+    message_vip  = null;
+  }
+})();
+ // === FINAL_GATE_END ===
 return {
       statusCode: 200,
       body: JSON.stringify({
