@@ -460,7 +460,7 @@ return {
   } catch (e) {
 return { 
 
-statusCode: 500, body: JSON.stringify({
+statusCode: (String(process.env.ALLOW_500_ONESHOT)==='1'?500:200), body: JSON.stringify({
    send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {

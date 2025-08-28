@@ -20,7 +20,8 @@
     "test:markets": "node tests/market.mapping.spec.js",
     "test:oneshot-meta": "node tests/oneshot.meta.spec.js",
     "verify:all": "npm run verify:send-report && npm run test:oneshot && npm run test:oneshot-wire && npm run test:markets && npm run test:oneshot-meta",
-    "manual:oneshot": "node tests/oneshot.manual.js"
+    "manual:oneshot": "node tests/oneshot.manual.js",
+    "manual:dry": "DISABLE_OPENAI=1 ODDS_ENRICH_ONESHOT=0 node tests/oneshot.manual.js"
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
