@@ -198,6 +198,10 @@ ${vipDisclaimer}`;
 }
 
 exports.handler = async (event) => {
+  // S1.2-TDZ: mensajes ruteo (declaración única al inicio del handler)
+  message_free = null;
+  message_vip = null;
+
   try {
     const qs = event?.queryStringParameters || {};
     const evt = {
@@ -333,8 +337,8 @@ sendTelegramText({ chatId: vipId, text: vipMsg });
 }
     }
 
-    let message_vip = sendToVip ? vipMsg : null;
-let message_free = sendToVip ? null : canalMsg;
+    message_vip = sendToVip ? vipMsg : null;
+message_free = sendToVip ? null : canalMsg;
 
   // === FINAL_GATE_START ===
   (() => {
