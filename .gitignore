@@ -15,3 +15,5 @@ tools/*.js
 # local backups & hooks
 netlify/functions/run-pick-oneshot.cjs.bak_*
 .githooks/
+# more local backups under _lib
+netlify/functions/_lib/*.bak*
