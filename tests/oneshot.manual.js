@@ -5,7 +5,7 @@ const r = await handler({ queryStringParameters: {
 home: process.env.HOME_TEAM || 'Chelsea',
 away: process.env.AWAY_TEAM || 'Fulham',
 league: process.env.LEAGUE || 'Premier League',
-commence: new Date(Date.now() + 90601000).toISOString()
+commence: new Date(Date.now() + 90*60*1000).toISOString()
 }});
 const b = JSON.parse(r.body);
 
