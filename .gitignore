@@ -12,3 +12,6 @@ tools/*.js
 
 # editor backups
 *.bak
+# local backups & hooks
+netlify/functions/run-pick-oneshot.cjs.bak_*
+.githooks/

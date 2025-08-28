@@ -13,7 +13,8 @@
     "test:send-report": "node tests/send_report.smoke.js",
     "lint:send-report": "bash tests/check_send_report_grep.sh",
     "verify:send-report": "npm run lint:send-report && npm run test:send-report && npm run test:send-report-edges",
-    "test:send-report-edges": "node tests/send_report.edges.js"
+    "test:send-report-edges": "node tests/send_report.edges.js",
+    "test:oneshot": "node tests/oneshot.enrich.smoke.js"
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
