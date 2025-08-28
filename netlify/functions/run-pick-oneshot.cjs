@@ -223,6 +223,10 @@ exports.handler = async (event) => {
 };
 
     let payload = await oneShotPayload({ evt, match, fixture });
+    // Ensure meta bag exists + annotate safe 'skipped' flags
+    payload.meta = payload.meta || {};
+    if (String(process.env.DISABLE_OPENAI) === '1') payload.meta.ai = payload.meta.ai || 'skipped';
+    if (String(process.env.ODDS_ENRICH_ONESHOT) !== '1') payload.meta.enrich_attempt = payload.meta.enrich_attempt || 'skipped';
 // Enriquecimiento OddsAPI (opt-in): telemetría mínima + try/catch seguro
 if (String(process.env.ODDS_ENRICH_ONESHOT) === '1') {
   payload.meta = { ...(payload.meta||{}), enrich_attempt: 'oddsapi:events' };
