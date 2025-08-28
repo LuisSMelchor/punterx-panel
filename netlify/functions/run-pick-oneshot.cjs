@@ -262,6 +262,7 @@ ok:false,
           statusText: ai.statusText,
           raw: ai.raw,
           payload,
+      meta: payload && payload.meta ? payload.meta : undefined,
           prompt
         })
       };
@@ -281,7 +282,8 @@ ok:false,
   if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
   if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
-})(), ok:false, reason:'invalid-ai-json', payload, prompt }) };
+})(), ok:false, reason:'invalid-ai-json', payload,
+      meta: payload && payload.meta ? payload.meta : undefined, prompt }) };
     }
 
     // Normalización
