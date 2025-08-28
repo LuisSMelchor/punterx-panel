@@ -11,7 +11,8 @@ const b = JSON.parse(r.body);
 
 const keys = b?.markets ? Object.keys(b.markets) : (b?.markets_top3 ? Object.keys(b.markets_top3) : []);
 console.log('statusCode:', r.statusCode);
-console.log('meta:', b?.meta);
+const meta = b?.meta || b?.payload?.meta;
+console.log('meta:', meta);
 console.log('markets keys:', keys);
 console.log('has_free:', !!b.message_free, 'has_vip:', !!b.message_vip);
 if (b.message_free) console.log('\n--- FREE ---\n' + b.message_free);
