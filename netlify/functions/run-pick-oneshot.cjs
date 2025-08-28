@@ -242,7 +242,8 @@ if (Number(process.env.DEBUG_TRACE)) {
       return {
         statusCode: 200,
         body: JSON.stringify({
-          ok:false,
+          send_report: { enabled: (String(process.env.SEND_ENABLED)==='1'), results: [], missing_vip_id: ((String(process.env.SEND_ENABLED)==='1') && !!message_vip && !vipId), missing_free_id: ((String(process.env.SEND_ENABLED)==='1') && !!message_free && !freeId) },
+ok:false,
           reason: ai.reason,
           status: ai.status,
           statusText: ai.statusText,
