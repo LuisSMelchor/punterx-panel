@@ -223,7 +223,9 @@ exports.handler = async (event) => {
 };
 
     let payload = await oneShotPayload({ evt, match, fixture });
-        payload.meta = payload.meta || {};
+            if (!payload || typeof payload !== 'object') payload = {};
+    payload.meta = (payload.meta && typeof payload.meta === 'object') ? payload.meta : {};
+payload.meta = payload.meta || {};
 // Ensure meta bag exists + annotate safe 'skipped' flags
     payload.meta = payload.meta || {};
     if (String(process.env.DISABLE_OPENAI) === '1') payload.meta.ai = payload.meta.ai || 'skipped';
