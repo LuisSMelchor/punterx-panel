@@ -223,7 +223,8 @@ exports.handler = async (event) => {
 };
 
     let payload = await oneShotPayload({ evt, match, fixture });
-    // Ensure meta bag exists + annotate safe 'skipped' flags
+        payload.meta = payload.meta || {};
+// Ensure meta bag exists + annotate safe 'skipped' flags
     payload.meta = payload.meta || {};
     if (String(process.env.DISABLE_OPENAI) === '1') payload.meta.ai = payload.meta.ai || 'skipped';
     if (String(process.env.ODDS_ENRICH_ONESHOT) !== '1') payload.meta.enrich_attempt = payload.meta.enrich_attempt || 'skipped';
@@ -232,7 +233,8 @@ if (String(process.env.ODDS_ENRICH_ONESHOT) === '1') {
   payload.meta = { ...(payload.meta||{}), enrich_attempt: 'oddsapi:events' };
   try {
     payload = await ensureMarketsWithOddsAPI(payload, evt);
-    payload.meta = { ...(payload.meta||{}), enrich_status: 'ok' };
+        payload.meta = payload.meta || {};
+payload.meta = { ...(payload.meta||{}), enrich_status: 'ok' };
   } catch (e) {
     if (Number(process.env.DEBUG_TRACE) === 1) {
       console.log('[ENRICH] ensureMarketsWithOddsAPI error:', e?.message || String(e));
