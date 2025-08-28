@@ -199,9 +199,8 @@ ${vipDisclaimer}`;
 
 exports.handler = async (event) => {
   // S1.2-TDZ: mensajes ruteo (declaración única al inicio del handler)
-  message_free = null;
-  message_vip = null;
-
+  let message_free = null;
+  let message_vip = null;
   try {
     const qs = event?.queryStringParameters || {};
     const evt = {
