@@ -17,7 +17,9 @@
     "test:oneshot": "node tests/oneshot.enrich.smoke.js",
     "test:oneshot-int": "node tests/oneshot.enrich.integration.js",
     "test:oneshot-wire": "node tests/oneshot.wire.integration.js",
-    "test:markets": "node tests/market.mapping.spec.js"
+    "test:markets": "node tests/market.mapping.spec.js",
+    "test:oneshot-meta": "node tests/oneshot.meta.spec.js",
+    "verify:all": "npm run verify:send-report && npm run test:oneshot && npm run test:oneshot-wire && npm run test:markets && npm run test:oneshot-meta"
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
