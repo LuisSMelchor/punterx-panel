@@ -430,7 +430,6 @@ return {
     };
   } catch (e) {
 
-
   // S1.3: flags send_report coherentes con mensajes presentes (scope del handler)
   const _sendEnabled     = String(process.env.SEND_ENABLED) === '1';
   const _hasVipMsg       = !!message_vip;
