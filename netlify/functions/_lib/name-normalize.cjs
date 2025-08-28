@@ -1,43 +1,46 @@
 // netlify/functions/_lib/name-normalize.cjs
 'use strict';
 
-// Quita diacríticos y normaliza a minúsculas
-function stripDiacritics(s = '') {
-  return String(s)
-    .normalize('NFD')
-    .replace(/\p{M}+/gu, '')        // marcas diacríticas
-    .toLowerCase();
+/**
+ * Normaliza nombres de equipos de forma genérica (sin alias fijos).
+ * - Quita diacríticos (NFKD + \p{M})
+ * - Plegado de compatibilidad para letras especiales (ø→o, ß→ss, æ→ae, …)
+ * - Elimina tokens genéricos de clubes (fc, if, bk, sc, club, sporting, etc.) SOLO como palabras completas
+ * - Pasa a minúsculas, elimina puntuación simple y colapsa espacios
+ */
+
+function stripDiacritics(s='') {
+  // NFKD separa letras de marcas combinantes; \p{M} = marks
+  return String(s).normalize('NFKD').replace(/\p{M}+/gu, '');
 }
 
-// Elimina sufijos comunes de clubes al FINAL del nombre (conservador)
-function stripClubSuffixes(s = '') {
-  // tokens típicos en múltiples ligas/idiomas
-  const suffixes = [
-    'fc','cf','afc','sc','ac','as','cd','ca','ud','sad','fk','bk','ik',
-    'utd','united','city','club','deportivo','sporting'
+function compatFold(str='') {
+  const map = {
+    'ø':'o','Ø':'O','đ':'d','Đ':'D','ł':'l','Ł':'L','ß':'ss','ẞ':'SS',
+    'æ':'ae','Æ':'AE','œ':'oe','Œ':'OE','ð':'d','Ð':'D','þ':'th','Þ':'Th',
+    'ħ':'h','Ħ':'H','ı':'i','ſ':'s','ƒ':'f','Ƒ':'F','ĳ':'ij','Ĳ':'IJ'
+  };
+  return String(str).replace(/[\u0080-\uFFFF]/g, ch => map[ch] ?? ch);
+}
+
+function stripClubTokens(s='') {
+  // tokens muy comunes; se eliminan solo si aparecen como palabra completa
+  const TOKENS = [
+    'fc','sc','cf','ac','afc','bk','fk','sk','ik','cd','ud','sv',
+    'ca','ss','ssc','club','sporting','sport','atletico','atlético'
   ];
-  let out = s;
-  // elimina tokens sueltos al final o entre paréntesis/guiones
-  const rx = new RegExp(`\\s+(?:${suffixes.join('|')})\\.?$`, 'i');
-  for (let i = 0; i < 2; i++) { // dos pasadas por si hay dos tokens
-    out = out.replace(rx, '');
-  }
-  return out.trim();
+  const re = new RegExp('\\b(?:' + TOKENS.join('|') + ')\\b','gi');
+  return String(s).replace(re, ' ');
 }
 
-// Normalización completa de nombres de equipos
-function normalizeTeamName(raw = '') {
-  if (!raw) return '';
-  let s = stripDiacritics(raw);
-  // quita puntuación y apóstrofes / puntos / comas / guiones suaves
-  s = s.replace(/['’`.,]/g, ' ');
-  s = s.replace(/[()]/g, ' ');
-  s = s.replace(/[-–—]/g, ' ');
-  s = s.replace(/\s+/g, ' ').trim();
-  s = stripClubSuffixes(s);
-  // colapsa dobles espacios de nuevo tras strip suffixes
-  s = s.replace(/\s+/g, ' ').trim();
-  return s;
+function normalizeTeamName(s='') {
+  const raw = compatFold(stripClubTokens(stripDiacritics(String(s))))
+    .toLowerCase()
+    .replace(/[\.\-]/g, ' ')     // puntos/guiones a espacio
+    .replace(/[^\p{L}\p{N} ]+/gu, ' ') // cualquier otro símbolo a espacio
+    .replace(/\s+/g, ' ')        // colapsa espacios
+    .trim();
+  return raw;
 }
 
 module.exports = { stripDiacritics, compatFold, stripClubTokens, normalizeTeamName };

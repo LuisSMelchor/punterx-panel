@@ -1,162 +1,170 @@
 'use strict';
 
-/**
- * OddsAPI one-shot enrichment.
- * - No rompe el flujo: siempre atrapa errores y retorna null si algo falla.
- * - Respeta envs:
- *    ODDS_API_KEY        (requerida para llamadas reales)
- *    ODDS_REGIONS        (por defecto: "us,uk,eu,au")
- *    ODDS_SPORT_KEY      (fallback si no hay guess)
- *    ODDS_TIMEOUT_MS     (por defecto: 8000)
- *    DEBUG_TRACE         (1 para logs)
- */
+/** utilidades básicas **/
+function minutesUntil(iso) {
+  const t = new Date(iso);
+  if (Number.isNaN(+t)) return null;
+  return Math.round((t - new Date()) / 60000);
+}
+function pickTop3(offers = []) {
+  return [...offers].sort((a,b)=> (b?.price ?? 0) - (a?.price ?? 0)).slice(0,3);
+}
 
-let guessSportKeyFromLeague = null;
-try {
-  ({ guessSportKeyFromLeague } = require('./odds-helpers.cjs'));
-} catch (_) {
-  // Fallback simple si el helper no está disponible
-  guessSportKeyFromLeague = (leagueName) => {
-    const s = String(leagueName || '').toLowerCase();
-    if (
-      s.includes('premier') || s.includes('la liga') ||
-      s.includes('serie')   || s.includes('bundes') ||
-      s.includes('ligue')   || s.includes('eredivisie')
-    ) return 'soccer';
-    return process.env.ODDS_SPORT_KEY || 'soccer';
+/** normalización de mercados **/
+function marketKeyCanonical(key='') {
+  const k = String(key||'').toLowerCase().trim();
+  if (k === 'h2h') return '1x2';
+  if (k === 'both_teams_to_score' || k === 'btts') return 'btts';
+  if (k === 'doublechance' || k === 'double_chance') return 'doublechance';
+  if (k === 'totals') return 'totals';
+  return k;
+}
+function preferredCanonMarkets() {
+  const raw = process.env.ODDS_MARKETS_CANON || '1x2,btts,over_2_5,doublechance';
+  return raw.split(',').map(x => x.trim()).filter(Boolean);
+}
+function normalizeFromOddsAPIv4(oddsApiArray = []) {
+  const out = { markets: {} };
+  for (const evt of (Array.isArray(oddsApiv4=oddsApiArray) ? oddsApiv4 : [])) {
+    const bms = Array.isArray(evt.bookmakers) ? evt.bookmakers : [];
+    for (const bm of bms) {
+      const bk = bm?.title || bm?.key || 'Unknown';
+      const mkts = Array.isArray(bm.markets) ? bm.markets : [];
+      for (const mkt of mkts) {
+        const rawKey = mkt?.key || '';
+        const canon = marketKeyCanonical(rawKey);
+        const outs = Array.isArray(mkt?.outcomes) ? mkt.outcomes : [];
+        if (canon !== 'totals') {
+          if (!out.markets[canon]) out.markets[canon] = [];
+          for (const o of outs) {
+            const price = Number(o?.price);
+            if (!Number.isFinite(price)) continue;
+            out.markets[canon].push({ bookmaker: bk, price, last_update: bm?.last_update || evt?.last_update || null, outcome: o?.name || null });
+          }
+        } else {
+          const point = Number(mkt?.point);
+          if (Number.isFinite(point) && Math.abs(point - 2.5) < 1e-6) {
+            if (!out.markets['over_2_5']) out.markets['over_2_5'] = [];
+            for (const o of outs) {
+              const name = String(o?.name || '').toLowerCase().trim();
+              if (name === 'over') {
+                const price = Number(o?.price);
+                if (!Number.isFinite(price)) continue;
+                out.markets['over_2_5'].push({ bookmaker: bk, price, last_update: bm?.last_update || evt?.last_update || null, outcome: 'Over 2.5' });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+function normalizeMarketsFlexible(oddsRaw) {
+  if (!oddsRaw) return {};
+  if (Array.isArray(oddsRaw)) return normalizeFromOddsAPIv4(oddsRaw).markets || {};
+  return oddsRaw?.markets || {};
+}
+function toTop3ByMarket(markets = {}) {
+  const allow = new Set(preferredCanonMarkets());
+  const out = {};
+  for (const [mkt, offers] of Object.entries(markets)) {
+    if (!allow.has(mkt)) continue;
+    out[mkt] = pickTop3(offers).map(o => ({ bookie: o.bookmaker, price: o.price, last_update: o.last_update }));
+  }
+  return out;
+}
+
+/** helpers de fixture **/
+function attachLeagueCountry(fx = {}) {
+  const league = fx?.league_name || fx?.league || null;
+  const country = fx?.country || fx?.league_country || fx?.country_name || null;
+  return league && country ? `${league} (${country})` : (league || null);
+}
+
+/** (opcional) traer odds: dejamos stub para no bloquear **/
+async function fetchOddsForFixture(/* fixture */) { return null; }
+
+/** enrich principal **/
+async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
+  const _fixture = fixture || {};
+  let _odds = oddsRaw || null;
+
+  // si no viene odds y hay key, se podría activar fetchOddsForFixture()
+  if (!_odds && process.env.ODDS_API_KEY) {
+    try { _odds = await fetchOddsForFixture(_fixture); } catch {}
+  }
+
+  const marketsFlex = normalizeMarketsFlexible(_odds);
+  const markets_top3 = toTop3ByMarket(marketsFlex);
+
+  const mins = minutesUntil(_fixture?.kickoff);
+  const when_text = Number.isFinite(mins)
+    ? (mins >= 0 ? `Comienza en ${mins} minutos aprox` : `Comenzó hace ${Math.abs(mins)} minutos aprox`)
+    : null;
+
+  const league_text = attachLeagueCountry(_fixture);
+
+  return {
+    fixture_id: _fixture?.fixture_id ?? null,
+    kickoff: _fixture?.kickoff ?? null,
+    when_text,
+    league: league_text,
+    home_id: _fixture?.home_id ?? null,
+    away_id: _fixture?.away_id ?? null,
+    markets_top3,
   };
 }
 
-function log(...args) {
-  if (Number(process.env.DEBUG_TRACE) === 1) {
-    console.log('[ENRICH]', ...args);
+/** formateadores / payload **/
+function formatMarketsTop3(markets = {}) {
+  const lines = [];
+  for (const [mkt, arr] of Object.entries(markets || {})) {
+    const trio = (arr || []).map(o => `${o.bookie} ${o.price}`).join(' | ');
+    lines.push(`${mkt}: ${trio}`);
   }
+  return lines.join('\n');
 }
 
-function gentleIncludes(a = '', b = '') {
-  a = String(a || '').trim().toLowerCase();
-  b = String(b || '').trim().toLowerCase();
-  if (!a || !b) return false;
-  return a.includes(b) || b.includes(a);
+function buildOneShotPayload({ evt = {}, match = {}, enriched = {} } = {}) {
+  return {
+    status: 'preview',
+    level: 'info',
+    evt,
+    match,
+    enriched,
+    markets: enriched?.markets_top3 || {},
+    when_text: enriched?.when_text || null,
+    league: enriched?.league || match?.league_name || null,
+    result_trace: `oneshot-${Date.now().toString(36)}`
+  };
 }
 
-function normalizeH2H(bookmaker) {
-  const out = [];
-  const m = (bookmaker.markets || []).find(x => x.key === 'h2h' && Array.isArray(x.outcomes));
-  if (!m) return out;
-  for (const o of m.outcomes) {
-    if (o && typeof o.price === 'number' && o.name) {
-      out.push({ book: bookmaker.title, price: o.price, label: o.name });
-    }
-  }
-  return out;
+async function oneShotPayload({ evt = {}, match = {}, fixture = {} }) {
+  const enriched = await enrichFixtureUsingOdds({ fixture, oddsRaw: null });
+  return buildOneShotPayload({ evt, match, enriched });
 }
 
-function normalizeTotals(bookmaker) {
-  const out = [];
-  const m = (bookmaker.markets || []).find(x => x.key === 'totals' && Array.isArray(x.outcomes));
-  if (!m) return out;
-  for (const o of m.outcomes) {
-    if (!o || typeof o.price !== 'number' || !o.name) continue;
-    const side = String(o.name || '').toLowerCase().includes('over') ? 'Over' :
-                 String(o.name || '').toLowerCase().includes('under') ? 'Under' : o.name;
-    const line = (typeof o.point === 'number') ? o.point : (o.point ? Number(o.point) : null);
-    const label = line != null ? `${side} ${line}` : side;
-    out.push({ book: bookmaker.title, price: o.price, label });
-  }
-  return out;
+function composeOneShotPrompt(payload = {}) {
+  const lines = [];
+  if (payload?.evt?.home && payload?.evt?.away) lines.push(`${payload.evt.home} vs ${payload.evt.away}`);
+  if (payload?.league) lines.push(payload.league);
+  if (payload?.when_text) lines.push(payload.when_text);
+  const mk = formatMarketsTop3(payload?.markets || {});
+  if (mk) lines.push('', mk);
+  return lines.join('\n');
 }
 
-async function fetchJsonWithTimeout(url, timeoutMs = 8000) {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { signal: ac.signal });
-    if (!res.ok) return { ok: false, data: null, status: res.status };
-    const data = await res.json();
-    return { ok: true, data, status: res.status };
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-/**
- * fixture esperado:
- *   { home_name, away_name, league_name }
- * retorna:
- *   {
- *     markets: { h2h:[], totals:[], h2h_lay:[] },
- *     meta: {
- *       odds_source: 'oddsapi:events',
- *       odds_event: { id, home, away, commence }
- *     }
- *   }
- * o null si no hay match o error.
- */
-async function fetchOddsForFixture(fixture = {}) {
-  try {
-    const apiKey = String(process.env.ODDS_API_KEY || '');
-    if (!apiKey) return null;
-
-    const home = String(fixture.home_name || '').trim();
-    const away = String(fixture.away_name || '').trim();
-    if (!home || !away) return null;
-
-    const sportKey =
-      (typeof guessSportKeyFromLeague === 'function'
-        ? guessSportKeyFromLeague(fixture.league_name)
-        : null) ||
-      process.env.ODDS_SPORT_KEY ||
-      'soccer';
-
-    const regions = encodeURIComponent(process.env.ODDS_REGIONS || 'us,uk,eu,au');
-    const key     = encodeURIComponent(apiKey);
-    const tmo     = Number(process.env.ODDS_TIMEOUT_MS || 8000);
-
-    // 1) Listar eventos
-    const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events?apiKey=${key}&regions=${regions}`;
-    log('GET', eventsUrl);
-    const evRes = await fetchJsonWithTimeout(eventsUrl, tmo);
-    if (!evRes.ok || !Array.isArray(evRes.data)) return null;
-
-    // 2) Encontrar evento por nombres
-    const ev = evRes.data.find(e =>
-      gentleIncludes(e?.home_team, home) && gentleIncludes(e?.away_team, away)
-    );
-    if (!ev || !ev.id) {
-      log('no matching event', { home, away, sportKey });
-      return null;
-    }
-
-    // 3) Traer cuotas para h2h y totals
-    const oddsUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${encodeURIComponent(ev.id)}/odds?apiKey=${key}&regions=${regions}&markets=h2h,totals`;
-    log('GET', oddsUrl);
-    const oddsRes = await fetchJsonWithTimeout(oddsUrl, tmo);
-    if (!oddsRes.ok || !oddsRes.data || !Array.isArray(oddsRes.data.bookmakers)) return null;
-
-    const h2h    = [];
-    const totals = [];
-    for (const bm of oddsRes.data.bookmakers) {
-      h2h.push(...normalizeH2H(bm));
-      totals.push(...normalizeTotals(bm));
-    }
-
-    return {
-      markets: { h2h, totals, h2h_lay: [] },
-      meta: {
-        odds_source: 'oddsapi:events',
-        odds_event: {
-          id: ev.id,
-          home: ev.home_team,
-          away: ev.away_team,
-          commence: ev.commence_time
-        }
-      }
-    };
-  } catch (e) {
-    log('error', String(e && e.message ? e.message : e));
-    return null;
-  }
-}
-
-module.exports = { fetchOddsForFixture };
+/** exports ÚNICO **/
+module.exports = {
+  enrichFixtureUsingOdds,
+  fetchOddsForFixture,
+  marketKeyCanonical,
+  preferredCanonMarkets,
+  normalizeFromOddsAPIv4,
+  toTop3ByMarket,
+  buildOneShotPayload,
+  oneShotPayload,
+  formatMarketsTop3,
+  composeOneShotPrompt
+};

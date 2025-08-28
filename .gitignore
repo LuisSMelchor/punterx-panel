@@ -10,10 +10,7 @@ tools/*.js
 netlify/functions/_lib/match-helper.cjs.bak.*
 tools/*.js
 
-# editor backups
-*.bak
-# local backups & hooks
-netlify/functions/run-pick-oneshot.cjs.bak_*
-.githooks/
-# more local backups under _lib
-netlify/functions/_lib/*.bak*
+# local backups
+*.bak.*
+*.BAK.*
+.backup.*
