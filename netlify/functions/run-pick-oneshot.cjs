@@ -481,3 +481,5 @@ statusCode: 500, body: JSON.stringify({
 })(), ok:false, reason:'server-error', error: e?.message || String(e) }) };
   }
 };
+
+module.exports.marketKeyFromName = marketKeyFromName;
