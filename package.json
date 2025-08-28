@@ -19,7 +19,8 @@
     "test:oneshot-wire": "node tests/oneshot.wire.integration.js",
     "test:markets": "node tests/market.mapping.spec.js",
     "test:oneshot-meta": "node tests/oneshot.meta.spec.js",
-    "verify:all": "npm run verify:send-report && npm run test:oneshot && npm run test:oneshot-wire && npm run test:markets && npm run test:oneshot-meta"
+    "verify:all": "npm run verify:send-report && npm run test:oneshot && npm run test:oneshot-wire && npm run test:markets && npm run test:oneshot-meta",
+    "manual:oneshot": "node tests/oneshot.manual.js"
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
