@@ -242,7 +242,13 @@ if (Number(process.env.DEBUG_TRACE)) {
       return {
         statusCode: 200,
         body: JSON.stringify({
-          send_report: { enabled: (String(process.env.SEND_ENABLED)==='1'), results: [], missing_vip_id: ((String(process.env.SEND_ENABLED)==='1') && !!message_vip && !vipId), missing_free_id: ((String(process.env.SEND_ENABLED)==='1') && !!message_free && !freeId) },
+          send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED)==='1');
+  const base = { enabled, results: (typeof send_report!=='undefined' && send_report && Array.isArray(send_report.results)) ? send_report.results : [] };
+  if (enabled && !!message_vip && !vipId)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !freeId) base.missing_free_id = true;
+  return base;
+})(),
 ok:false,
           reason: ai.reason,
           status: ai.status,
@@ -325,14 +331,14 @@ if (String(process.env.SEND_ENABLED) === '1' && typeof sendTelegramText === 'fun
 sendTelegramText({ chatId: vipId, text: vipMsg });
     send_report.results.push({ target: 'VIP', ok: r.ok, parts: r.parts, errors: r.errors });
   } else {
-    send_report.missing_vip_id = true;
+    send_report.missing_vip_id = (String(process.env.SEND_ENABLED)==='1') && !!message_vip && !vipId;
   }
 } else {
   if (freeId && message_free) {
     const r = await sendTelegramText({ chatId: freeId, text: canalMsg });
     send_report.results.push({ target: 'FREE', ok: r.ok, parts: r.parts, errors: r.errors });
   } else {
-    send_report.missing_free_id = true;
+    send_report.missing_free_id = (String(process.env.SEND_ENABLED)==='1') && !!message_free && !freeId;
   }
 }
     }
