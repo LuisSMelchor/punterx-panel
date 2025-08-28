@@ -223,8 +223,8 @@ exports.handler = async (event) => {
 };
 
     let payload = await oneShotPayload({ evt, match, fixture });
-  // Enriquecimiento OddsAPI sólo si está habilitado explícitamente
-    if (String(process.env.ODDS_ENRICH_ONESHOT) === '1') {
+// Enriquecimiento OddsAPI (opt-in): telemetría mínima + try/catch seguro
+if (String(process.env.ODDS_ENRICH_ONESHOT) === '1') {
   payload.meta = { ...(payload.meta||{}), enrich_attempt: 'oddsapi:events' };
   try {
     payload = await ensureMarketsWithOddsAPI(payload, evt);
@@ -238,19 +238,7 @@ exports.handler = async (event) => {
 } else {
   payload.meta = { ...(payload.meta||{}), enrich_attempt: 'skipped' };
 }
-    }
-if (Number(process.env.DEBUG_TRACE)) {
-  try {
-    const keys = Object.keys(payload.markets || {});
-    console.log('[DEBUG] odds_source:', payload.meta && payload.meta.odds_source);
-    console.log('[DEBUG] markets keys:', keys);
-    for (const k of keys) {
-      console.log('[DEBUG] sample', k, (payload.markets[k]||[]).slice(0,3));
-    }
-  } catch (e) { console.log('[DEBUG] markets print error:', e && e.message); }
-}
-// Prompt IA y llamada
-    const prompt = composeOneShotPrompt(payload);
+const prompt = composeOneShotPrompt(payload);
     const ai = await callOpenAIOnce({ prompt });
 
     if (!ai.ok) {
