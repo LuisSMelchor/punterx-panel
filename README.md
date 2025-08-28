@@ -20,6 +20,7 @@ npm run test:markets
 
 # telemetría (tolerante a no-emisión)
 npm run test:oneshot-meta
+npm run test:oneshot-servererror  # soft-fail de IA (200 por defecto)
 
 Flags de entorno (solo NOMBRES, sin secretos)
 
