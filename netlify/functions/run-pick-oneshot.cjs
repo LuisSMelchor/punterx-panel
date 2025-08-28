@@ -194,9 +194,7 @@ ${bookiesStr}
 
 ${vipDisclaimer}`;
 
-  return { 
-  send_report: { enabled: _sendEnabled, results: [], missing_vip_id: _missing_vip_id, missing_free_id: _missing_free_id },
-canalMsg, vipMsg };
+  return { canalMsg, vipMsg };
 }
 
 exports.handler = async (event) => {
@@ -429,13 +427,8 @@ return {
       })
     };
   } catch (e) {
-
-  // S1.3: flags send_report coherentes con mensajes presentes (scope del handler)
-  const _sendEnabled     = String(process.env.SEND_ENABLED) === '1';
-  const _hasVipMsg       = !!message_vip;
-  const _hasFreeMsg      = !!message_free;
-  const _missing_vip_id  = _sendEnabled && _hasVipMsg  && !vipId;
-  const _missing_free_id = _sendEnabled && _hasFreeMsg && !freeId;
-return { statusCode: 500, body: JSON.stringify({ ok:false, reason:'server-error', error: e?.message || String(e) }) };
+return { 
+  send_report: { enabled: (String(process.env.SEND_ENABLED)==='1'), results: [], missing_vip_id: ((String(process.env.SEND_ENABLED)==='1') && !!message_vip && !vipId), missing_free_id: ((String(process.env.SEND_ENABLED)==='1') && !!message_free && !freeId) },
+statusCode: 500, body: JSON.stringify({ ok:false, reason:'server-error', error: e?.message || String(e) }) };
   }
 };
