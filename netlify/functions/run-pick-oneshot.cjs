@@ -219,8 +219,8 @@ exports.handler = async (event) => {
       league_name: match?.league_name || evt.league || null,
       country: match?.country || null,
       home_id: match?.home_id || null,
-      away_id: match?.away_id || null,
-    };
+      away_id: match?.away_id || null
+};
 
     let payload = await oneShotPayload({ evt, match, fixture });
   payload = await ensureMarketsWithOddsAPI(payload, evt);
@@ -245,8 +245,8 @@ if (Number(process.env.DEBUG_TRACE)) {
           send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED)==='1');
   const base = { enabled, results: (typeof send_report!=='undefined' && send_report && Array.isArray(send_report.results)) ? send_report.results : [] };
-  if (enabled && !!message_vip && !vipId)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !freeId) base.missing_free_id = true;
+  if (enabled && !!message_vip && !(typeof vipId !== 'undefined' && vipId)) base.missing_vip_id = true;
+  if (enabled && !!message_free && !(typeof freeId !== 'undefined' && freeId)) base.missing_free_id = true;
   return base;
 })(),
 ok:false,
@@ -262,7 +262,19 @@ ok:false,
 
     const parsed = safeExtractFirstJson(ai.raw || '');
     if (!parsed) {
-      return { statusCode: 200, body: JSON.stringify({ ok:false, reason:'invalid-ai-json', payload, prompt }) };
+      return { statusCode: 200, body: JSON.stringify({
+   send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip && !(typeof vipId !== 'undefined' && vipId)) base.missing_vip_id = true;
+  if (enabled && !!message_free && !(typeof freeId !== 'undefined' && freeId)) base.missing_free_id = true;
+  return base;
+})(), ok:false, reason:'invalid-ai-json', payload, prompt }) };
     }
 
     // Normalización
@@ -331,14 +343,14 @@ if (String(process.env.SEND_ENABLED) === '1' && typeof sendTelegramText === 'fun
 sendTelegramText({ chatId: vipId, text: vipMsg });
     send_report.results.push({ target: 'VIP', ok: r.ok, parts: r.parts, errors: r.errors });
   } else {
-    send_report.missing_vip_id = (String(process.env.SEND_ENABLED)==='1') && !!message_vip && !vipId;
+    send_report.missing_vip_id = (String(process.env.SEND_ENABLED)==='1') && !!message_vip && !(typeof vipId !== 'undefined' && vipId);
   }
 } else {
   if (freeId && message_free) {
     const r = await sendTelegramText({ chatId: freeId, text: canalMsg });
     send_report.results.push({ target: 'FREE', ok: r.ok, parts: r.parts, errors: r.errors });
   } else {
-    send_report.missing_free_id = (String(process.env.SEND_ENABLED)==='1') && !!message_free && !freeId;
+    send_report.missing_free_id = (String(process.env.SEND_ENABLED)==='1') && !!message_free && !(typeof freeId !== 'undefined' && freeId);
   }
 }
     }
@@ -393,15 +405,13 @@ message_free = sendToVip ? null : canalMsg;
 
   // 3) Limpieza y FREE sin bookies
   const clean = (txt) => String(txt || '')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n')
     .trimEnd();
   const stripBookiesForFree = (txt) => {
     if (!txt) return txt;
     return txt
       .replace(/(?:\n+)?Top\s*3\s*bookies[\s\S]*$/i, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trimEnd();
+      .replace(/\n{3,}/g, '\n\n').trimEnd();
   };
 
   // 4) Asignación final (sin redeclarar)
@@ -420,7 +430,19 @@ message_free = sendToVip ? null : canalMsg;
 return {
       statusCode: 200,
       body: JSON.stringify({
-        ok: true,
+
+          send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip && !(typeof vipId !== 'undefined' && vipId)) base.missing_vip_id = true;
+  if (enabled && !!message_free && !(typeof freeId !== 'undefined' && freeId)) base.missing_free_id = true;
+  return base;
+})(),        ok: true,
         reason: 'ok',
         fixture: payload.fixture,
         markets_top3: payload.markets,
@@ -429,13 +451,24 @@ return {
         nivel,
         meta: payload.meta,
         message_vip,
-        message_free,
-        send_report
-      })
+        message_free
+})
     };
   } catch (e) {
 return { 
-  send_report: { enabled: (String(process.env.SEND_ENABLED)==='1'), results: [], missing_vip_id: ((String(process.env.SEND_ENABLED)==='1') && !!message_vip && !vipId), missing_free_id: ((String(process.env.SEND_ENABLED)==='1') && !!message_free && !freeId) },
-statusCode: 500, body: JSON.stringify({ ok:false, reason:'server-error', error: e?.message || String(e) }) };
+
+statusCode: 500, body: JSON.stringify({
+   send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip && !(typeof vipId !== 'undefined' && vipId)) base.missing_vip_id = true;
+  if (enabled && !!message_free && !(typeof freeId !== 'undefined' && freeId)) base.missing_free_id = true;
+  return base;
+})(), ok:false, reason:'server-error', error: e?.message || String(e) }) };
   }
 };
