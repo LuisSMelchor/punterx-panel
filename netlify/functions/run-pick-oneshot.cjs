@@ -356,11 +356,26 @@ message_free = sendToVip ? null : canalMsg;
   } catch (_) {}
 
   // 1) ¿hay bookies?
-  const hasBookies = !!(typeof bookies !== 'undefined' && String(bookies || '').trim().length);
+  // hasOdds: verdadero si existe al menos un mercado con elementos
+  const hasOdds = (() => {
+    try {
+      const src = (typeof markets !== 'undefined' && markets && typeof markets === 'object') ? markets
+                : (typeof markets_top3 !== 'undefined' && markets_top3 && typeof markets_top3 === 'object') ? markets_top3
+                : null;
+      if (!src) return false;
+      const keys = Object.keys(src);
+      if (!keys.length) return false;
+      for (const k of keys) {
+        const v = src[k];
+        if (Array.isArray(v) && v.length) return true;
+      }
+      return false;
+    } catch { return false; }
+  })();
 
   // 2) Determinar destino
   let target = 'none';
-  if (!hasBookies) {
+  if (!hasOdds) {
     // Sin odds: nunca VIP. FREE sólo si nivel == Informativo.
     target = (nivel === 'Informativo') ? 'free' : 'none';
   } else {
