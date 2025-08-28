@@ -12,7 +12,8 @@
     "check:syntax": "node -e \"const fs=require('fs');const p='netlify/functions';(function walk(d){for(const f of fs.readdirSync(d)){const fp=d+'/'+f;const s=fs.statSync(fp);if(s.isDirectory()) walk(fp); else if(/\\.(cjs|js)$/.test(fp)){ try{ new Function(fs.readFileSync(fp,'utf8')); } catch(e){ if(e.code==='ENOENT') continue; throw e; } } }})(p); console.log('Syntax OK');\"",
     "test:send-report": "node tests/send_report.smoke.js",
     "lint:send-report": "bash tests/check_send_report_grep.sh",
-    "verify:send-report": "npm run lint:send-report && npm run test:send-report"
+    "verify:send-report": "npm run lint:send-report && npm run test:send-report && npm run test:send-report-edges",
+    "test:send-report-edges": "node tests/send_report.edges.js"
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
