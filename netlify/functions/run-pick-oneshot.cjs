@@ -153,6 +153,8 @@ Hora estimada: ${horaStr}`;
   const probStr = Number.isFinite(prob) ? `${prob}%` : '—';
   const evStr = Number.isFinite(ev) ? `${ev}%` : '—';
   const bookiesStr = bookies ? `Top 3 bookies:\n${bookies}` : '';
+
+  const vipBookiesSection = bookies ? `Top 3 bookies:\n${bookies}\n` : '';
 const bookiesStrFree = (includeBookiesInFree && bookies) ? bookiesStr : '';
 
   // Canal (Informativo)
@@ -290,8 +292,9 @@ if (Number(process.env.DEBUG_TRACE)) {
     const kickoff_iso = evt.commence || payload.fixture?.kickoff;
 
     const includeBookiesInFree = String(process.env.FREE_INCLUDE_BOOKIES) === '1';
-const { canalMsg, vipMsg } = buildMessages({
-  liga, pais,
+let { canalMsg, vipMsg } = buildMessages({
+
+liga, pais,
   home: evt.home, away: evt.away,
   kickoff_iso,
   ev: evOut,
@@ -313,14 +316,15 @@ if (String(process.env.SEND_ENABLED) === '1' && typeof sendTelegramText === 'fun
       send_report = { enabled:true, results: [] };
 
       if (sendToVip) {
-  if (vipId) {
-    const r = await sendTelegramText({ chatId: vipId, text: vipMsg });
+  if (vipId && message_vip) {
+    const r = await 
+sendTelegramText({ chatId: vipId, text: vipMsg });
     send_report.results.push({ target: 'VIP', ok: r.ok, parts: r.parts, errors: r.errors });
   } else {
     send_report.missing_vip_id = true;
   }
 } else {
-  if (freeId) {
+  if (freeId && message_free) {
     const r = await sendTelegramText({ chatId: freeId, text: canalMsg });
     send_report.results.push({ target: 'FREE', ok: r.ok, parts: r.parts, errors: r.errors });
   } else {
@@ -329,10 +333,33 @@ if (String(process.env.SEND_ENABLED) === '1' && typeof sendTelegramText === 'fun
 }
     }
 
-    const message_vip = sendToVip ? vipMsg : null;
-const message_free = sendToVip ? null : canalMsg;
+    let message_vip = sendToVip ? vipMsg : null;
+let message_free = sendToVip ? null : canalMsg;
 
-    return {
+  // === FINAL_GATE_START ===
+  (() => {
+    const vipMin = Number(process.env.MIN_VIP_EV || 15);
+    const hasBookies = !!(typeof bookies !== 'undefined' && String(bookies||'').trim().length);
+
+    let target = 'none';
+    if (!hasBookies) {
+      // Sin odds: nunca VIP. FREE sólo si nivel == Informativo.
+      target = (nivel === 'Informativo') ? 'free' : 'none';
+    } else {
+      if (nivel === 'Informativo') target = 'free';
+      else if (evOut >= vipMin)   target = 'vip';
+    }
+
+    const clean = (txt) => String(txt||'')
+      .replace(/\n{3,}/g,'\n\n')
+      .replace(/[ \t]+\n/g,'\n')
+      .trimEnd();
+
+    message_free = (target === 'free') ? clean(canalMsg) : null;
+    message_vip  = (target === 'vip')  ? clean(vipMsg)   : null;
+  })();
+  // === FINAL_GATE_END ===
+return {
       statusCode: 200,
       body: JSON.stringify({
         ok: true,
