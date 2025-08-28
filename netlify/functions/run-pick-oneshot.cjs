@@ -429,13 +429,7 @@ return {
       })
     };
   } catch (e) {
-    
-  // S1.3: flags send_report coherentes con mensajes presentes
-  const _sendEnabled = String(process.env.SEND_ENABLED) === '1';
-  const _hasVipMsg   = !!message_vip;
-  const _hasFreeMsg  = !!message_free;
-  const _missing_vip_id  = _sendEnabled && _hasVipMsg  && !vipId;
-  const _missing_free_id = _sendEnabled && _hasFreeMsg && !freeId;
+
 
   // S1.3: flags send_report coherentes con mensajes presentes (scope del handler)
   const _sendEnabled     = String(process.env.SEND_ENABLED) === '1';
