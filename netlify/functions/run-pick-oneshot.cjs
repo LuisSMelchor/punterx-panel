@@ -223,7 +223,16 @@ exports.handler = async (event) => {
 };
 
     let payload = await oneShotPayload({ evt, match, fixture });
-  payload = await ensureMarketsWithOddsAPI(payload, evt);
+  // Enriquecimiento OddsAPI sólo si está habilitado explícitamente
+    if (String(process.env.ODDS_ENRICH_ONESHOT) === '1') {
+      try {
+        payload = await ensureMarketsWithOddsAPI(payload, evt);
+      } catch (e) {
+        if (Number(process.env.DEBUG_TRACE) === 1) {
+          console.log('[ENRICH] ensureMarketsWithOddsAPI error:', e?.message || String(e));
+        }
+      }
+    }
 if (Number(process.env.DEBUG_TRACE)) {
   try {
     const keys = Object.keys(payload.markets || {});
