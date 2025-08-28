@@ -225,11 +225,7 @@ exports.handler = async (event) => {
     let payload = await oneShotPayload({ evt, match, fixture });
   // Enriquecimiento OddsAPI sólo si está habilitado explícitamente
     if (String(process.env.ODDS_ENRICH_ONESHOT) === '1') {
-  payload.meta = { ...(payload.meta||{}
-else {
-  payload.meta = { ...(payload.meta||{}), enrich_attempt: 'skipped' };
-}
-), enrich_attempt: 'oddsapi:events' };
+  payload.meta = { ...(payload.meta||{}), enrich_attempt: 'oddsapi:events' };
   try {
     payload = await ensureMarketsWithOddsAPI(payload, evt);
     payload.meta = { ...(payload.meta||{}), enrich_status: 'ok' };
@@ -239,6 +235,8 @@ else {
     }
     payload.meta = { ...(payload.meta||{}), enrich_status: 'error' };
   }
+} else {
+  payload.meta = { ...(payload.meta||{}), enrich_attempt: 'skipped' };
 }
     }
 if (Number(process.env.DEBUG_TRACE)) {
