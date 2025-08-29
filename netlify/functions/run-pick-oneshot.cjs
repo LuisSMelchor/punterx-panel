@@ -263,7 +263,6 @@ const prompt = composeOneShotPrompt(payload);
         statusCode: 200,
         body: JSON.stringify({
 markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
-markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
 send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED)==='1');
   const base = { enabled, results: (typeof send_report!=='undefined' && send_report && Array.isArray(send_report.results)) ? send_report.results : [] };
@@ -286,7 +285,6 @@ ok:false,
     const parsed = safeExtractFirstJson(ai.raw || '');
     if (!parsed) {
       return { statusCode: 200, body: JSON.stringify({
-markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
 markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
 send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
@@ -458,7 +456,6 @@ return {
       body: JSON.stringify({
 
 markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
-markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
 send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
@@ -473,7 +470,6 @@ send_report: (() => {
 })(),        ok: true,
         reason: 'ok',
         fixture: payload.fixture,
-        markets_top3: payload.markets,
         ai_json: parsed,
         ev_estimado: evOut,
         nivel,
@@ -486,7 +482,6 @@ send_report: (() => {
 return { 
 
 statusCode: (String(process.env.ALLOW_500_ONESHOT)==='1'?500:200), body: JSON.stringify({
-markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
 markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
 send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
