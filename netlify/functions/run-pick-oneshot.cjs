@@ -225,6 +225,27 @@ exports.handler = async (event) => {
     let payload = await oneShotPayload({ evt, match, fixture });
             if (!payload || typeof payload !== 'object') payload = {};
     payload.meta = (payload.meta && typeof payload.meta === 'object') ? payload.meta : {};
+
+  
+  // __MARKETS_GUARD__: asegurar objeto markets aunque falle el enrich
+  (function(){
+    try {
+      payload.markets = (payload && typeof payload.markets === "object" && payload.markets) ? payload.markets : {};
+    } catch(_) { payload = payload || {}; payload.markets = {}; }
+  })();
+// __META_OPTIN_GUARD: defaults para opt-in oddsapi
+  (function(){
+    try {
+      var __optInOdds = (String(process.env.ODDS_ENRICH_ONESHOT) === "1");
+      payload.meta = (payload.meta && typeof payload.meta === "object") ? payload.meta : {};
+      if (__optInOdds) {
+        if (!payload.meta.enrich_attempt) payload.meta.enrich_attempt = "oddsapi:events";
+        if (!payload.meta.odds_source)    payload.meta.odds_source    = "oddsapi:events";
+      } else {
+        if (!payload.meta.enrich_attempt) payload.meta.enrich_attempt = "skipped";
+      }
+    } catch (_) {}
+  })();
 payload.meta = payload.meta || {};
 // Ensure meta bag exists + annotate safe 'skipped' flags
     payload.meta = payload.meta || {};
@@ -253,7 +274,8 @@ const prompt = composeOneShotPrompt(payload);
       return {
         statusCode: 200,
         body: JSON.stringify({
-          send_report: (() => {
+          markets_top3: (typeof payload !== 'undefined' && payload && payload.markets) ? payload.markets : {},
+send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED)==='1');
   const base = { enabled, results: (typeof send_report!=='undefined' && send_report && Array.isArray(send_report.results)) ? send_report.results : [] };
   if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
@@ -275,7 +297,8 @@ ok:false,
     const parsed = safeExtractFirstJson(ai.raw || '');
     if (!parsed) {
       return { statusCode: 200, body: JSON.stringify({
-   send_report: (() => {
+   markets_top3: (typeof payload !== 'undefined' && payload && payload.markets) ? payload.markets : {},
+send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
     enabled,
@@ -444,7 +467,8 @@ return {
       statusCode: 200,
       body: JSON.stringify({
 
-          send_report: (() => {
+          markets_top3: (typeof payload !== 'undefined' && payload && payload.markets) ? payload.markets : {},
+send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
     enabled,
@@ -471,6 +495,7 @@ return {
 return { 
 
 statusCode: (String(process.env.ALLOW_500_ONESHOT)==='1'?500:200), body: JSON.stringify({
+markets_top3: (typeof payload !== 'undefined' && payload && payload.markets) ? payload.markets : {},
 send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
@@ -487,7 +512,7 @@ payload: (typeof payload !== 'undefined' ? payload : null),
 ok: false,
 reason: 'server-error',
 error: e?.message || String(e),
-meta: (typeof payload !== 'undefined' && payload && payload.meta) ? payload.meta : {}
+meta: (function(){ const optIn=(String(process.env.ODDS_ENRICH_ONESHOT)==="1"); const base=(typeof payload!=="undefined" && payload && payload.meta) ? payload.meta : {}; if(optIn){ if(!base.enrich_attempt) base.enrich_attempt="oddsapi:events"; if(!base.odds_source) base.odds_source="oddsapi:events"; } else { if(!base.enrich_attempt) base.enrich_attempt="skipped"; } return base; })()
 }) };
   }
 };

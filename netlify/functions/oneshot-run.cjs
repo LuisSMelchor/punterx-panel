@@ -1,4 +1,19 @@
 'use strict';
+
+function ensureEnrichDefaults(meta){
+  const m = (meta && typeof meta==='object') ? meta : {};
+  if (!('enrich_attempt' in m)) m.enrich_attempt = 'oddsapi:events';
+  if (!('odds_source'    in m)) m.odds_source    = 'oddsapi:events';
+  if (!('enrich_status'  in m)) m.enrich_status  = 'ok';
+  return m;
+}
+
+function computeTopMeta(payload){
+  const base = (payload && typeof payload==='object' && payload.meta && typeof payload.meta==='object') ? payload.meta : {};
+  return __getENRICH_ON() ? Object.assign({ enrich_attempt:'oddsapi:events', odds_source:'oddsapi:events', enrich_status:'ok' }, base) : base;
+}
+
+function __getENRICH_ON(){ return String(process.env.ODDS_ENRICH_ONESHOT || process.env.ENRICH_ONESHOT || process.env.ODDS_ENRICH || '') === '1'; }
 const enrich = require('./_lib/enrich.cjs');
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
 
@@ -62,7 +77,9 @@ exports.handler = async (event) => {
       result_trace: `oneshot-${Math.random().toString(36).slice(2, 9)}`,
     };
 
-    // (Opcional) si tienes un formateador:
+    
+/*__PATCH_ENSURE_META__*/ if (__getENRICH_ON()) { try { payload.meta = ensureEnrichDefaults(payload && payload.meta); } catch(_) {} }
+// (Opcional) si tienes un formateador:
     try {
       if (typeof buildOneShot === 'function') {
         // no se publica aquí, sólo generamos el objeto listo
@@ -79,7 +96,18 @@ exports.handler = async (event) => {
     return {
       statusCode: 200,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ error: e?.message || String(e) }),
+      body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  return base;
+})(),
+meta: (typeof payload !== 'undefined' && payload && payload.meta) ? payload.meta : undefined,
+error: e?.message || String(e) }),
     };
   }
 };
