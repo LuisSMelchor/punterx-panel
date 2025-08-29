@@ -428,10 +428,34 @@ try {
     const q = (event && event.queryStringParameters) || {};
     const h = (event && event.headers) || {};
     if ((q.debug === "1" || h["x-debug"] === "1") && q.ping === "1") {
-      return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok:true, stage:"early-ping" }) };
+      return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:true, stage:"early-ping" }) };
     }
   } catch (e) {
-    return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok:false, stage:"early-ping-error", err: String(e && (e.message || e)) }) };
+    return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:false, stage:"early-ping-error", err: String(e && (e.message || e)) }) };
   }
 // --- IDs / debug / headers ---
   const REQ_ID = (Math.random().toString(36).slice(2,10)).toUpperCase();
@@ -449,7 +473,19 @@ try {
     return {
       statusCode: 200,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok:false, stage:'early', req: REQ_ID, error: e?.message || String(e) })
+      body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:false, stage:'early', req: REQ_ID, error: e?.message || String(e) })
     };
   }
 
@@ -461,7 +497,19 @@ try {
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ok:false, stage:'auth', req:REQ_ID, error:'forbidden', reason:'auth_mismatch' })
+        body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:false, stage:'auth', req:REQ_ID, error:'forbidden', reason:'auth_mismatch' })
       };
     }
     return { statusCode: 403, body: 'Forbidden' };
@@ -479,13 +527,37 @@ try {
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ok:false, stage:'boot', req:REQ_ID, error: msg, stack: e?.stack || null })
+        body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:false, stage:'boot', req:REQ_ID, error: msg, stack: e?.stack || null })
       };
     }
     return {
       statusCode: 500,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok:false, stage:'runtime', req: REQ_ID })
+      body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:false, stage:'runtime', req: REQ_ID })
     };
   }
 
@@ -519,7 +591,19 @@ try {
     // === lock simple (no dupliques este bloque) ===
     if (global.__punterx_lock) {
       console.warn('LOCK activo → salto ciclo');
-      return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'mem_lock' }) };
+      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:true, skipped:true, reason:'mem_lock' }) };
     }
     global.__punterx_lock = true;
 
@@ -532,7 +616,19 @@ try {
     }
     if (!gotLock) {
       console.warn('LOCK distribuido activo → salto ciclo');
-      return { statusCode: 200, body: JSON.stringify({ ok:true, skipped:true, reason:'dist_lock' }) };
+      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:true, skipped:true, reason:'dist_lock' }) };
     }
 
     // === 1) OddsAPI ===
@@ -549,7 +645,19 @@ try {
     const tOddsMs = Date.now() - tOdds;
     if (!resOdds || !resOdds.ok) {
       console.error('OddsAPI error:', resOdds?.status, await safeText(resOdds));
-      return { statusCode: 200, body: JSON.stringify({ ok: false, reason:'oddsapi' }) };
+      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok: false, reason:'oddsapi' }) };
     }
     const eventos = await safeJson(resOdds) || [];
     resumen.recibidos = Array.isArray(eventos) ? eventos.length : 0;
@@ -622,7 +730,19 @@ try {
           .sort((a,b) => a.mins - b.mins)[0];
         if (nearest) console.log(`[ventana] Próximo fuera de rango: ~${nearest.mins}m → ${nearest.label}`);
       } catch {}
-      return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
+      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:true, resumen }) };
     }
 
     // === 3) prefiltro y procesado ===
@@ -838,7 +958,19 @@ console.log(`${traceEvt} MATCH OK → fixture_id=${P.af_fixture_id} | league=${P
     }
 
     resumen.af_hits = afHits; resumen.af_fails = afFails;
-    return { statusCode: 200, body: JSON.stringify({ ok:true, resumen }) };
+    return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:true, resumen }) };
 
   } catch (e) {
     // <<< AQUÍ ATRAPAMOS CUALQUIER 500 DEL RUNTIME >>>
@@ -848,13 +980,37 @@ console.log(`${traceEvt} MATCH OK → fixture_id=${P.af_fixture_id} | league=${P
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ok:false, stage:'runtime', req:REQ_ID, error: msg, stack: e?.stack || null })
+        body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:false, stage:'runtime', req:REQ_ID, error: msg, stack: e?.stack || null })
       };
     }
     return {
       statusCode: 500,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok:false, stage:'runtime', req: REQ_ID })
+      body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok:false, stage:'runtime', req: REQ_ID })
     };
   } finally {
     // liberar lock / estado / logs
