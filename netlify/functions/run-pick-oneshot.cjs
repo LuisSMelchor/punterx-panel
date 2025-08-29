@@ -233,19 +233,7 @@ exports.handler = async (event) => {
       payload.markets = (payload && typeof payload.markets === "object" && payload.markets) ? payload.markets : {};
     } catch(_) { payload = payload || {}; payload.markets = {}; }
   })();
-// __META_OPTIN_GUARD: defaults para opt-in oddsapi
-  (function(){
-    try {
-      var __optInOdds = (String(process.env.ODDS_ENRICH_ONESHOT) === "1");
-      payload.meta = (payload.meta && typeof payload.meta === "object") ? payload.meta : {};
-      if (__optInOdds) {
-        if (!payload.meta.enrich_attempt) payload.meta.enrich_attempt = "oddsapi:events";
-        if (!payload.meta.odds_source)    payload.meta.odds_source    = "oddsapi:events";
-      } else {
-        if (!payload.meta.enrich_attempt) payload.meta.enrich_attempt = "skipped";
-      }
-    } catch (_) {}
-  })();
+payload = ensureEnrichDefaults(payload, { optIn: (String(process.env.ODDS_ENRICH_ONESHOT) === "1") });
 payload.meta = payload.meta || {};
 // Ensure meta bag exists + annotate safe 'skipped' flags
     payload.meta = payload.meta || {};
@@ -256,8 +244,8 @@ if (String(process.env.ODDS_ENRICH_ONESHOT) === '1') {
   payload.meta = { ...(payload.meta||{}), enrich_attempt: 'oddsapi:events' };
   try {
     payload = await ensureMarketsWithOddsAPI(payload, evt);
-        payload.meta = payload.meta || {};
-payload.meta = { ...(payload.meta||{}), enrich_status: 'ok' };
+payload = setEnrichStatus(payload, "ok");
+
   } catch (e) {
     if (Number(process.env.DEBUG_TRACE) === 1) {
       console.log('[ENRICH] ensureMarketsWithOddsAPI error:', e?.message || String(e));
