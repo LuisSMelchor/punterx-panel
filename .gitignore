@@ -14,3 +14,4 @@ tools/*.js
 *.bak.*
 *.BAK.*
 .backup.*
+*.bak

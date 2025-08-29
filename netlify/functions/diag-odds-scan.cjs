@@ -22,13 +22,37 @@ exports.handler = async (event) => {
     const regions = process.env.ODDS_REGIONS || 'eu,uk,us,au';
     const markets = process.env.ODDS_MARKETS || 'h2h,both_teams_to_score,totals,double_chance';
     if (!process.env.ODDS_API_KEY || !sport) {
-      return { statusCode: 200, headers:{'content-type':'application/json'}, body: JSON.stringify({ sport, hasKey: !!process.env.ODDS_API_KEY, error: 'missing_key_or_sport' })};
+      return { statusCode: 200, headers:{'content-type':'application/json'}, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+sport, hasKey: !!process.env.ODDS_API_KEY, error: 'missing_key_or_sport' })};
     }
 
     const evURL = `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(sport)}/events?apiKey=${encodeURIComponent(process.env.ODDS_API_KEY)}`;
     const events = await _get(evURL);
     if (!Array.isArray(events) || events.length === 0) {
-      return { statusCode: 200, headers:{'content-type':'application/json'}, body: JSON.stringify({ sport, events_len: 0, reason: 'no_events' })};
+      return { statusCode: 200, headers:{'content-type':'application/json'}, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+sport, events_len: 0, reason: 'no_events' })};
     }
 
     // Recorrer hasta encontrar 1 con markets:
@@ -49,7 +73,19 @@ exports.handler = async (event) => {
 
     return { statusCode: 200, headers:{'content-type':'application/json'},
       body: JSON.stringify({
-        sport,
+        send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+sport,
         events_len: events.length,
         tested,
         found_event: found ? { id: found.id, commence_time: found.commence_time, home: found.home_team, away: found.away_team } : null,
@@ -57,6 +93,18 @@ exports.handler = async (event) => {
       })
     };
   } catch (e) {
-    return { statusCode: 500, headers:{'content-type':'application/json'}, body: JSON.stringify({ error: e?.message || String(e) }) };
+    return { statusCode: 500, headers:{'content-type':'application/json'}, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+error: e?.message || String(e) }) };
   }
 };

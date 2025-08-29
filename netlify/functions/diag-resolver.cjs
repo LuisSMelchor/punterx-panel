@@ -4,7 +4,19 @@ exports.handler = async () => {
     statusCode: 200,
     headers: { 'content-type': 'application/json; charset=utf-8' },
     body: JSON.stringify({
-      name: 'diag-resolver',
+      send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+name: 'diag-resolver',
       ok: true,
       env: {
         AF_DEBUG: Number(AF_DEBUG),
