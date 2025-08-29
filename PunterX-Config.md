@@ -220,3 +220,18 @@ verify:send-report, test:oneshot, test:oneshot-wire, test:markets, test:oneshot-
 Seguridad
 
 No exponer valores de secretos; solo nombres de variables de entorno.
+
+### Flags y variables de entorno (FUENTE DE VERDAD)
+
+| Variable                | Efecto / Uso                                                                 | Notas |
+|-------------------------|-------------------------------------------------------------------------------|-------|
+| `ODDS_ENRICH_ONESHOT`   | Opt-in de enriquecimiento OddsAPI en oneshot.                                | Con ON: `meta.enrich_attempt='oddsapi:events'`, `meta.odds_source='oddsapi:events'`, `meta.enrich_status` (`ok`/`error`). Con OFF: `meta.enrich_attempt='skipped'`. |
+| `SEND_ENABLED`          | Habilita envío a Telegram y activa `send_report` IIFE.                       | Nunca exponer IDs; solo validar presencia de `TG_VIP_CHAT_ID`/`TG_FREE_CHAT_ID`. |
+| `TG_VIP_CHAT_ID`        | Destino VIP opcional.                                                         | Solo nombre; no valores. |
+| `TG_FREE_CHAT_ID`       | Destino FREE opcional.                                                        | Solo nombre; no valores. |
+| `FREE_INCLUDE_BOOKIES`  | Si `1`, incluye Top3 bookies en mensaje FREE.                                | Por defecto no incluir. |
+| `MIN_VIP_EV`            | Umbral de EV para clasificar como VIP.                                       | Por defecto `15`. |
+| `ALLOW_500_ONESHOT`     | Si `1`, errores lanzan HTTP 500; si no, 200 con `reason`.                    | Útil para staging. |
+| `DEBUG_TRACE`           | Si `1`, logs de diagnóstico `[AF_DEBUG]`/`[ENRICH]`.                          | Evitar ruido en prod. |
+| `DISABLE_OPENAI`        | Si `1`, salta llamadas a OpenAI; marca `payload.meta.ai='skipped'`.          | Smoke local. |
+
