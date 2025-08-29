@@ -166,3 +166,57 @@ Se añadieron:
 ---
 
 Fin del documento.
+
+## Guardrails de Respuesta y Meta (FUENTE DE VERDAD)
+
+**Runtime y estilo**
+- Node.js **CommonJS** obligatorio (`require`/`module.exports`). Prohibido ESM en funciones Netlify.
+- Sin duplicar globales (p.ej. `__payloadForMeta`).
+
+**send_report (obligatorio)**
+- En **todas** las respuestas `JSON.stringify({ ... })`, incluir:
+  ```js
+  send_report: (() => {
+    const enabled = (String(process.env.SEND_ENABLED) === '1');
+    const base = {
+      enabled,
+      results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+        ? send_report.results
+        : []
+    };
+    if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+    if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+    return base;
+  })(),
+
+Meta de enriquecimiento (cuando ODDS_ENRICH_ONESHOT=1)
+
+meta.enrich_attempt = 'oddsapi:events' (si no existe ya).
+
+meta.odds_source = 'oddsapi:events' (si no existe ya).
+
+meta.enrich_status = 'ok' | 'error' según éxito del enrich (OddsAPI).
+
+Con opt-in OFF: meta.enrich_attempt = 'skipped'.
+
+Gestión centralizada en /_lib/meta.cjs:
+
+ensureEnrichDefaults(payload, { optIn })
+
+setEnrichStatus(payload, 'ok' | 'error')
+
+Contrato de salida
+
+Con opt-in ON: incluir markets_top3 en el body (de payload.markets o {}).
+
+Todas las rutas (ok, !ai.ok, invalid-ai-json, catch) deben incluir los campos anteriores y el send_report como IIFE.
+
+Pruebas (criterio de DONE)
+
+npm run verify:all en verde:
+
+verify:send-report, test:oneshot, test:oneshot-wire, test:markets, test:oneshot-meta.
+
+Seguridad
+
+No exponer valores de secretos; solo nombres de variables de entorno.
