@@ -23,11 +23,7 @@ async function attachOddsForResults(results = [], opts = {}) {
         const ev = { queryStringParameters: qs };
         const res = await withTimeout(diag.handler(ev), timeoutMs);
         let body; try { body = JSON.parse((res && res.body) || '{}'); } catch { body = {}; }
-        const books =
-          (Array.isArray(body?.bookmakers) && body.bookmakers) ||
-          (Array.isArray(body?.event?.bookmakers) && body.event.bookmakers) ||
-          (Array.isArray(body?.data?.bookmakers) && body.data.bookmakers) ||
-          null;
+        const books = pickBookmakers(body);
         if (Array.isArray(books) && books.length) r.bookmakers = books;
       } catch (_) { /* no-op */ }
     }
@@ -41,3 +37,17 @@ async function attachOddsForResults(results = [], opts = {}) {
   }
 }
 module.exports = { attachOddsForResults };
+// -- helper robusto para extraer bookmakers de cualquier shape --
+function pickBookmakers(obj){
+  const tryPaths = [
+    x=>Array.isArray(x?.bookmakers)&&x.bookmakers,
+    x=>Array.isArray(x?.event?.bookmakers)&&x.event.bookmakers,
+    x=>Array.isArray(x?.data?.bookmakers)&&x.data.bookmakers,
+    x=>Array.isArray(x?.result?.bookmakers)&&x.result.bookmakers,
+    x=>Array.isArray(x?.result?.[0]?.bookmakers)&&x.result[0].bookmakers,
+    x=>Array.isArray(x?.events?.[0]?.bookmakers)&&x.events[0].bookmakers,
+    x=>Array.isArray(x?.payload?.bookmakers)&&x.payload.bookmakers
+  ];
+  for (const f of tryPaths){ const v=f(obj); if (Array.isArray(v) && v.length) return v; }
+  return null;
+}
