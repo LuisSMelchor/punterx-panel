@@ -29,26 +29,22 @@ async function attachOddsForResults(results = [], opts = {}) {
           commence: r.evt.commence
         };
         const ev = { queryStringParameters: qs };
-        const p = withTimeout(diag.handler(ev), timeoutMs);
-        const res = await p;
+        const res = await withTimeout(diag.handler(ev), timeoutMs);
+
         let body;
-        try { body = JSON.parse(res && res.body || '{}'); } catch { body = {}; }
+        try { body = JSON.parse((res && res.body) || '{}'); } catch { body = {}; }
 
-        // buscamos array de bookmakers en respuestas típicas
-        const bak = (
-          body?.bookmakers ||
-          body?.event?.bookmakers ||
-          body?.data?.bookmakers ||
-          null
-        );
+        const books =
+          (Array.isArray(body?.bookmakers) && body.bookmakers) ||
+          (Array.isArray(body?.event?.bookmakers) && body.event.bookmakers) ||
+          (Array.isArray(body?.data?.bookmakers) && body.data.bookmakers) ||
+          null;
 
-        if (Array.isArray(bak) && bak.length) {
-          // adjunta sin romper estructura
-          r.bookmakers = bak;
-          // nota: no pisamos r.oddsapi/r.raw si existen
+        if (Array.isArray(books) && books.length) {
+          r.bookmakers = books; // adjunta para extractor
         }
-      } catch (e) {
-        // silencioso; seguimos con el resto
+      } catch (_) {
+        // no-op
       }
     }
   }
@@ -56,8 +52,10 @@ async function attachOddsForResults(results = [], opts = {}) {
   function withTimeout(promise, ms) {
     return new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error('attachOdds timeout')), ms);
-      promise.then(v => { clearTimeout(t); resolve(v); },
-                   e => { clearTimeout(t); reject(e); });
+      promise.then(
+        v => { clearTimeout(t); resolve(v); },
+        e => { clearTimeout(t); reject(e); }
+      );
     });
   }
 }

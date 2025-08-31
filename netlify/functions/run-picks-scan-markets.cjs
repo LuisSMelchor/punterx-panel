@@ -50,6 +50,7 @@ exports.handler = async (event, context) => {
       const ordered = addClientScore(payload.batch.results, W);
       if ((qs.order || '') === 'client') payload.batch.results = ordered;
       payload.batch.weights = W;
+payload.__bookmakers_after = results.filter(r => Array.isArray(r?.bookmakers) && r.bookmakers.length).length;
     }
 
     /*__DEBUG_MARKETS__*/
