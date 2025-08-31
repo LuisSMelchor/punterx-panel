@@ -24,7 +24,8 @@ async function attachOddsForResults(results = [], opts = {}) {
         const res = await withTimeout(diag.handler(ev), timeoutMs);
         let body; try { body = JSON.parse((res && res.body) || '{}'); } catch { body = {}; }
         const books = pickBookmakers(body);
-        if (Array.isArray(books) && books.length) r.bookmakers = books;
+        if (Array.isArray(books) && books.length) { r.bookmakers = books; }
+     else { r._odds_debug = { diag_keys: Object.keys(body||{}).slice(0,12) }; } // __PICK_DEBUG__
       } catch (_) { /* no-op */ }
     }
   }
