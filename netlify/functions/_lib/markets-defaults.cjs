@@ -5,17 +5,16 @@ const DEF = {
   min_books_btts: 1,
   min_books_ou25: 1,
   min_books_dnb: 1,
-  // nombres “probables” de mercados en OddsAPI (robusto a variaciones comunes)
   keys: {
-    h2h: ['h2h','1x2','match_odds'],
+    h2h:  ['h2h','1x2','match_odds'],
     btts: ['both_teams_to_score','btts','goals_both_teams'],
-    ou: ['totals','over_under','goal_totals'],
-    dnb: ['draw_no_bet','dnb']
+    ou:   ['totals','over_under','goal_totals'],
+    dnb:  ['draw_no_bet','dnb']
   }
 };
 
 const envNumber = (k, d) => {
-  const n = Number(process.env[k]); 
+  const n = Number(process.env[k]);
   return Number.isFinite(n) && n > 0 ? n : d;
 };
 
@@ -28,12 +27,11 @@ function readMinBooks(env = process.env) {
   };
 }
 
+// Convierte decimal odds → prob implícita; si ya es [0..1], la devuelve; si no es válido → null
 function imp(p) {
   const n = Number(p);
   if (!Number.isFinite(n)) return null;
-  // price → implied (decimal odds → 1/odds)
   if (n > 1.0001) return 1 / n;
-  // si ya es probabilidad (0..1) la devolvemos tal cual
   if (n >= 0 && n <= 1) return n;
   return null;
 }
