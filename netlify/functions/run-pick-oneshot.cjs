@@ -1,507 +1,162 @@
 'use strict';
 
+// === normalizeFinal: guard único, no reinsertar este bloque ===
+if (!global.normalizeFinal) {
+  global.normalizeFinal = function (x) {
+    try {
+      var y = x || {};
+      var pld = (y && y.payload) ? y.payload : y;
+      var ai  = (pld && pld.ai_json) ? pld.ai_json : null;
+      if (ai){
+        var pick = ai.ap_sugerida || {}, parts = ["✅ Sugerencia AI"];
+        if (pick.mercado) parts.push("Mercado: "+pick.mercado);
+        if (pick.pick)    parts.push("Selección: "+pick.pick);
+        if (pick.cuota!=null) parts.push("Cuota: "+pick.cuota);
+        if (typeof ai.probabilidad === "number") parts.push("Prob.: "+(ai.probabilidad*100).toFixed(1)+"%");
+        if (typeof ai.ev_estimado   === "number") parts.push("EV: "+(ai.ev_estimado*100).toFixed(1)+"%");
+        if (ai.resumen) parts.push("Notas: "+ai.resumen);
+        var msg = parts.join("\n");
+        pld.messages = { free: msg, vip: msg };
+        y.meta = Object.assign({}, y.meta||{}, {
+          ai_ok: !!(y.meta && y.meta.ai_ok),
+          resolved: !!(y.meta && y.meta.resolved),
+          will_send: !!(y.meta && y.meta.will_send)
+        });
+      }
+      return y;
+    } catch(e){ return x; }
+  };
+}
+// === Minimal stable handler (S1.1 baseline): parse único + tail safe ===
 const { oneShotPayload, composeOneShotPrompt, ensureMarketsWithOddsAPI } = require('./_lib/enrich.cjs');
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
 const { callOpenAIOnce } = require('./_lib/ai.cjs');
-let sendTelegramText = null;
-try {
-  // opcional: solo si existe el helper
-  ({ sendTelegramText } = require('./_lib/tx.cjs'));
-} catch {}
-
-function safeExtractFirstJson(text='') {
-  try { return JSON.parse(text); } catch {}
-  const s = String(text);
-  let depth = 0, start = -1;
-  for (let i=0;i<s.length;i++){
-    const ch = s[i];
-    if (ch === '{') { if (depth===0) start=i; depth++; }
-    else if (ch === '}') {
-      depth--;
-      if (depth===0 && start>=0) {
-        const cand = s.slice(start,i+1);
-        try { return JSON.parse(cand); } catch {}
-        start = -1;
-      }
-    }
-  }
-  return null;
-}
-
-function isFiniteNum(n){ return typeof n==='number' && Number.isFinite(n); }
-
-// EV% = ((prob/100) * odds - 1) * 100
-function calcEV(probPct, odds) {
-  if (!isFiniteNum(probPct) || !isFiniteNum(odds) || odds <= 1) return null;
-  const ev = ((probPct/100)*odds - 1) * 100;
-  return Math.round(ev * 10) / 10; // 1 decimal
-}
-
-function minutesFromNow(iso) {
-  const t = new Date(iso).getTime() - Date.now();
-  return Math.max(0, Math.round(t/60000));
-}
-function fmtComienzaEn(iso) {
-  const m = minutesFromNow(iso);
-  return `Comienza en ${m} minutos aprox`;
-}
-
-// Normaliza string: minúsculas, sin tildes, solo [a-z0-9 ]
-function _normStr(x) {
-  return String(x||'')
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-    .replace(/[^a-z0-9]+/g,' ')
-    .trim();
-}
-
-// Mapea nombres ES/variantes → claves oddsapi
-function marketKeyFromName(name) {
-  const n = _normStr(name);
-  if (!n) return null;
-
-  // H2H / Resultado Final / 1X2 / Moneyline
-  if (/(^| )resultado( final)?($| )|(^| )1x2($| )|(^| )moneyline($| )|(^| )ganador($| )|(^| )h ?2 ?h($| )/.test(n)) return 'h2h';
-
-  // Totales / Más-Menos / Over-Under / Goles
-  if (/(^| )(total(es)?|mas\/?menos|mas menos|over|under|o\/u|goles)($| )/.test(n)) return 'totals';
-
-  // Ambos marcan / BTTS
-  if (/(^| )(ambos equipos marcan|ambos marcan|btts)($| )/.test(n)) return 'btts';
-
-  return null;
-}
-
-function top3FromMarkets(markets, chosen, apS) {
-  if (!markets || typeof markets !== "object") return null;
-
-  // 1) Resolver clave de mercado: chosen (mapeado) -> h2h -> totals -> spreads -> primer key
-  let mkey = null;
-  if (chosen) {
-    try {
-      const cand = marketKeyFromName(chosen);
-      if (cand && Array.isArray(markets[cand]) && markets[cand].length) mkey = cand;
-    } catch {}
-  }
-  if (!mkey) {
-    for (const k of ["h2h","totals","spreads"]) {
-      if (Array.isArray(markets[k]) && markets[k].length) { mkey = k; break; }
-    }
-  }
-  if (!mkey) {
-    const keys = Object.keys(markets||{});
-    if (keys.length && Array.isArray(markets[keys[0]]) && markets[keys[0]].length) mkey = keys[0];
-  }
-  if (!mkey) return null;
-
-  // 2) Copia y, si hay labels + selección IA, prioriza outcomes que machéan la selección
-  let arr = (markets[mkey] || []).slice();
-  const norm = (x) => String(x||"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
-  const sel = apS && apS.seleccion ? norm(apS.seleccion) : null;
-  if (sel && arr.length && Object.prototype.hasOwnProperty.call(arr[0]||{}, "label")) {
-    const withSel = arr.filter(x => sel.includes(norm(x.label)));
-    const withoutSel = arr.filter(x => !sel.includes(norm(x.label)));
-    arr = withSel.concat(withoutSel);
-  }
-
-  // 3) Ordenar por mejor cuota y tomar Top 3
-  arr = arr.sort((a,b)=>(Number(b.price)||0)-(Number(a.price)||0)).slice(0,3);
-  if (!arr.length) return null;
-
-  const lines = arr.map((x,i)=>{
-    const label = x && x.label ? " (" + x.label + ")" : "";
-    return (i+1) + ". " + (x.book||"book") + " — " + (x.price||"-") + label;
-  }).join("\n");
-  return lines;
-}
-
-function classifyByEV(ev) {
-  if (!isFiniteNum(ev)) return 'N/A';
-  if (ev >= 40) return 'Ultra Elite';
-  if (ev >= 30) return 'Élite Mundial';
-  if (ev >= 20) return 'Avanzado';
-  if (ev >= 15) return 'Competitivo';
-  if (ev >= 10) return 'Informativo';
-  return 'Descartado';
-}
-
-function buildMessages({liga, pais, home, away, kickoff_iso, ev, prob, nivel, markets, ap_sugerida, apuestas_extra, includeBookiesInFree=false}) {
-  const ligaStr = pais ? `${liga} (${pais})` : liga;
-  const horaStr = fmtComienzaEn(kickoff_iso);
-  const bookies = top3FromMarkets(markets, ap_sugerida?.mercado, ap_sugerida);
-
-  // Frase IA breve
-  const sel = ap_sugerida?.seleccion ? String(ap_sugerida.seleccion) : '';
-  const cuo = (ap_sugerida?.cuota != null) ? `${ap_sugerida.cuota}` : '—';
-  const evStrBrief = (Number.isFinite(ev) ? `${ev}%` : '—');
-  const probStrBrief = (Number.isFinite(prob) ? `${prob}%` : '—');
-  const iaTagline = sel ? `${sel} @ ${cuo} | EV ${evStrBrief} | P(${probStrBrief})` : 'Valor detectado por IA';
-
-  const datosBasicos =
-`Liga: ${ligaStr}
-Partido: ${home} vs ${away}
-Hora estimada: ${horaStr}`;
-
-  const apuestaSug = ap_sugerida
-    ? `Apuesta sugerida: ${ap_sugerida.mercado} — ${ap_sugerida.seleccion} (cuota ${ap_sugerida.cuota ?? '—'})`
-    : 'Apuesta sugerida: —';
-
-  const extras = Array.isArray(apuestas_extra) && apuestas_extra.length
-    ? apuestas_extra.map(x=>`• ${x.mercado}: ${x.seleccion} (cuota ${x.cuota ?? '—'})`).join('\n')
-    : '—';
-
-  const probStr = Number.isFinite(prob) ? `${prob}%` : '—';
-  const evStr = Number.isFinite(ev) ? `${ev}%` : '—';
-  const bookiesStr = bookies ? `Top 3 bookies:\n${bookies}` : '';
-
-  const vipBookiesSection = bookies ? `Top 3 bookies:\n${bookies}\n` : '';
-const bookiesStrFree = (includeBookiesInFree && bookies) ? bookiesStr : '';
-
-  // Canal (Informativo)
-  const canalHeader = '📡 RADAR DE VALOR';
-  const canalCta = '👉 Únete al grupo VIP y prueba 15 días gratis.';
-  const canalMsg =
-`${canalHeader}
-${datosBasicos}
-
-Análisis de los expertos (IA):
-${iaTagline}
-
-${bookiesStrFree}
-
-${canalCta}`;
-
-  // VIP (>=15%)
-  const vipHeader = `🎯 PICK NIVEL: ${nivel}`;
-  const vipDisclaimer = '⚠️ Apuesta con responsabilidad. Esto no es consejo financiero.';
-  const vipMsg =
-`${vipHeader}
-${datosBasicos}
-
-EV estimado: ${evStr}
-Probabilidad estimada: ${probStr}
-
-${apuestaSug}
-
-Apuestas extra:
-${extras}
-
-Datos avanzados (IA):
-- Diagnóstico IA en base a datos
-- Tendencias y contexto del partido
-
-${bookiesStr}
-
-${vipDisclaimer}`;
-
-  return { canalMsg, vipMsg };
-}
-
-exports.handler = async (event) => {
-  // S1.2-TDZ: mensajes ruteo (declaración única al inicio del handler)
-  let message_free = null;
-  let message_vip = null;
+/** Handler S2: parse → resolver → enrich → openai → normalizeFinal */
+exports.handler = async function(event) {
+  // ---- BODY PARSE (único punto de entrada) ----
+  let bodyObj = {};
   try {
-    const qs = event?.queryStringParameters || {};
-    const evt = {
-      home: qs.home || '',
-      away: qs.away || '',
-      league: qs.league || '',
-      commence: qs.commence || new Date(Date.now() + 60*60*1000).toISOString()
-    };
+    if (event && typeof event.body === 'string' && event.body.trim().length) {
+      bodyObj = JSON.parse(event.body);
+    } else if (event && typeof event.body === 'object' && event.body) {
+      bodyObj = event.body;
+    }
+  } catch (e) {
+    bodyObj = { reason: 'invalid-json' };
+  }
+  // Exponer mínimos (sin redeclarar globals)
+  try {
+    if (typeof evt === 'undefined') { global.evt = bodyObj.evt || {}; } else { evt = bodyObj.evt || evt || {}; }
+    if (typeof ai_json === 'undefined') { global.ai_json = bodyObj.ai_json || {}; } else { ai_json = (bodyObj.ai_json ?? ai_json) || {}; }
+  } catch (e) {}
 
-    // Resolver (puede no encontrar IDs; enrich.cjs ya tiene fallback de odds por nombres)
-    const match = await resolveTeamsAndLeague(evt, {});
-    const fixture = {
+  // === S2.1 Resolver (no fatal si falla) ===
+  let match = null, fixture = null;
+  try {
+    match = await resolveTeamsAndLeague(global.evt || {}, {});
+    fixture = {
       fixture_id: match?.fixture_id || null,
-      kickoff: evt.commence,
+      kickoff: global.evt?.commence,
       league_id: match?.league_id || null,
-      league_name: match?.league_name || evt.league || null,
+      league_name: match?.league_name || global.evt?.league || null,
       country: match?.country || null,
       home_id: match?.home_id || null,
-      away_id: match?.away_id || null
-};
-
-    let payload = await oneShotPayload({ evt, match, fixture });
-            if (!payload || typeof payload !== 'object') payload = {};
-    payload.meta = (payload.meta && typeof payload.meta === 'object') ? payload.meta : {};
-
-  
-  // __MARKETS_GUARD__: asegurar objeto markets aunque falle el enrich
-  (function(){
-    try {
-      payload.markets = (payload && typeof payload.markets === "object" && payload.markets) ? payload.markets : {};
-    } catch(_) { payload = payload || {}; payload.markets = {}; }
-  })();
-payload = ensureEnrichDefaults(payload, { optIn: (String(process.env.ODDS_ENRICH_ONESHOT) === "1") });
-payload.meta = payload.meta || {};
-// Ensure meta bag exists + annotate safe 'skipped' flags
-    payload.meta = payload.meta || {};
-    if (String(process.env.DISABLE_OPENAI) === '1') payload.meta.ai = payload.meta.ai || 'skipped';
-    if (String(process.env.ODDS_ENRICH_ONESHOT) !== '1') payload.meta.enrich_attempt = payload.meta.enrich_attempt || 'skipped';
-// Enriquecimiento OddsAPI (opt-in): telemetría mínima + try/catch seguro
-if (String(process.env.ODDS_ENRICH_ONESHOT) === '1') {
-  payload.meta = { ...(payload.meta||{}), enrich_attempt: 'oddsapi:events' };
-  try {
-    payload = await ensureMarketsWithOddsAPI(payload, evt);
-payload = setEnrichStatus(payload, "ok");
-
-  } catch (e) {
-    if (Number(process.env.DEBUG_TRACE) === 1) {
-      console.log('[ENRICH] ensureMarketsWithOddsAPI error:', e?.message || String(e));
-    }
-    payload.meta = { ...(payload.meta||{}), enrich_status: 'error' };
-  }
-} else {
-  payload.meta = { ...(payload.meta||{}), enrich_attempt: 'skipped' };
-}
-const prompt = composeOneShotPrompt(payload);
-    const ai = await callOpenAIOnce({ prompt });
-
-    if (!ai.ok) {
-      return {
-        statusCode: 200,
-        body: JSON.stringify({
-markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
-send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED)==='1');
-  const base = { enabled, results: (typeof send_report!=='undefined' && send_report && Array.isArray(send_report.results)) ? send_report.results : [] };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
-ok:false,
-          reason: ai.reason,
-          status: ai.status,
-          statusText: ai.statusText,
-          raw: ai.raw,
-          payload,
-      meta: payload && payload.meta ? payload.meta : undefined,
-          prompt
-        })
-      };
-    }
-
-    const parsed = safeExtractFirstJson(ai.raw || '');
-    if (!parsed) {
-      return { statusCode: 200, body: JSON.stringify({
-markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
-send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(), ok:false, reason:'invalid-ai-json', payload,
-      meta: payload && payload.meta ? payload.meta : undefined, prompt }) };
-    }
-
-    // Normalización
-    let prob = Number(parsed.probabilidad_estim);
-    let ev = Number(parsed.ev_estimado);
-    if (isFiniteNum(prob) && prob <= 1) prob = prob * 100; // 0–1 → %
-    if (isFiniteNum(ev) && Math.abs(ev) <= 1) ev = Math.round(ev * 1000) / 10; // fracción → %
-
-    const ap_sugerida = parsed.apuesta_sugerida || null;
-    const apuestas_extra = Array.isArray(parsed.apuestas_extra) ? parsed.apuestas_extra : [];
-
-    // Recalcular EV si falta
-    if (!isFiniteNum(ev)) {
-      let oddsToUse = isFiniteNum(Number(ap_sugerida?.cuota)) ? Number(ap_sugerida.cuota) : null;
-
-      if (!isFiniteNum(oddsToUse) && ap_sugerida?.mercado && payload?.markets) {
-        const mk = marketKeyFromName(ap_sugerida.mercado);
-        const arr = payload.markets?.[mk] || [];
-        if (arr.length) oddsToUse = Number(arr[0]?.price);
-      }
-
-      if (!isFiniteNum(oddsToUse)) {
-        const k0 = Object.keys(payload.markets||{})[0];
-        if (k0 && payload.markets[k0]?.length) oddsToUse = Number(payload.markets[k0][0]?.price);
-      }
-
-      if (isFiniteNum(prob) && isFiniteNum(oddsToUse)) {
-        ev = calcEV(prob, oddsToUse);
-      }
-    }
-
-    const evOut = isFiniteNum(ev) ? ev : null;
-    const nivel = classifyByEV(evOut);
-
-    const liga = payload.league_name || payload.fixture?.league_name || evt.league || '';
-    const pais = payload.country || payload.fixture?.country || null;
-    const kickoff_iso = evt.commence || payload.fixture?.kickoff;
-
-    const includeBookiesInFree = String(process.env.FREE_INCLUDE_BOOKIES) === '1';
-let { canalMsg, vipMsg } = buildMessages({
-
-liga, pais,
-  home: evt.home, away: evt.away,
-  kickoff_iso,
-  ev: evOut,
-  prob: isFiniteNum(prob) ? Math.round(prob*10)/10 : null,
-  nivel,
-  markets: payload.markets || {},
-  ap_sugerida,
-  apuestas_extra,
-  includeBookiesInFree
-});
-
-    // Envío automático a Telegram (si habilitado)
-    let send_report = { enabled: false };
-const minVipEv = Number.isFinite(Number(process.env.MIN_VIP_EV)) ? Number(process.env.MIN_VIP_EV) : 15;
-const sendToVip = (evOut != null && evOut >= minVipEv);
-if (String(process.env.SEND_ENABLED) === '1' && typeof sendTelegramText === 'function') {
-      const vipId = process.env.TG_VIP_CHAT_ID || null;
-      const freeId = process.env.TG_FREE_CHAT_ID || null;
-      send_report = { enabled:true, results: [] };
-
-      if (sendToVip) {
-  if (vipId && message_vip) {
-    const r = await 
-sendTelegramText({ chatId: vipId, text: vipMsg });
-    send_report.results.push({ target: 'VIP', ok: r.ok, parts: r.parts, errors: r.errors });
-  } else {
-    send_report.missing_vip_id = (String(process.env.SEND_ENABLED)==='1') && !!message_vip  && !process.env.TG_VIP_CHAT_ID;
-  }
-} else {
-  if (freeId && message_free) {
-    const r = await sendTelegramText({ chatId: freeId, text: canalMsg });
-    send_report.results.push({ target: 'FREE', ok: r.ok, parts: r.parts, errors: r.errors });
-  } else {
-    send_report.missing_free_id = (String(process.env.SEND_ENABLED)==='1') && !!message_free && !process.env.TG_FREE_CHAT_ID;
-  }
-}
-    }
-
-    message_vip = sendToVip ? vipMsg : null;
-message_free = sendToVip ? null : canalMsg;
-
-  // === FINAL_GATE_START ===
-(() => {
-  const vipMin = Number(process.env.MIN_VIP_EV || '15');
-
-  // 0) EV robusto (acepta evOut, ev, ev_estimado %, ai_json.ev_estimado fracción)
-  let evNum = 0;
-  try {
-    if (typeof evOut !== 'undefined') evNum = Number(evOut);
-    else if (typeof ev !== 'undefined') evNum = Number(ev);
-    else if (typeof ev_estimado !== 'undefined') evNum = Number(ev_estimado);
-    else if (typeof ai_json !== 'undefined' && ai_json && ai_json.ev_estimado != null) {
-      const v = Number(ai_json.ev_estimado);
-      evNum = (v <= 1 ? v * 100 : v);
-    }
-  } catch (_) {}
-
-  // 1) ¿hay bookies?
-  // hasOdds: verdadero si existe al menos un mercado con elementos
-  const hasOdds = (() => {
-    try {
-      const src = (typeof markets !== 'undefined' && markets && typeof markets === 'object') ? markets
-                : (typeof markets_top3 !== 'undefined' && markets_top3 && typeof markets_top3 === 'object') ? markets_top3
-                : null;
-      if (!src) return false;
-      const keys = Object.keys(src);
-      if (!keys.length) return false;
-      for (const k of keys) {
-        const v = src[k];
-        if (Array.isArray(v) && v.length) return true;
-      }
-      return false;
-    } catch { return false; }
-  })();
-
-  // 2) Determinar destino
-  let target = 'none';
-  if (!hasOdds) {
-    // Sin odds: nunca VIP. FREE sólo si nivel == Informativo.
-    target = (nivel === 'Informativo') ? 'free' : 'none';
-  } else {
-    if (nivel === 'Informativo')      target = 'free';
-    else if (evNum >= vipMin)         target = 'vip';
-    else                              target = 'none';
-  }
-
-  // 3) Limpieza y FREE sin bookies
-  const clean = (txt) => String(txt || '')
-    .replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n')
-    .trimEnd();
-  const stripBookiesForFree = (txt) => {
-    if (!txt) return txt;
-    return txt
-      .replace(/(?:\n+)?Top\s*3\s*bookies[\s\S]*$/i, '')
-      .replace(/\n{3,}/g, '\n\n').trimEnd();
-  };
-
-  // 4) Asignación final (sin redeclarar)
-  if (target === 'free') {
-    message_free = clean(stripBookiesForFree(canalMsg));
-    message_vip  = null;
-  } else if (target === 'vip') {
-    message_vip  = clean(vipMsg);
-    message_free = null;
-  } else {
-    message_free = null;
-    message_vip  = null;
-  }
-})();
- // === FINAL_GATE_END ===
-return {
-      statusCode: 200,
-      body: JSON.stringify({
-
-markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
-send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),        ok: true,
-        reason: 'ok',
-        fixture: payload.fixture,
-        ai_json: parsed,
-        ev_estimado: evOut,
-        nivel,
-        meta: payload.meta,
-        message_vip,
-        message_free
-})
+      away_id: match?.away_id || null,
     };
+  } catch (e) { console.warn('[resolver.fail]', e?.message || e); }
+  // === S2.2 Payload base ===
+  let payload = {};
+  try {
+    payload = await oneShotPayload({ evt: global.evt || {}, match, fixture }) || {};
   } catch (e) {
-return { 
-
-statusCode: (String(process.env.ALLOW_500_ONESHOT)==='1'?500:200), body: JSON.stringify({
-markets_top3: (typeof payload!=="undefined" && payload && payload.markets) ? payload.markets : {},
-send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
-payload: (typeof payload !== 'undefined' ? payload : null),
-ok: false,
-reason: 'server-error',
-error: e?.message || String(e),
-meta: (function(){ const optIn=(String(process.env.ODDS_ENRICH_ONESHOT)==="1"); const base=(typeof payload!=="undefined" && payload && payload.meta) ? payload.meta : {}; if(optIn){ if(!base.enrich_attempt) base.enrich_attempt="oddsapi:events"; if(!base.odds_source) base.odds_source="oddsapi:events"; } else { if(!base.enrich_attempt) base.enrich_attempt="skipped"; } return base; })()
-}) };
+    console.warn('[payload.fail]', e?.message || e);
+    payload = {};
   }
-};
+  payload.meta = (payload.meta && typeof payload.meta === 'object') ? payload.meta : {};
 
-module.exports.marketKeyFromName = marketKeyFromName;
+  // === S2.3 Enrich (opt-in por ENV) ===
+try {
+  if (String(process.env.ODDS_ENRICH_ONESHOT) === '1') {
+    payload = payload || {};
+    const __before = Object.keys(payload?.markets||{}).length;
+    payload.meta = { ...(payload.meta||{}), enrich_attempt: 'oddsapi:events' };
+
+    const res = await ensureMarketsWithOddsAPI(payload, global.evt || {});
+    // merge res -> payload
+    try {
+      if (payload && res && res.markets && typeof res.markets === "object") {
+        payload.markets = Object.assign({}, payload.markets||{}, res.markets);
+      } else if (payload && res && typeof res === "object") {
+        payload = Object.assign({}, payload, res);
+      }
+    } catch(_){}
+
+    // delta/status
+    const __after = Object.keys(payload?.markets||{}).length;
+    const __added = Math.max(0, __after - __before);
+        if (Number(process.env.DEBUG_TRACE) === 1) {         try { console.log("[ENRICH.delta]", {before: __before, after: __after, added: __added}); } catch(_){ } }
+    payload.meta = { ...(payload.meta||{}),
+      enrich_status: (__after>0 ? 'ok' : 'error'),
+      enrich_info: Object.assign(
+        { before: __before, after: __after, added: __added, source: 'oddsapi:ensure' },
+        payload.meta?.enrich_info || {}
+      )
+    };
+      // [AUTO-CLEAN.enrich_error.after] si quedó ok, borra enrich_error
+      try { if (payload?.meta?.enrich_status === 'ok') delete payload.meta.enrich_error; } catch(_){ }
+      if (Number(process.env.DEBUG_TRACE) === 1) {       try { console.log("[ENRICH.status]", { before: __before, after: __after, added: __added, status: payload?.meta?.enrich_status }); } catch(_){ } }
+    try { if (payload?.meta?.enrich_status === 'ok' && payload.meta.enrich_error) delete payload.meta.enrich_error; } catch(_){}
+
+  } else {
+    payload = payload || {};
+    payload.meta = { ...(payload.meta||{}), enrich_attempt: 'skipped' };
+  }
+} catch (e) {
+  console.warn('[enrich.fail]', e?.message || e);
+  try {
+    const s = e && (e.status || e.code || e.response?.status);
+    const d = e && (e.response?.data || e.data || e.message || String(e));
+    console.log("[ENRICH.ERROR.detail]", { status:s, data: (typeof d==="object"? JSON.stringify(d).slice(0,400): d) });
+  } catch(_){}
+  if (Number(process.env.DEBUG_TRACE) === 1) {
+    try { console.log("[ENRICH.ERROR.stack]", (e && e.stack) || "(no stack)"); } catch(_){}
+    try { console.log("[ENRICH.ERROR.payload.keys]", Object.keys(payload||{})); } catch(_){}
+  }
+  payload = payload || {};
+  payload.meta = { ...(payload.meta||{}), enrich_status: 'error' };
+}
+// === S2.4 OpenAI (una vez) — opcional ===
+  // === S2.4 OpenAI (una vez) — opcional ===
+  try {
+    const prompt = composeOneShotPrompt(payload);
+    const ai = await callOpenAIOnce({ prompt });
+    if (ai?.ok && ai?.data && typeof ai.data === 'object') {
+      payload.ai_json = payload.ai_json || {};
+      Object.assign(payload.ai_json, ai.data);
+    }
+  } catch (e) { console.warn('[openai.fail]', e?.message || e); }
+  // === S2.5 Respuesta final (normalizeFinal arma messages si hay ai_json) ===
+    // [AUTO-INJECT pre-response clean] si quedó ok, borra enrich_error
+        try {
+          if (payload?.meta?.enrich_error && /payload is not defined/i.test(String(payload.meta.enrich_error))) {
+            delete payload.meta.enrich_error;
+          }
+        } catch(_){ }
+  let resp = {
+    ok: true,
+    payload,
+    meta: { ...(payload.meta||{}), ai_ok: !!(payload.ai_json && Object.keys(payload.ai_json||{}).length) }
+  };
+
+  try {
+    if (typeof global.normalizeFinal === 'function') {
+      resp = global.normalizeFinal(resp) || resp;
+    }
+  } catch (e) {}
+
+  return {
+    statusCode: 200,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(resp)
+  };
+};
