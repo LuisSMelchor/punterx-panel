@@ -32,8 +32,8 @@ exports.handler = async (event) => {
       ? send_report.results
       : []
   };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
 })(),
 evt, match: { fixture_id: null, confidence: null, method: 'none' }, enriched }, null, 2),
@@ -47,8 +47,8 @@ evt, match: { fixture_id: null, confidence: null, method: 'none' }, enriched }, 
       ? send_report.results
       : []
   };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
 })(),
 error: e?.message || String(e) }) };

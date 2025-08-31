@@ -1,4 +1,10 @@
 'use strict';
+var send_report = null, send_report2 = null, send_report3 = null;
+try { ({ send_report, send_report2, send_report3 } = require('./_lib/meta.cjs')); } catch (_){}
+if (typeof send_report !== 'function')  send_report  = () => ({ enabled:false, results:[] });
+if (typeof send_report2 !== 'function') send_report2 = send_report;
+if (typeof send_report3 !== 'function') send_report3 = send_report;
+
 
 function ensureEnrichDefaults(meta){
   const m = (meta && typeof meta==='object') ? meta : {};
@@ -96,11 +102,11 @@ exports.handler = async (event) => {
     return {
       statusCode: 200,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ send_report: (() => {
+      body: JSON.stringify({ _send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
     enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+    results: (typeof _send_report !== 'undefined' && _send_report && Array.isArray(send_report.results))
       ? send_report.results
       : []
   };

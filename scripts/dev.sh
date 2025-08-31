@@ -110,3 +110,18 @@ sanity() {
   node -e "const m=require('./netlify/functions/_lib/enrich.cjs'); console.log('ensure =', (m.ensureMarketsWithOddsAPI&&m.ensureMarketsWithOddsAPI.name)||typeof m.ensureMarketsWithOddsAPI);"
   pingg
 }
+
+# === Multimercado quick scan (usa run-picks-scan) ===
+scan_multi() {
+  local DAYS="${1:-2}"
+  local LIM="${2:-50}"
+  curl -sS "http://localhost:${NL_PORT}/.netlify/functions/run-picks-scan?days_ahead=${DAYS}&limit=${LIM}&min_h2x_len=3&require_markets=1x2"
+}
+
+# Top breakdown (score total + desgloses)
+scan_multi_top() {
+  local DAYS="${1:-2}"
+  local LIM="${2:-30}"
+  scan_multi "$DAYS" "$LIM" \
+  | jq '.batch.results[0:10] | map({score, s1x2:.score_1x2, btts:.score_btts, ou25:.score_ou25, dnb:.score_dnb, fx:(.evt.home+" vs "+.evt.away), mks:.has_markets})'
+}

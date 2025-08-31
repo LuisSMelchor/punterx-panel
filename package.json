@@ -32,6 +32,9 @@
     "openai": "^4.104.0"
   },
   "devDependencies": {
-    "netlify-cli": "^17.38.1"
+    "@tsconfig/node18": "^18.2.4",
+    "esbuild": "^0.23.0",
+    "netlify-cli": "^17.38.1",
+    "typescript": "^5.9.2"
   }
 }
