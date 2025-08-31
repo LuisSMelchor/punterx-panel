@@ -2,6 +2,7 @@
 
 const scan = require('./run-picks-scan.cjs');
 const { extractFromOddsAPI } = require('./_lib/markets-extract.cjs');
+const { attachOddsForResults } = require('./_lib/attach-odds.cjs');
 const { parseWeights, addClientScore } = require('./_lib/score.cjs');
 
 exports.handler = async (event, context) => {
