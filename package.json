@@ -3,23 +3,46 @@
   "version": "1.0.0",
   "scripts": {
     "build": "echo 'Build step (dummy)'",
-    "dev": "netlify dev",
+    "dev": "netlify dev -p 4999 --functions netlify/functions",
     "smoke:functions": "node ./scripts/smoke-functions.js",
     "dev:smoke": "SMOKE_BASE_URL=http://localhost:8888 node ./scripts/smoke-functions.js",
     "pre": "node netlify/functions/autopick-vip-nuevo.cjs",
     "out": "node netlify/functions/autopick-outrights.cjs",
     "live": "node netlify/functions/autopick-live.cjs --loop",
-    "check:syntax": "node -e \"const fs=require('fs');const p='netlify/functions';(function walk(d){for(const f of fs.readdirSync(d)){const fp=d+'/'+f;const s=fs.statSync(fp);if(s.isDirectory()) walk(fp); else if(/\\.(cjs|js)$/.test(fp)){ try{ new Function(fs.readFileSync(fp,'utf8')); } catch(e){ if(e.code==='ENOENT') continue; throw e; } } }})(p); console.log('Syntax OK');\""
+    "check:syntax": "node -e \"const fs=require('fs');const p='netlify/functions';(function walk(d){for(const f of fs.readdirSync(d)){const fp=d+'/'+f;const s=fs.statSync(fp);if(s.isDirectory()) walk(fp); else if(/\\.(cjs|js)$/.test(fp)){ try{ new Function(fs.readFileSync(fp,'utf8')); } catch(e){ if(e.code==='ENOENT') continue; throw e; } } }})(p); console.log('Syntax OK');\"",
+    "test:send-report": "node tests/send_report.smoke.js",
+    "lint:send-report": "bash tests/check_send_report_grep.sh",
+    "verify:send-report": "npm run lint:send-report && npm run test:send-report && npm run test:send-report-edges",
+    "test:send-report-edges": "node tests/send_report.edges.js",
+    "test:oneshot": "node tests/oneshot.enrich.smoke.js",
+    "test:oneshot-int": "node tests/oneshot.enrich.integration.js",
+    "test:oneshot-wire": "node tests/oneshot.wire.integration.js",
+    "test:markets": "node tests/market.mapping.spec.js",
+    "test:oneshot-meta": "node tests/oneshot.meta.spec.js",
+    "verify:all": "npm run verify:send-report && npm run test:oneshot && npm run test:oneshot-wire && npm run test:markets && npm run test:oneshot-meta",
+    "manual:oneshot": "node tests/oneshot.manual.js",
+    "manual:dry": "DISABLE_OPENAI=1 ODDS_ENRICH_ONESHOT=0 node tests/oneshot.manual.js",
+    "scan": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan?days_ahead=10&limit=10' | scripts/jq_safe.sh '{count: (.batch.results|length), sample: (.batch.results[0].evt)}'",
+    "scanm": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=10&limit=10' | scripts/jq_safe.sh '{results: (.batch.results|length), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'",
+    "scanm:fast": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=10&limit=10&fast=1' | scripts/jq_safe.sh '{results: (.batch.results|length), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'",
+    "test": "node --test netlify/functions/__tests__/*.cjs",
+    "scanm:full": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=10&limit=10&fast=0&enrich_max=10&enrich_conc=4' | scripts/jq_safe.sh '{results: (.batch.results|length), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'",
+    "scanm:check": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=7&limit=10&min_h2x_len=3&require_markets=1x2&fetch_odds=1&max_fetch=10&enrich_max=10&enrich_conc=4' | scripts/jq_safe.sh '{results: (.batch.results|length), with_bm: ((.batch.results // []) | map((.bookmakers? | (if type==\"array\" then 1 else 0 end))) | add // 0), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'",
+    "scanm:chk:fast": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=10&limit=10' | scripts/jq_safe.sh '{ok_limited: ((.__bookmakers_after == (.__enrich_dbg.ok // 0)) and (.__bookmakers_after <= (.__enrich_dbg.maxN // 0))), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'",
+    "scanm:chk:full": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=10&limit=10&fast=0&enrich_max=10' | scripts/jq_safe.sh '{ok_all: (.__bookmakers_after == (.__enrich_dbg.results_len // 0)), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'"
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
     "@supabase/supabase-js": "^2.56.0",
     "dayjs": "^1.11.13",
     "dotenv": "^16.6.1",
-    "node-fetch": "^3.3.2",
+    "node-fetch": "^2.7.0",
     "openai": "^4.104.0"
   },
   "devDependencies": {
-    "netlify-cli": "^17.38.1"
+    "@tsconfig/node18": "^18.2.4",
+    "esbuild": "^0.23.0",
+    "netlify-cli": "^17.38.1",
+    "typescript": "^5.9.2"
   }
 }

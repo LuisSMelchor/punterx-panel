@@ -710,7 +710,19 @@ exports.handler = async (event, context) => {
   // Lock simple por invocación
   if (global.__punterx_out_lock) {
     console.warn("[OUT] LOCK activo, salto ciclo");
-    return { statusCode: 200, body: JSON.stringify({ ok: true, skipped: true }) };
+    return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok: true, skipped: true }) };
   }
   global.__punterx_out_lock = true;
 
@@ -719,7 +731,19 @@ exports.handler = async (event, context) => {
     const torneos = await fetchOutrights();
     resumen.torneos = Array.isArray(torneos) ? torneos.length : 0;
     if (!resumen.torneos) {
-      return { statusCode: 200, body: JSON.stringify({ ok: true, resumen }) };
+      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok: true, resumen }) };
     }
 
     for (const T of torneos) {
@@ -838,11 +862,35 @@ exports.handler = async (event, context) => {
       }
     }
 
-    return { statusCode: 200, body: JSON.stringify({ ok: true, resumen }) };
+    return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok: true, resumen }) };
 
   } catch (e) {
     console.error("[OUT] Error ciclo:", e?.message || e);
-    return { statusCode: 200, body: JSON.stringify({ ok: false, error: e?.message || String(e) }) };
+    return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok: false, error: e?.message || String(e) }) };
   } finally {
     global.__punterx_out_lock = false;
     console.log("[OUT] Resumen:", JSON.stringify(resumen));

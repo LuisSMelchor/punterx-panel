@@ -24,9 +24,33 @@ exports.handler = async (event) => {
     return {
       statusCode: 200,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ evt, match: { fixture_id: null, confidence: null, method: 'none' }, enriched }, null, 2),
+      body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+evt, match: { fixture_id: null, confidence: null, method: 'none' }, enriched }, null, 2),
     };
   } catch (e) {
-    return { statusCode: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: e?.message || String(e) }) };
+    return { statusCode: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+error: e?.message || String(e) }) };
   }
 };
