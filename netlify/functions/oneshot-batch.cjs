@@ -31,7 +31,7 @@ status: 'feature_off' }) };
       items.push({ home, away, league, commence });
     }
   } else {
-    // Demo mínima (ajústalo a tu “script maestro” real)
+    // Demo mínima (ajústalo a tu "script maestro" real)
     items.push({ home: 'Charlotte FC', away: 'New York Red Bulls', league: 'Major League Soccer', commence: '2025-08-24T23:00:00Z' });
   }
 
