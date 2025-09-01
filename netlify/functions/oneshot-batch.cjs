@@ -1,3 +1,4 @@
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const { handler: publish } = require('./oneshot-publish.cjs');
 
 /**
