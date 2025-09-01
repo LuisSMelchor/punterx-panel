@@ -129,7 +129,7 @@ module.exports.handler = async (event, context) => {
               if (!r || !r.ok) throw new Error(`HTTP ${r && r.status}`);
               const j = await r.json();
               const arr = Array.isArray(j.bookmakers) ? j.bookmakers : null;
-              if (arr) __cacheSet(it.evt, arr);
+              if (arr) __cachePut(it.evt, arr);
               return arr;
             } finally { try{ctl.cancel();}catch(_){} }
           };
