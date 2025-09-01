@@ -7,7 +7,19 @@ const { grantVipByTgId, revokeVipByTgId, getUserIdByTgId } = require('./_lib/_us
 const { tgSendDM } = require('./send.js');
 
 exports.handler = async (event) => {
-  try {
+  const __send_report = (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})();
+try {
     if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
 
     const { AUTH_CODE } = process.env;
@@ -22,18 +34,7 @@ exports.handler = async (event) => {
     if (!userId) {
       return {
         statusCode: 404,
-        body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+        body: JSON.stringify({ send_report: __send_report,
 ok: false, error: 'user_not_found', tg_id })
       };
     }
@@ -48,18 +49,7 @@ ok: false, error: 'user_not_found', tg_id })
           dm = !!res?.ok;
         } catch (e) {}
       }
-      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
 ok, dm }) };
     }
 
@@ -73,18 +63,7 @@ ok, dm }) };
           dm = !!res?.ok;
         } catch (e) {}
       }
-      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
 ok, dm }) };
     }
 
