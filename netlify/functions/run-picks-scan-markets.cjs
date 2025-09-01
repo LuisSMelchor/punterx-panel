@@ -1,81 +1,55 @@
 'use strict';
 
+// deps base
 const scan = require('./run-picks-scan.cjs');
-const { extractFromOddsAPI } = require('./_lib/markets-extract.cjs');
-const { attachOddsForResults } = require('./_lib/attach-odds.cjs');
-const { parseWeights, addClientScore } = require('./_lib/score.cjs');
 
-exports.handler = async (event, context) => {
-  const base = await scan.handler(event, context);
-  let payload; try { payload = JSON.parse(base.body||'{}'); } catch { payload = {}; }
+// fetch helper (node-fetch si no existe global)
+let __fetch = null;
+try { const nf = require('node-fetch'); __fetch = nf.default || nf; } catch (e) { __fetch = (typeof fetch === 'function') ? fetch : null; }
 
+// base URL del propio functions host (autodetect, sin depender de ODDS_BASE)
+function __resolveFunctionsBase(event) {
+  const h = (event && event.headers) || {};
+  const host = h['x-forwarded-host'] || h['host'] || `localhost:${process.env.PORT || 4999}`;
+  const proto = h['x-forwarded-proto'] || 'http';
+  return `${proto}://${host}/.netlify/functions`;
+}
+
+// fetch a odds-bookmakers
+async function __odds_enrich_fetch(baseUrl, evt) {
   try {
-    const qs = (event && event.queryStringParameters) || {};
-    const W = parseWeights(qs, process.env);
-    const results = payload?.batch?.results || [];
+    if (!__fetch || !baseUrl || !evt) return null;
+    const u = new URL(baseUrl + '/odds-bookmakers');
+    u.searchParams.set('evt', JSON.stringify(evt));
+    const r = await __fetch(u.toString());
+    if (!r || !r.ok) return null;
+    const j = await r.json();
+    return Array.isArray(j.bookmakers) ? j.bookmakers : null;
+  } catch (_) { return null; }
+}
+// handler principal (CJS)
+module.exports.handler = async (event, context) => {
+  // 1) ejecuta el scan base
+  const base = await scan.handler(event, context);
+  let payload;
+  try { payload = JSON.parse(base.body || '{}'); } catch { payload = {}; }
 
-    for (const r of results) {
-      /*__ODDSRAW_PATHS__*/
-      const oddsRaw =
-        r?.oddsapi ||
-        r?._odds ||
-        r?.src?.oddsapi ||
-        r?.raw ||
-        r?.odds ||
-        (Array.isArray(r?.bookmakers) ? { bookmakers: r.bookmakers } : null);
+  // 2) resultados y enrich
+  const results = (payload && payload.batch && Array.isArray(payload.batch.results)) ? payload.batch.results : [];
+  const functionsBase = __resolveFunctionsBase(event);
+  let sum_bm = 0;
 
-      if (!oddsRaw) continue;
-
-      const need = (!Number(r.score_btts) && !Number(r.score_ou25) && !Number(r.score_dnb));
-      const sc = extractFromOddsAPI(r?.evt, oddsRaw, {
-        min_books_1x2: Number(qs.min_books_1x2)||undefined,
-        min_books_btts: Number(qs.min_books_btts)||undefined,
-        min_books_ou25: Number(qs.min_books_ou25)||undefined,
-        min_books_dnb: Number(qs.min_books_dnb)||undefined
-      });
-
-      /*__COERCE_NUMBERS__*/
-      r.score_1x2 = (Number(r.score_1x2)||0) || Number(sc.score_1x2)||0;
-      r.score_btts = (Number(r.score_btts)||0) || Number(sc.score_btts)||0;
-      r.score_ou25 = (Number(r.score_ou25)||0) || Number(sc.score_ou25)||0;
-      r.score_dnb  = (Number(r.score_dnb )||0) || Number(sc.score_dnb )||0;
-
-      // fusiona has_markets
-      const hs = new Set([...(r.has_markets||[]), ...(sc.has_markets||[])]);
-      r.has_markets = Array.from(hs);
-    }
-
-    // calcula score_client y opcionalmente ordena
-    if (payload?.batch?.results) {
-      const ordered = addClientScore(payload.batch.results, W);
-      if ((qs.order || '') === 'client') payload.batch.results = ordered;
-      payload.batch.weights = W;
-/*__COUNT_BOOKMAKERS__*/
-payload.__bookmakers_after = results.filter(r=>Array.isArray(r?.bookmakers)&&r.bookmakers.length).length;
-payload.__bookmakers_after = results.filter(r => Array.isArray(r?.bookmakers) && r.bookmakers.length).length;
-    }
-
-    /*__DEBUG_MARKETS__*/
-    if (String(qs.debug_markets||'') === '1') {
-      payload.__markets_debug__ = (payload.batch?.results||[]).slice(0,3).map(r => ({
-        fx: r?.evt ? `${r.evt.home} vs ${r.evt.away}` : null,
-        paths_found: {
-          oddsapi: !!r?.oddsapi,
-          _odds: !!r?._odds,
-          src_oddsapi: !!r?.src?.oddsapi,
-          raw: !!r?.raw,
-          odds: !!r?.odds,
-          bookmakers: Array.isArray(r?.bookmakers)
-        }
-      }));
-    }
-  } catch(e) {
-    // no-op
+  for (const it of results) {
+    try {
+      if (!it || !it.evt) continue;
+      const bm = await __odds_enrich_fetch(functionsBase, it.evt);
+      if (bm && bm.length) { it.bookmakers = bm; sum_bm += bm.length; }
+    } catch (_) { /* noop */ }
   }
 
-  return {
-    statusCode: base.statusCode || 200,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload)
-  };
+  payload.__bookmakers_after = results.filter(r => r && Array.isArray(r.bookmakers) && r.bookmakers.length).length;
+  payload.__enrich_dbg = { functionsBase, results_len: results.length, sum_bm };
+
+  // 3) return JSON seguro
+  return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
 };
