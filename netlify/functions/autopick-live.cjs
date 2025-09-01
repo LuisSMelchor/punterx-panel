@@ -10,23 +10,14 @@
 
 "use strict";
 
-
-const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 /* ============ Blindaje runtime ============ */
+try { if (typeof fetch === "undefined") global.fetch = require("node-fetch"); } catch (_) {}
 try {
-  if (typeof fetch === "undefined") {
-    global.fetch = require("node-fetch");
-  }
-} catch (_) {}
+  process.on("uncaughtException", e => console.error("[UNCAUGHT]", e && (e.stack||e.message||e)));
+  process.on("unhandledRejection", e => console.error("[UNHANDLED]", e && (e.stack||e.message||e)));
+} catch {}
 
-try {
-  process.on("uncaughtException", (e) => {
-    try { console.error("[UNCAUGHT]", (e && (e.stack || e.message || e))); } catch (_) {}
-  });
-  process.on("unhandledRejection", (e) => {
-    try { console.error("[UNHANDLED]", (e && (e.stack || e.message || e))); } catch (_) {}
-  });
-} catch (_) {}
+/* ============ Imports ============ */
 const fetch = require("node-fetch");
 const { createClient } = require("@supabase/supabase-js");
 const OpenAI = require("openai");
@@ -68,28 +59,11 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // Helpers de envío (debes tener netlify/functions/send.js con LIVE FREE/VIP)
 let send = null;
-try {
-  send = require("./send");
-} catch (e) {
+try { send = require("./send"); }
+catch {
   try { send = require('./send'); }
-  catch (e2) { console.warn("[LIVE] send.js no disponible:", (e2 && (e2.message||e2))); }
+  catch (e) { throw new Error("No se pudo cargar send.js (helpers LIVE)"); }
 }
-
-// === Shims de envío para evitar ReferenceError si cambian exports de send.js ===
-const send_report = (...a) =>
-  (send && (send.report || send.send_report))
-    ? (send.report || send.send_report)(...a)
-    : (console.warn("[LIVE] send_report no disponible"), undefined);
-
-const message_vip = (...a) =>
-  (send && (send.message_vip || send.messageVIP))
-    ? (send.message_vip || send.messageVIP)(...a)
-    : (console.warn("[LIVE] message_vip no disponible"), undefined);
-
-const message_free = (...a) =>
-  (send && (send.message_free || send.messageFREE))
-    ? (send.message_free || send.messageFREE)(...a)
-    : (console.warn("[LIVE] message_free no disponible"), undefined);
 
 /* ============ Utils ============ */
 const PROB_MIN = 5;   // % mínimo IA
@@ -170,42 +144,32 @@ const __norm = (s) => String(s||"")
 let __sportsCache = null;
 async function loadOddsSportsMap(){
   if (__sportsCache) return __sportsCache;
-
-  const url = ODDS_HOST + "/v4/sports?all=true&apiKey=" + encodeURIComponent(ODDS_API_KEY);
+  const url = `${ODDS_HOST}/v4/sports?all=true&apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
   const res = await fetch(url);
-
-  if (!(res && res.ok)) {
-    const __st1 = await safeText(res);
-    console.warn("[OddsAPI] /v4/sports fallo:", (res && res.status), __st1);
-    __sportsCache = { byKey: {}, byTitle: {} };
+  if (!res?.ok) {
+    console.warn("[OddsAPI] /v4/sports fallo:", res?.status, await safeText(res));
+    __sportsCache = { byKey:{}, byTitle:{} };
     return __sportsCache;
   }
-
-  let arr;
-  try { arr = await res.json(); } catch (e) { arr = []; }
-
-  const byKey = {};
-  const byTitle = {};
-
-  for (let i = 0; i < arr.length; i++) {
-    const s = arr[i];
-    if (!(s && s.key)) continue;
+  const arr = await res.json().catch(()=>[]);
+  const byKey = {}; const byTitle = {};
+  for (const s of arr) {
+    if (!s?.key) continue;
     byKey[s.key] = s;
-    if (s && s.title)       byTitle[__norm(s.title)] = s;
-    if (s && s.description) byTitle[__norm(s.description)] = s;
+    if (s?.title)       byTitle[__norm(s.title)] = s;
+    if (s?.description) byTitle[__norm(s.description)] = s;
   }
-
-  __sportsCache = { byKey: byKey, byTitle: byTitle };
+  __sportsCache = { byKey, byTitle };
   return __sportsCache;
 }
 function isValidSportKey(k){
   const key = normalizeSportKey(k);
-  return Boolean(__sportsCache && __sportsCache.byKey && __sportsCache.byKey[key]);
+  return Boolean(__sportsCache?.byKey?.[key]);
 }
 function isActiveSportKey(k){
   const key = normalizeSportKey(k);
-  const item = __sportsCache && __sportsCache.byKey && __sportsCache.byKey[key];
-      if (candidates.some(c => tNorm.includes(c))) { return obj.key; }
+  const item = __sportsCache?.byKey?.[key];
+  return (typeof item?.active === "boolean") ? item.active : true;
 }
 async function resolveSportKeyFallback(originalKey){
   try {
@@ -213,7 +177,7 @@ async function resolveSportKeyFallback(originalKey){
     // Si no existe, intenta por títulos conocidos (heurística)
     const candidates = ["libertadores","sudamericana","conmebol"];
     for (const [tNorm, obj] of Object.entries(cache.byTitle)) {
-      if (candidates.some(c => tNorm.includes(c))) return obj.key;
+      if (candidates.some(c=> tNorm.includes(c))) return obj.key;
     }
   } catch(e){
     console.warn("[OddsAPI] resolveSportKeyFallback error:", e?.message||e);
@@ -232,7 +196,7 @@ async function fetchEvents(sportKey){
     const err = new Error(`[LIVE] events 404 (sport no encontrado): ${key}`);
     err.code = "UNKNOWN_SPORT";
     err.status = r.status;
-    throw err; // 404 � "sin eventos", es "sport inválido" :contentReference[oaicite:4]{index=4}
+    throw err; // 404 ≠ “sin eventos”, es “sport inválido” :contentReference[oaicite:4]{index=4}
   }
   if (!r.ok) {
     const err = new Error(`[LIVE] events error ${r.status}: ${raw?.slice?.(0, 200)}`);
@@ -262,8 +226,7 @@ async function fetchOddsFeatured(sportKey, regions, markets){
         console.info("[OddsAPI] fallback OK:", key, "→", alt);
         return r2.json();
       }
-      const __st2 = await safeText(r2);
-console.warn("[OddsAPI] fallback también falló:", alt, r2.status, __st2);
+      console.warn("[OddsAPI] fallback también falló:", alt, r2.status, await safeText(r2));
     }
     const err = new Error(`[LIVE] odds 404 (sport no encontrado): ${key}`);
     err.code = "UNKNOWN_SPORT";
@@ -460,8 +423,7 @@ async function saveLivePick({ fixture_id, liga, pais, equipos, ev, probPct, nive
 async function afLiveFixtures(){
   const url = `https://v3.football.api-sports.io/fixtures?live=all`;
   const res = await fetch(url, { headers: { "x-apisports-key": API_FOOTBALL_KEY }});
-  if (!res.ok) { const __st3 = await safeText(res);
-console.warn("[AF] fixtures live error:", res.status, __st3); return []; }
+  if (!res.ok) { console.warn("[AF] fixtures live error:", res.status, await safeText(res)); return []; }
   const data = await safeJson(res);
   const arr = Array.isArray(data?.response) ? data.response : [];
   return arr.map(x => {
@@ -527,7 +489,7 @@ async function evaluateOddsEvent(oddsEvent, afLiveIndex){
   const isFREE = !isVIP && ev >= EV_FREE0 && ev < EV_VIP;
   if (!isVIP && !isFREE) return;
 
-  // Anti-duplicado ligero por fixture (bucket 5')
+  // Anti-duplicado ligero por fixture (bucket 5’)
   const mb = minuteBucket(fx.minute);
   const dup = await alreadySentLive({ fixture_id: fx.fixture_id, minute_bucket: mb });
   if (dup) return;
@@ -539,7 +501,7 @@ async function evaluateOddsEvent(oddsEvent, afLiveIndex){
     pais: fx.country || "INT",
     liga: fx.league || "Liga",
     equipos: `${fx.home} vs ${fx.away}`,
-    minuto: `${fx.minute}'`,
+    minuto: `${fx.minute}’`,
     marcador: fx.score,
     fase: fx.phase,
     ev: Math.round(ev),
@@ -557,7 +519,7 @@ async function evaluateOddsEvent(oddsEvent, afLiveIndex){
     pais: fx.country || "INT",
     liga: fx.league || "Liga",
     equipos: `${fx.home} vs ${fx.away}`,
-    minuto: `${fx.minute}'`,
+    minuto: `${fx.minute}’`,
     marcador: fx.score,
     fase: fx.phase,
     razonamiento: (ia.analisis_gratuito || "Se detecta oportunidad por ajustes de línea.").split("\n").filter(Boolean)
@@ -682,25 +644,37 @@ async function runWindow(){
 
 /* ============ Netlify handler ============ */
 exports.handler = async function handler(){
-  const __send_report = (() => {
-    const enabled = (String(process.env.SEND_ENABLED) === '1');
-    const baseReport = {
-      enabled,
-      results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-        ? send_report.results
-        : []
-    };
-    if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  baseReport.missing_vip_id = true;
-    if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) baseReport.missing_free_id = true;
-    return baseReport;
-  })();
   try {
     assertEnv();
     await runWindow();
-    return { statusCode: 200, body: JSON.stringify({ send_report: __send_report, ok: true }) };
+    return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok: true }) };
   } catch (e) {
     console.error("LIVE handler error:", e?.message||e);
-    return { statusCode: 500, body: JSON.stringify({ send_report: __send_report, ok: false, error: e?.message||"live failed" }) };
+    return { statusCode: 500, body: JSON.stringify({ send_report: (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})(),
+ok: false, error: e?.message||"live failed" }) };
   }
 };
 
