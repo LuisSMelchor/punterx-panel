@@ -39,8 +39,8 @@ exports.handler = async (event) => {
       ? send_report.results
       : []
   };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  if (enabled && !!(typeof (typeof message_vip!=='undefined'?message_vip:null)!=='undefined'?(typeof message_vip!=='undefined'?message_vip:null):null)  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!(typeof (typeof message_free!=='undefined'?message_free:null)!=='undefined'?(typeof message_free!=='undefined'?message_free:null):null) && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
 })(),
 input: evt,
@@ -64,8 +64,8 @@ input: evt,
       ? send_report.results
       : []
   };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  if (enabled && !!(typeof (typeof message_vip!=='undefined'?message_vip:null)!=='undefined'?(typeof message_vip!=='undefined'?message_vip:null):null)  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!(typeof (typeof message_free!=='undefined'?message_free:null)!=='undefined'?(typeof message_free!=='undefined'?message_free:null):null) && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
 })(),
 error: e?.message || String(e) }) };

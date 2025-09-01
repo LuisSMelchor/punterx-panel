@@ -9,7 +9,8 @@ try { const nf = require('node-fetch'); __fetch = nf.default || nf; } catch (e) 
 
 // base URL del propio functions host (autodetect, sin depender de ODDS_BASE)
 function __resolveFunctionsBase(event) {
-  const h = (event && event.headers) || {};
+  const envBase = (process && process.env && process.env.ODDS_BASE) || "";
+  if (envBase && /\/\.netlify\/functions$/.test(envBase)) return envBase;
   const host = h['x-forwarded-host'] || h['host'] || `localhost:${process.env.PORT || 4999}`;
   const proto = h['x-forwarded-proto'] || 'http';
   return `${proto}://${host}/.netlify/functions`;
