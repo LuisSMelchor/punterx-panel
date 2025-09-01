@@ -1,6 +1,4 @@
 'use strict';
-
-const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
 
 exports.handler = async (event) => {
@@ -18,7 +16,7 @@ exports.handler = async (event) => {
       windowPadMin: 0
     });
 
-    return { statusCode: 200, const __send_report = (() => {
+    return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
     enabled,
@@ -29,8 +27,8 @@ exports.handler = async (event) => {
   if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
   if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
-})();
-      body: JSON.stringify({ send_report: __send_report, evt, result: r  }, null, 2),};
+})(),
+evt, result: r }, null, 2) };
   } catch (e) {
     return { statusCode: 500, body: JSON.stringify({ send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');

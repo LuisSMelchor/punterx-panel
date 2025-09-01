@@ -1,6 +1,4 @@
 'use strict';
-
-const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const { guessSportKeyFromLeague } = require('./_lib/odds-helpers.cjs');
 const https = require('https');
 
@@ -27,7 +25,7 @@ exports.handler = async (event) => {
 
     const sport = guessSportKeyFromLeague(league);
     if (!process.env.ODDS_API_KEY || !sport) {
-      return { statusCode: 200, headers: { 'content-type': 'application/json' }, const __send_report = (() => {
+      return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
     enabled,
@@ -38,8 +36,8 @@ exports.handler = async (event) => {
   if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
   if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
-})();
-      body: JSON.stringify({ send_report: __send_report, sport, hasKey: !!process.env.ODDS_API_KEY, events_len: 0, sample: null })};
+})(),
+sport, hasKey: !!process.env.ODDS_API_KEY, events_len: 0, sample: null })};
     }
 
     const url = `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(sport)}/events?apiKey=${encodeURIComponent(process.env.ODDS_API_KEY)}&dateFormat=iso`;
@@ -60,7 +58,7 @@ exports.handler = async (event) => {
 sport, hasKey: !!process.env.ODDS_API_KEY,
       events_len: Array.isArray(arr) ? arr.length : 0,
       first: Array.isArray(arr) ? arr.slice(0,3) : null
-     }, null, 2),};
+    }, null, 2) };
   } catch (e) {
     return { statusCode: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
