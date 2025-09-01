@@ -218,3 +218,6 @@ const hit = (typeof __cacheGet === "function" ? __cacheGet(evt) : null);
   }
   throw lastErr;
 };
+
+/* NOTE: __odds_enrich_fetch usa __stableStringify como clave y __cachePut para escribir.
+   No tocar: el caché vive por proceso; no se comparte entre funciones Netlify distintas. */
