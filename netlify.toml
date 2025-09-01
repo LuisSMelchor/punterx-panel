@@ -1,42 +1,7 @@
 [build]
-  command = "npm run build || echo 'no build step'; mkdir -p public"
-  publish = "public"
+  publish = "."
+  functions = "netlify/functions"
 
-[functions]
-  node_bundler = "esbuild"
-  included_files = ["netlify/functions/_lib/**"]
-
-[[redirects]]
-  from = "/telegram/webhook"
-  to   = "/.netlify/functions/telegram-webhook"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/telegram/trial"
-  to   = "/.netlify/functions/tg_trial_webhook"
-  status = 200
-  force = true
-
-
-
-
-[functions."autopick-vip-run2"]
-  external_node_modules = [
-    "@supabase/supabase-js",
-    "openai"
-  ]
-  included_files = [
-    "netlify/functions/autopick-vip-nuevo-impl.cjs",
-    "netlify/functions/_lib/**",
-    "netlify/functions/_logger.cjs",
-    "netlify/functions/_supabase-client.cjs",
-    "netlify/functions/_corazonada.cjs",
-    "prompts_punterx.md"
-  ]
-
-
-# --- Scheduled function: cada 15 minutos ---
-[[scheduled.functions]]
-name = "cron-run2"
-cron = "*/15 * * * *"
+# (opcional) build command dummy por si no hay frontend
+[build.environment]
+  NODE_VERSION = "22"
