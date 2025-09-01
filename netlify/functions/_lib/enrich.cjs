@@ -179,7 +179,7 @@ function composeOneShotPrompt(payload = {}) {
 
 /** exports ÚNICO **/
 /** shim: garantiza mercados_top3 desde fixture/oddsRaw **/
-async function ensureMarketsWithOddsAPI({ fixture, oddsRaw } = {}) {
+/* dedup: removed ensureMarketsWithOddsAPI */ = {}) {
   // --- status guard: cuenta mercados antes ---
   payload = payload || {}; payload.meta = (payload.meta && typeof payload.meta==="object") ? payload.meta : {};
   payload.markets = (payload.markets && typeof payload.markets==="object") ? payload.markets : {};
@@ -213,103 +213,9 @@ module.exports = { enrichFixtureUsingOdds,
   formatMarketsTop3,
   composeOneShotPrompt, ensureMarketsWithOddsAPI }
 
-// === [AUTO-INJECT] ENRICH WRAP SHIM: idempotente ===
-try {
-  // 1) Alias si sólo existe ensureMarketsWithOddsAPI2
-  if (typeof ensureMarketsWithOddsAPI === 'undefined' &&
-      typeof ensureMarketsWithOddsAPI2 === 'function') {
-    var ensureMarketsWithOddsAPI = ensureMarketsWithOddsAPI2;
-  }
+// === [/* dedup: pruned AUTO-INJECT tail */
 
-  // 2) Envolver una sola vez
-  if (typeof ensureMarketsWithOddsAPI === 'function' && !global.__ENRICH_WRAP_ONCE__) {
-    const __origEnsure = ensureMarketsWithOddsAPI;
-    global.__ENRICH_WRAP_ONCE__ = true;
-
-    ensureMarketsWithOddsAPI = async function (payload, evt) {
-      // Guards duros para evitar "payload is not defined"
-      payload = payload || {};
-      payload.meta = (payload.meta && typeof payload.meta === 'object') ? payload.meta : {};
-      payload.markets = (payload.markets && typeof payload.markets === 'object') ? payload.markets : {};
-
-      try {
-        const out = await __origEnsure(payload, evt);
-        return out || payload;
-      } catch (e) {
-        try {
-          payload.meta.enrich_status = payload.meta.enrich_status || 'error';
-          payload.meta.enrich_error  = String((e && e.message) || e);
-        } catch (_) {}
-        return payload;
-      }
-    };
-
-    // 3) Refrescar export en CommonJS
-    try { module.exports.ensureMarketsWithOddsAPI = ensureMarketsWithOddsAPI; } catch (_){}
-    try { exports.ensureMarketsWithOddsAPI = ensureMarketsWithOddsAPI; } catch (_){}
-  }
-} catch (_) {}
-// === [/AUTO-INJECT] ===
-
-
-// === [AUTO-INJECT] ensureMarketsWithOddsAPI export hotfix (idempotent, clean) ===
-try {
-  // 1) Alias si sólo existe ensureMarketsWithOddsAPI2
-  if (typeof ensureMarketsWithOddsAPI === 'undefined' &&
-      typeof ensureMarketsWithOddsAPI2 === 'function') {
-    var ensureMarketsWithOddsAPI = ensureMarketsWithOddsAPI2;
-  }
-
-  // 2) Definición básica si aún no existe
-  if (typeof ensureMarketsWithOddsAPI !== 'function') {
-    async function ensureMarketsWithOddsAPI(payload = {}, evt = {}) {
-      payload = payload || {};
-      payload.meta = (payload.meta && typeof payload.meta === 'object') ? payload.meta : {};
-      payload.markets = (payload.markets && typeof payload.markets === 'object') ? payload.markets : {};
-      try {
-        const enriched = await enrichFixtureUsingOdds({ fixture: evt || {}, oddsRaw: null });
-        const mk = (enriched && enriched.markets_top3) ? enriched.markets_top3 : {};
-        if (mk && typeof mk === 'object') {
-          payload.markets = Object.assign({}, payload.markets, mk);
-        }
-      } catch (_) {}
-      return payload;
-    }
-  }
-
-  // 3) Re-export explícito CommonJS
-  try { module.exports.ensureMarketsWithOddsAPI = ensureMarketsWithOddsAPI; } catch (_){}
-  try { exports.ensureMarketsWithOddsAPI = ensureMarketsWithOddsAPI; } catch (_){}
-} catch (_) {}
-// === [/AUTO-INJECT] ===
-
-// === [AUTO-INJECT ensure.wrap.safe.v2] idempotent ===
-try {
-  // Wrapper que NO llama a la impl. rota; usa enrichFixtureUsingOdds directo
-  async function ensureMarketsWithOddsAPI_SAFE(payload = {}, evt = {}) {
-    try { payload = payload || {}; } catch(_) { payload = {}; }
-    payload.meta = (payload.meta && typeof payload.meta === 'object') ? payload.meta : {};
-    payload.markets = (payload.markets && typeof payload.markets === 'object') ? payload.markets : {};
-
-    try {
-      const enriched = await enrichFixtureUsingOdds({ fixture: evt || {}, oddsRaw: null });
-      const mk = (enriched && enriched.markets_top3 && typeof enriched.markets_top3 === 'object')
-        ? enriched.markets_top3 : {};
-      if (mk && typeof mk === 'object') {
-        payload.markets = Object.assign({}, payload.markets, mk);
-      }
-      payload.meta.enrich_status = payload.meta.enrich_status || 'ok';
-      return payload;
-    } catch (e) {
-      try {
-        payload.meta.enrich_status = payload.meta.enrich_status || 'error';
-        payload.meta.enrich_error  = String((e && e.message) || e);
-      } catch(_) {}
-      return payload;
-    }
-  }
-
-  // Exporta el wrapper seguro como oficial
-  try { module.exports.ensureMarketsWithOddsAPI = ensureMarketsWithOddsAPI_SAFE; } catch(_){}
-  try { exports.ensureMarketsWithOddsAPI = ensureMarketsWithOddsAPI_SAFE; } catch(_){}
-} catch(_){}
+// === clean exports (dedup) ===
+try{ module.exports.composeOneShotPrompt=composeOneShotPrompt; }catch(_){ }
+try{ module.exports.oneShotPayload=oneShotPayload; }catch(_){ }
+try{ module.exports.ensureMarketsWithOddsAPI=ensureMarketsWithOddsAPI; }catch(_){ }
