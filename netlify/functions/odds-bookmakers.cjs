@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 // Handler mínimo para evitar 404 en prod; reemplázalo por la lógica real.
 // Lee ?evt=... (URL-encoded JSON) y responde estructura esperada.
 module.exports.handler = async (event) => {

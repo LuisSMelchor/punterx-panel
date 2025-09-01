@@ -1,3 +1,4 @@
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
 // fetchOddsForFixture existe pero aún no lo usamos aquí para no exponer secretos
 exports.handler = async (event) => {

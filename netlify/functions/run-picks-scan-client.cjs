@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const scan = require('./run-picks-scan.cjs'); // reutiliza tu handler actual
 const { parseWeights, addClientScore } = require('./_lib/score.cjs');
 

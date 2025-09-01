@@ -1,4 +1,6 @@
 'use strict';
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const https = require('https');
 const { guessSportKeyFromLeague } = require('./_lib/odds-helpers.cjs');
 

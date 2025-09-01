@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const __json = (code, obj) => ({
   statusCode: code,
   headers: { 'content-type': 'application/json' },

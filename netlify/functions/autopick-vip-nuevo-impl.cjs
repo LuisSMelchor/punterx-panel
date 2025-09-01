@@ -6,6 +6,8 @@
 
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 /* ============ Blindaje runtime ============ */
 try { if (typeof fetch === 'undefined') global.fetch = require('node-fetch'); } catch (_) {}
 try {
@@ -294,7 +296,7 @@ function emojiNivel(nivel) {
   return '⭐';
 }
 
-// Normaliza “apuestas extra” en bullets si viene como texto plano
+// Normaliza "apuestas extra" en bullets si viene como texto plano
 function formatApuestasExtra(s) {
   const raw = String(s || '').trim();
   if (!raw) return '—';
@@ -1836,7 +1838,7 @@ function construirMensajeVIP(partido, pick, probPct, ev, nivel, cuotaInfo, infoE
 function construirMensajeFREE(partido, pick, probPct, ev, nivel, cz) {
   const mins = Math.max(0, Math.round(partido.minutosFaltantes));
   const motiv = String(pick.frase_motivacional || '').trim();
-  const motivLine = motiv && motiv.toLowerCase() !== 's/d' ? `\n💬 “${motiv}”\n` : '\n';
+  const motivLine = motiv && motiv.toLowerCase() !== 's/d' ? `\n💬 "${motiv}"\n` : '\n';
 
   const czLine = (cz && cz.score >= 50)
     ? `\n${corazonadaBadge(cz.score)} Corazonada IA: ${cz.score}/100${cz.motivo ? ` — ${cz.motivo}` : ''}\n`

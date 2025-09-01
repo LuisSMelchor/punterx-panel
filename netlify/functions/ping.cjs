@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 exports.handler = async (event) => {
   const method = (event && event.httpMethod || '').toUpperCase();
   let body = null;

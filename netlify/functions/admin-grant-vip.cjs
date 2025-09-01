@@ -1,6 +1,8 @@
 // netlify/functions/admin-grant-vip.cjs
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const { grantVipByTgId, revokeVipByTgId, getUserIdByTgId } = require('./_lib/_users.cjs');
 const { tgSendDM } = require('./send.js');
 

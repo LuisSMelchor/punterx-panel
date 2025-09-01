@@ -10,6 +10,8 @@
 
 "use strict";
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 /* ============ Blindaje runtime ============ */
 try { if (typeof fetch === "undefined") global.fetch = require("node-fetch"); } catch (_) {}
 try {
@@ -196,7 +198,7 @@ async function fetchEvents(sportKey){
     const err = new Error(`[LIVE] events 404 (sport no encontrado): ${key}`);
     err.code = "UNKNOWN_SPORT";
     err.status = r.status;
-    throw err; // 404 ≠ “sin eventos”, es “sport inválido” :contentReference[oaicite:4]{index=4}
+    throw err; // 404 ≠ "sin eventos", es "sport inválido" :contentReference[oaicite:4]{index=4}
   }
   if (!r.ok) {
     const err = new Error(`[LIVE] events error ${r.status}: ${raw?.slice?.(0, 200)}`);
@@ -489,7 +491,7 @@ async function evaluateOddsEvent(oddsEvent, afLiveIndex){
   const isFREE = !isVIP && ev >= EV_FREE0 && ev < EV_VIP;
   if (!isVIP && !isFREE) return;
 
-  // Anti-duplicado ligero por fixture (bucket 5’)
+  // Anti-duplicado ligero por fixture (bucket 5')
   const mb = minuteBucket(fx.minute);
   const dup = await alreadySentLive({ fixture_id: fx.fixture_id, minute_bucket: mb });
   if (dup) return;
@@ -501,7 +503,7 @@ async function evaluateOddsEvent(oddsEvent, afLiveIndex){
     pais: fx.country || "INT",
     liga: fx.league || "Liga",
     equipos: `${fx.home} vs ${fx.away}`,
-    minuto: `${fx.minute}’`,
+    minuto: `${fx.minute}'`,
     marcador: fx.score,
     fase: fx.phase,
     ev: Math.round(ev),
@@ -519,7 +521,7 @@ async function evaluateOddsEvent(oddsEvent, afLiveIndex){
     pais: fx.country || "INT",
     liga: fx.league || "Liga",
     equipos: `${fx.home} vs ${fx.away}`,
-    minuto: `${fx.minute}’`,
+    minuto: `${fx.minute}'`,
     marcador: fx.score,
     fase: fx.phase,
     razonamiento: (ia.analisis_gratuito || "Se detecta oportunidad por ajustes de línea.").split("\n").filter(Boolean)

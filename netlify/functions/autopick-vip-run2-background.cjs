@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const __accepted = () => ({ statusCode: 202, body: '' });
 const qbool = (v) => v === '1' || v === 'true' || v === 'yes';
 

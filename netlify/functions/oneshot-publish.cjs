@@ -154,8 +154,7 @@ exports.handler = async (event) => {
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          send_report: (() => {
+        const __send_report = (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
     enabled,
@@ -166,12 +165,12 @@ exports.handler = async (event) => {
   if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
   if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
-})(),
-published: false,
+})();
+      body: JSON.stringify({ send_report: __send_report, published: false,
           preview: true,
           reason: !canPublish ? 'missing_telegram_env' : (!hasMinData ? 'insufficient_payload' : (match?.ok === false ? 'match_not_resolved' : 'preview')),
           payload
-        }, null, 2),
+         }, null, 2),
       };
     }
 

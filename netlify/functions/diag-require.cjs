@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 exports.handler = async () => {
   const out = { ok: true, requires: {} };
   function check(name, fn) {

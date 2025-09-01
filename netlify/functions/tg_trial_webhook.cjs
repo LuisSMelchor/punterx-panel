@@ -3,6 +3,8 @@
 
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 // (Polyfill) — Netlify en Node 20 ya trae fetch, pero si corrieras esto localmente en otra versión:
 try { if (typeof fetch === 'undefined') global.fetch = require('node-fetch'); } catch (_) {}
 

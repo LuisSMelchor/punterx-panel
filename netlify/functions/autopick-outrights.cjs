@@ -2,12 +2,14 @@
 // PunterX · Autopick OUTRIGHTS (Apuestas a Futuro)
 // - Teaser ~7 días antes (FREE + VIP).
 // - Pick final 24 ± 2 horas antes del inicio (VIP si EV ≥15%, FREE si 10–14.9%).
-// - Top‑3 “Mejores 3 casas para apostar” (#1 en negritas).
+// - Top‑3 "Mejores 3 casas para apostar" (#1 en negritas).
 // - Apuestas extra: solo las de mayor probabilidad (umbral configurable).
 // - CommonJS, Node 20, sin top-level await, sin dependencias nuevas.
 
 "use strict";
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 /* ============================ Blindaje runtime ============================ */
 try {
   if (typeof fetch === "undefined") {

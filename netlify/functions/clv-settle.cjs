@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
 

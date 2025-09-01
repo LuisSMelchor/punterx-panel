@@ -1,4 +1,6 @@
 'use strict';
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const { fetchOddsForFixture, guessSportKeyFromLeague } = require('./_lib/odds-helpers.cjs');
 
 exports.handler = async (event) => {
@@ -30,8 +32,7 @@ exports.handler = async (event) => {
     return {
       statusCode: 200,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        send_report: (() => {
+      const __send_report = (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
     enabled,
@@ -42,8 +43,8 @@ exports.handler = async (event) => {
   if (enabled && !!(typeof (typeof message_vip!=='undefined'?message_vip:null)!=='undefined'?(typeof message_vip!=='undefined'?message_vip:null):null)  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
   if (enabled && !!(typeof (typeof message_free!=='undefined'?message_free:null)!=='undefined'?(typeof message_free!=='undefined'?message_free:null):null) && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
-})(),
-input: evt,
+})();
+      body: JSON.stringify({ send_report: __send_report, input: evt,
         env: {
           ODDS_REGIONS: regions,
           ODDS_MARKETS: marketsRq,
@@ -53,8 +54,7 @@ input: evt,
         fetch_len: count,
         marketsPeek,
         sampleTeams: sample ? { home: sample.home_team, away: sample.away_team, commence_time: sample.commence_time } : null
-      }, null, 2)
-    };
+       }, null, 2),};
   } catch (e) {
     return { statusCode: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');

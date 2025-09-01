@@ -1,6 +1,8 @@
 'use strict';
 
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 /*__SEND_REPORT_HOIST_V2__*/
 function __send_report_base(payload = {}) {
   try {
@@ -48,8 +50,7 @@ exports.handler = async () => {
   return {
     statusCode: 200,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      send_report: (() => {
+    const __send_report = (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
     enabled,
@@ -60,9 +61,8 @@ exports.handler = async () => {
   if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
   if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
-})(),
-now: new Date().toISOString(),
+})();
+      body: JSON.stringify({ send_report: __send_report, now: new Date().toISOString(),
       env: envDump
-    }, null, 2)
-  };
+     }, null, 2),};
 };

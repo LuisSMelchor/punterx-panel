@@ -1,3 +1,4 @@
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 exports.handler = async () => {
   const { AF_DEBUG=0, AF_METRICS=0, MATCH_RESOLVE_CONFIDENCE=0.80, SIM_THR=0.60, TIME_PAD_MIN=90 } = process.env;
   return {

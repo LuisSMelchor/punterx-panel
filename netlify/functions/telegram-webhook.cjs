@@ -1,3 +1,4 @@
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 // netlify/functions/telegram-webhook.cjs
 const { supabase } = require('./_lib/_supabase-client.cjs');
 const { tgSendMessage, tgCreateInviteLink } = require('./send.js');

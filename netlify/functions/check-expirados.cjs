@@ -3,6 +3,8 @@
 
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const VERSION = 'check-expirados v2.0';
 
 // Polyfill defensivo por si corres local en un Node sin fetch
