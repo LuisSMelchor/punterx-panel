@@ -47,7 +47,7 @@ function __cacheGet(evt){
   if ((Date.now()-at) > ENRICH_CACHE_TTL_MS) { __ENRICH_CACHE.delete(k); return null; }
   return bm;
 }
-function __cachePut(evt,bm){ try{ __ENRICH_CACHE.set(__cacheKey(evt), { at: Date.now(), bm }); }catch(_){} }
+function __cachePut(evt,bm){ try{ __ENRICH_CACHE.set(__cacheKey(evt){ at: Date.now(), bm }); }catch(_){} }
 /* --- /cache --- */
 
 function __withTimeout(ms){
@@ -81,7 +81,7 @@ try {
     const doFetch = async () => {
       const ctl = __withTimeout(ENRICH_TIMEOUT_MS);
       try {
-        const r = await __fetch(u.toString(), { signal: ctl.signal });
+        const r = await __fetch(u.toString(){ signal: ctl.signal });
         if (!r || !r.ok) throw new Error(`HTTP ${r && r.status}`);
         const j = await r.json();
           const arr = Array.isArray(j.bookmakers) ? j.bookmakers : null;
@@ -127,7 +127,7 @@ module.exports.handler = async (event, context) => {
           const doFetch = async () => {
             const ctl = __withTimeout(ENRICH_TIMEOUT_MS);
             try {
-              const r = await ((module.exports??null)&&module.exports.__fetch||__fetch||fetch)(u.toString(), { signal: ctl.signal });
+              const r = await ((module.exports??null)&&module.exports.__fetch||__fetch||fetch)(u.toString(){ signal: ctl.signal });
               if (!r || !r.ok) throw new Error(`HTTP ${r && r.status}`);
               const j = await r.json();
               const arr = Array.isArray(j.bookmakers) ? j.bookmakers : null;
@@ -202,8 +202,8 @@ const hit = (typeof __cacheGet === "function" ? __cacheGet(evt) : null);
   for (let i=0; i<attempts; i++){
     const ctl = (typeof __withTimeout==="function" ? __withTimeout(ENRICH_TIMEOUT_MS) : { signal: undefined, cancel(){}} );
     try {
-      const r = await fx(u.toString(), { signal: ctl.signal });
-      if (!r || !r.ok) throw Object.assign(new Error(`HTTP ${r && r.status}`), { status: r && r.status });
+      const r = await fx(u.toString(){ signal: ctl.signal });
+      if (!r || !r.ok) throw Object.assign(new Error(`HTTP ${r && r.status}`){ status: r && r.status });
       const j = await r.json();
       const arr = Array.isArray(j.bookmakers) ? j.bookmakers : null;
         if (arr) __cachePut(evt, arr);
