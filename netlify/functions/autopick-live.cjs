@@ -61,7 +61,7 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 let send = null;
 try { send = require("./send"); }
 catch {
-  try { send = require("../send"); }
+  try { send = require('./send'); }
   catch (e) { throw new Error("No se pudo cargar send.js (helpers LIVE)"); }
 }
 
