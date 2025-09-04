@@ -116,7 +116,8 @@ function msgExpired() {
 
 // === Core ===
 exports.handler = async () => {
-  console.log(`[${VERSION}] start`);
+  const __send_report = (() => { const en=(String(process.env.SEND_ENABLED)==='1'); const base={ enabled: en, results:(typeof send_report!=='undefined'&&send_report&&Array.isArray(send_report.results))?send_report.results:[] }; if(en&&typeof message_vip!=='undefined'&&message_vip&&!process.env.TG_VIP_CHAT_ID) base.missing_vip_id=true; if(en&&typeof message_free!=='undefined'&&message_free&&!process.env.TG_FREE_CHAT_ID) base.missing_free_id=true; return base; })();
+console.log(`[${VERSION}] start`);
   try {
     const supabase = await getSupabase();
     const now = new Date();

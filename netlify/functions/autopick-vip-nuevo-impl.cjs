@@ -1,4 +1,4 @@
-// netlify/functions/autopick-vip-run2.cjs
+// netlify/functions/autopick-vip-nuevo-impl.cjs
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–55 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
 // + Corazonada IA integrada (helpers, cálculo, visualización y guardado en Supabase)
@@ -13,7 +13,7 @@ try { if (typeof fetch === 'undefined') global.fetch = require('node-fetch'); } 
 try {
   process.on('uncaughtException', e => console.error('[UNCAUGHT]', e && (e.stack || e.message || e)));
   process.on('unhandledRejection', e => console.error('[UNHANDLED]', e && (e.stack || e.message || e)));
-} catch {}
+} catch(e) {}
 
 // netlify/functions/autopick-vip-run2.cjs
 let OpenAICtor = null; // se resuelve por import() cuando se necesite
@@ -105,358 +105,512 @@ function assertEnv() {
   const missing = required.filter(k => !process.env[k]);
   if (missing.length) {
     console.error('❌ ENV faltantes:', missing.join(', '));
-    throw new Error('Variables de entorno faltantes');
+    throw new Error('Variables de entorno faltantes (autopick-live)');
   }
 }
 
-process.on('unhandledRejection', r => console.error('UNHANDLED_REJECTION', r));
-process.on('uncaughtException',  e => console.error('UNCAUGHT_EXCEPTION', e));
+/* =============== CLIENTES =============== */
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// =============== CLIENTES (lazy init para evitar crash en import) ===============
-let supabase = null;
-let openai = null;
-
-async function ensureSupabase() {
-  if (supabase) return supabase;
-  assertEnv(); // valida que existan SUPABASE_URL/KEY (y demás) con error entendible
-  const { createClient } = await import('@supabase/supabase-js'); // ESM safe dentro del handler
-  supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-  return supabase;
+// Helpers de envío (debes tener netlify/functions/send.js con LIVE FREE/VIP)
+let send = null;
+try { send = require("./send"); }
+catch {
+  try { send = require('./send'); }
+  catch (e) { throw new Error("No se pudo cargar send.js (helpers LIVE)"); }
 }
 
-async function ensureOpenAI() {
-  if (openai) return openai;
-  assertEnv(); // valida OPENAI_API_KEY antes de instanciar
-  if (!OpenAICtor) {
-    const m = await import('openai'); // ESM → import dinámico
-    OpenAICtor = m.default || m.OpenAI;
+/* =============== Utils =============== */
+const PROB_MIN = 5;   // % mínimo IA
+const PROB_MAX = 85;  // % máximo IA
+const GAP_MAX  = 15;  // p.p. IA vs implícita
+const EV_VIP   = 15;  // % umbral VIP
+const EV_FREE0 = 10;  // % umbral FREE informativo
+
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+async function safeJson(res){ try { return await res.json(); } catch { return null; } }
+async function safeText(res){ try { return await res.text(); } catch { return ""; } }
+function nowISO(){ return new Date().toISOString(); }
+
+function impliedProbPct(cuota){
+  const c = Number(cuota);
+  if (!Number.isFinite(c) || c <= 1.0) return null;
+  return +(100 / c).toFixed(2);
+}
+function calcEV(probPct, cuota){
+  const p = Number(probPct)/100, c = Number(cuota);
+  if (!Number.isFinite(p) || !Number.isFinite(c)) return null;
+  return +(((p * c) - 1) * 100).toFixed(2);
+}
+function minuteBucket(minute){ const m = Math.max(0, Number(minute)||0); return Math.floor(m/5)*5; }
+function phaseFromMinute(minute){
+  const m = Number(minute)||0;
+  if (m <= 15) return "early";
+  if (m >= 40 && m <= 50) return "ht";
+  if (m >= 75) return "late";
+  return "mid";
+}
+function nivelPorEV(ev){
+  const v = Number(ev)||0;
+  if (v >= 40) return "🟣 Ultra Élite";
+  if (v >= 30) return "🎯 Élite Mundial";
+  if (v >= 20) return "🥈 Avanzado";
+  if (v >= 15) return "🥉 Competitivo";
+  return "📄 Informativo";
+}
+function normalizeProbPct(x){
+  const n = Number(x);
+  if (!Number.isFinite(n)) return null;
+  if (n <= 1) return +(n*100).toFixed(2); // venía 0–1
+  return +n.toFixed(2);                   // ya venía en %
+}
+
+/* ============ Mapas y normalización de sport keys ============ */
+// Map base (tu proyecto) liga → sport_key OddsAPI
+const LIGA_TO_SPORTKEY = {
+  "Spain - LaLiga": "soccer_spain_la_liga",
+  "England - Premier League": "soccer_epl",
+  "Germany - Bundesliga": "soccer_germany_bundesliga",
+  "Italy - Serie A": "soccer_italy_serie_a",
+  "France - Ligue 1": "soccer_france_ligue_one",
+  "Netherlands - Eredivisie": "soccer_netherlands_eredivisie",
+  "Portugal - Primeira Liga": "soccer_portugal_primeira_liga",
+  "USA - MLS": "soccer_usa_mls",
+  "UEFA - Champions League": "soccer_uefa_champs_league",
+  "UEFA - Europa League": "soccer_uefa_europa_league",
+  "South America - Copa Libertadores": "soccer_conmebol_copa_libertadores",
+  "South America - Copa Sudamericana": "soccer_conmebol_copa_sudamericana"
+};
+
+// Alias para claves antiguas CONMEBOL (compatibilidad hacia atrás)
+const SPORT_KEY_ALIASES = {
+  "soccer_conmebol_libertadores":  "soccer_conmebol_copa_libertadores",
+  "soccer_conmebol_sudamericana":  "soccer_conmebol_copa_sudamericana",
+};
+const normalizeSportKey = (k) => SPORT_KEY_ALIASES[k] || k;
+
+/* ============ OddsAPI Sports Catalog & helpers ============ */
+// Catálogo oficial (no consume cuota) — /v4/sports?all=true (OddsAPI docs) :contentReference[oaicite:2]{index=2}
+const ODDS_HOST = "https://api.the-odds-api.com";
+const __norm = (s) => String(s||"")
+  .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+  .replace(/\s+/g," ").trim().toLowerCase();
+
+let __sportsCache = null;
+async function loadOddsSportsMap(){
+  if (__sportsCache) return __sportsCache;
+  const url = `${ODDS_HOST}/v4/sports?all=true&apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
+  const res = await fetch(url);
+  if (!res?.ok) {
+    console.warn("[OddsAPI] /v4/sports fallo:", res?.status, await safeText(res));
+    __sportsCache = { byKey:{}, byTitle:{} };
+    return __sportsCache;
   }
-  openai = new OpenAICtor({ apiKey: OPENAI_API_KEY });
-  return openai;
+  const arr = await res.json().catch(()=>[]);
+  const byKey = {}; const byTitle = {};
+  for (const s of arr) {
+    if (!s?.key) continue;
+    byKey[s.key] = s;
+    if (s?.title)       byTitle[__norm(s.title)] = s;
+    if (s?.description) byTitle[__norm(s.description)] = s;
+  }
+  __sportsCache = { byKey, byTitle };
+  return __sportsCache;
 }
-
-// === Diagnóstico: helpers mínimos (in-file) ===
-function minutesUntilKickoff(ts) {
-  const t = (ts && new Date(ts).getTime()) || NaN;
-  return Math.round((t - Date.now()) / 60000);
+function isValidSportKey(k){
+  const key = normalizeSportKey(k);
+  return Boolean(__sportsCache?.byKey?.[key]);
 }
-
-async function upsertDiagnosticoEstado(status, details) {
+function isActiveSportKey(k){
+  const key = normalizeSportKey(k);
+  const item = __sportsCache?.byKey?.[key];
+  return (typeof item?.active === "boolean") ? item.active : true;
+}
+async function resolveSportKeyFallback(originalKey){
   try {
-    const payload = {
-      fn_name: 'autopick-vip-run2',
-      status,
-      details: details || null,
-      updated_at: new Date().toISOString()
-    };
-    const { error } = await supabase
-      .from('diagnostico_estado')
-      .upsert(payload, { onConflict: 'fn_name' });
-    if (error) console.warn('[DIAG] upsertDiagnosticoEstado:', error.message);
-  } catch (e) {
-    console.warn('[DIAG] upsertDiagnosticoEstado(ex):', e?.message || e);
-  }
-}
-
-async function registrarEjecucion(data) {
-  try {
-    const row = Object.assign({
-      function_name: 'autopick-vip-run2',
-      created_at: new Date().toISOString()
-    }, data);
-    const { error } = await supabase
-      .from('diagnostico_ejecuciones')
-      .insert([row]);
-    if (error) console.warn('[DIAG] registrarEjecucion:', error.message);
-  } catch (e) {
-    console.warn('[DIAG] registrarEjecucion(ex):', e?.message || e);
-  }
-}
-
-async function acquireDistributedLock(ttlSeconds = 120) {
-  try {
-    const now = Date.now();
-    const expiresAt = new Date(now + ttlSeconds * 1000).toISOString();
-
-    // 1) Intento de insert (si existe → 23505)
-    const { error: insErr } = await supabase
-      .from(LOCK_TABLE)
-      .insert([{ lock_key: LOCK_KEY_FN, expires_at: expiresAt }]);
-
-    if (!insErr) return true;
-
-    // 2) Si hay conflicto, consulta el lock actual
-    if (String(insErr.code) === '23505') {
-      const { data: row, error: selErr } = await supabase
-        .from(LOCK_TABLE)
-        .select('expires_at')
-        .eq('lock_key', LOCK_KEY_FN)
-        .maybeSingle();
-
-      if (selErr) return false;
-
-      const exp = Date.parse(row?.expires_at || 0);
-      if (!Number.isFinite(exp) || exp <= now) {
-        // 3) Si expiró, reemplaza (upsert)
-        const { error: upErr } = await supabase
-          .from(LOCK_TABLE)
-          .upsert({ lock_key: LOCK_KEY_FN, expires_at: expiresAt }, { onConflict: 'lock_key' });
-        return !upErr;
-      }
-      return false; // lock vigente por otro proceso
+    const cache = await loadOddsSportsMap();
+    // Si no existe, intenta por títulos conocidos (heurística)
+    const candidates = ["libertadores","sudamericana","conmebol"];
+    for (const [tNorm, obj] of Object.entries(cache.byTitle)) {
+      if (candidates.some(c=> tNorm.includes(c))) return obj.key;
     }
-
-    return false;
-  } catch (e) {
-    console.warn('[LOCK] acquire error:', e?.message || e);
-    return false;
+  } catch(e){
+    console.warn("[OddsAPI] resolveSportKeyFallback error:", e?.message||e);
   }
+  return null;
 }
 
-async function releaseDistributedLock() {
-  try {
-    await supabase.from(LOCK_TABLE).delete().eq('lock_key', LOCK_KEY_FN);
-  } catch (e) {
-    console.warn('[LOCK] release error:', e?.message || e);
+/* ============ Prefiltros: /events (barato) y odds featured ============ */
+// /v4/sports/:sport/events (prefiltro 200 + [] cuando no hay fixtures). :contentReference[oaicite:3]{index=3}
+async function fetchEvents(sportKey){
+  const key = normalizeSportKey(sportKey);
+  const url = `${ODDS_HOST}/v4/sports/${encodeURIComponent(key)}/events?apiKey=${encodeURIComponent(ODDS_API_KEY)}`;
+  const r = await fetch(url);
+  const raw = await safeText(r);
+  if (r.status === 404) {
+    const err = new Error(`[LIVE] events 404 (sport no encontrado): ${key}`);
+    err.code = "UNKNOWN_SPORT";
+    err.status = r.status;
+    throw err; // 404 ≠ "sin eventos", es "sport inválido" :contentReference[oaicite:4]{index=4}
   }
+  if (!r.ok) {
+    const err = new Error(`[LIVE] events error ${r.status}: ${raw?.slice?.(0, 200)}`);
+    err.code = "EVENTS_ERROR";
+    err.status = r.status;
+    throw err;
+  }
+  let body = null;
+  try { body = raw ? JSON.parse(raw) : []; } catch { body = []; }
+  return Array.isArray(body) ? body : [];
 }
 
-// =============== CONFIG MODELOS ===============
-const MODEL = (process.env.OPENAI_MODEL || OPENAI_MODEL || 'gpt-5-mini');
-const MODEL_FALLBACK = (process.env.OPENAI_MODEL_FALLBACK || 'gpt-5');
-
-// =============== UTILS ===============
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-async function safeJson(res) { try { return await res.json(); } catch { return null; } }
-async function safeText(res) { try { return await res.text(); } catch { return ''; } }
-function nowISO() { return new Date().toISOString(); }
-
-async function fetchWithRetry(url, init={}, opts={ retries:2, base:500 }) {
-  let attempt = 0;
-  while (true) {
-    try {
-      const res = await fetch(url, init);
-      if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
-        if (attempt >= opts.retries) return res;
-        const ra = Number(res.headers.get('retry-after')) || 0;
-        const backoff = ra ? ra*1000 : (opts.base * Math.pow(2, attempt));
-        console.warn(`[HTTP ${res.status}] retry in ${backoff}ms → ${url}`);
-        await sleep(backoff);
-        attempt++; continue;
+// /v4/sports/:sport/odds (featured markets; 404 = sport inválido). :contentReference[oaicite:5]{index=5}
+async function fetchOddsFeatured(sportKey, regions, markets){
+  const key = normalizeSportKey(sportKey);
+  const url = `${ODDS_HOST}/v4/sports/${encodeURIComponent(key)}/odds?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=${encodeURIComponent(regions)}&markets=${encodeURIComponent(markets)}&oddsFormat=decimal&dateFormat=unix`;
+  const r = await fetch(url);
+  const raw = await safeText(r);
+  if (r.status === 404) {
+    // Intento de fallback vía catálogo (p.ej. claves antiguas)
+    console.warn("[OddsAPI] odds 404:", key, "→ fallback por catálogo");
+    const alt = await resolveSportKeyFallback(key);
+    if (alt && alt !== key) {
+      const url2 = `${ODDS_HOST}/v4/sports/${encodeURIComponent(alt)}/odds?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=${encodeURIComponent(regions)}&markets=${encodeURIComponent(markets)}&oddsFormat=decimal&dateFormat=unix`;
+      const r2 = await fetch(url2);
+      if (r2.ok) {
+        console.info("[OddsAPI] fallback OK:", key, "→", alt);
+        return r2.json();
       }
-      return res;
-    } catch (e) {
-      if (attempt >= opts.retries) { console.error('fetchWithRetry error (final):', e?.message || e); throw e; }
-      const backoff = opts.base * Math.pow(2, attempt);
-      console.warn(`fetchWithRetry net error: ${e?.message || e} → retry in ${backoff}ms`);
-      await sleep(backoff);
-      attempt++;
+      console.warn("[OddsAPI] fallback también falló:", alt, r2.status, await safeText(r2));
     }
+    const err = new Error(`[LIVE] odds 404 (sport no encontrado): ${key}`);
+    err.code = "UNKNOWN_SPORT";
+    err.status = 404;
+    throw err;
   }
+  if (!r.ok) {
+    const err = new Error(`[LIVE] odds error ${r.status}: ${raw?.slice?.(0, 240)}`);
+    err.code = "ODDS_ERROR";
+    err.status = r.status;
+    throw err;
+  }
+  let body = null;
+  try { body = raw ? JSON.parse(raw) : []; } catch { body = []; }
+  return Array.isArray(body) ? body : [];
 }
 
-function normalizeStr(s) {
-  return String(s || '')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-function minutesUntilISO(iso) {
-  const t = Date.parse(iso);
-  return Math.round((t - Date.now()) / 60000);
-}
-function formatMinAprox(mins) {
-  if (mins == null) return 'Comienza pronto';
-  if (mins < 0) return `Ya comenzó (hace ${Math.abs(mins)} min)`;
-  return `Comienza en ${mins} min aprox`;
-}
-
-function median(numbers) {
-  const arr = numbers.filter(n => Number.isFinite(n)).sort((a,b) => a-b);
-  if (!arr.length) return null;
-  const mid = Math.floor(arr.length/2);
-  return arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
-}
-
-// Conversión decimal → momio americano (+125 / -150)
-function decimalToAmerican(d) {
-  const dec = Number(d);
-  if (!Number.isFinite(dec) || dec <= 1) return 'n/d';
-  if (dec >= 2) return `+${Math.round((dec - 1) * 100)}`;
-  return `-${Math.round(100 / (dec - 1))}`;
-}
-
-// Emoji por nivel de VIP (para el encabezado)
-function emojiNivel(nivel) {
-  const n = String(nivel || '').toLowerCase();
-  if (n.includes('ultra')) return '🟣';
-  if (n.includes('élite') || n.includes('elite')) return '🎯';
-  if (n.includes('avanzado')) return '🥈';
-  if (n.includes('competitivo')) return '🥉';
-  return '⭐';
-}
-
-// Normaliza "apuestas extra" en bullets si viene como texto plano
-function formatApuestasExtra(s) {
-  const raw = String(s || '').trim();
-  if (!raw) return '—';
-  const parts = raw.split(/\r?\n|;|,/).map(x => x.trim()).filter(Boolean);
-  return parts.map(x => (x.startsWith('-') ? x : `- ${x}`)).join('\n');
-}
-
-// Aux: obtener mejor cuota de un array
-function arrBest(arr) {
-  if (!Array.isArray(arr) || arr.length === 0) return null;
-  return arr.reduce((acc, x) => (x.price && (!acc || x.price > acc.price) ? x : acc), null);
-}
-
-// =============== NORMALIZADOR ODDSAPI ===============
-function normalizeOddsEvent(ev) {
+/* ============ OddsAPI — extracción de consenso y top-3 ============ */
+function consensusAndTop3FromOddsapiEvent(oddsEvent){
   try {
-    const id = ev?.id || `${ev?.commence_time}-${ev?.home_team}-${ev?.away_team}`;
-    const home = ev?.home_team || ev?.teams?.home || ev?.home || '';
-    const away = ev?.away_team || ev?.teams?.away || ev?.away || '';
-    const sport_title = ev?.sport_title || ev?.league?.name || ev?.league || 'Fútbol';
-    const commence_time = ev?.commence_time;
-    const minutosFaltantes = minutesUntilISO(commence_time);
-
-    const bookmakers = Array.isArray(ev?.bookmakers) ? ev.bookmakers : [];
-    const h2h = [], totals_over = [], totals_under = [], spreads = [];
-
-    for (const bk of bookmakers) {
-      const bookie = bk?.key || bk?.title || bk?.name || 'bookie';
-      const markets = Array.isArray(bk?.markets) ? bk.markets : [];
-      for (const m of markets) {
-        const key = (m?.key || m?.market || '').toLowerCase();
-        const outcomes = Array.isArray(m?.outcomes) ? m.outcomes : [];
-        if (key === 'h2h') {
-          for (const o of outcomes) {
-            h2h.push({ bookie, name: String(o?.name||'').trim(), price: Number(o?.price) });
-          }
-        } else if (key === 'totals') {
-          const point = Number(m?.points ?? m?.point ?? m?.line ?? m?.total);
-          for (const o of outcomes) {
-            const nm = String(o?.name||'').toLowerCase();
-            if (nm.includes('over')) totals_over.push({ bookie, point, price: Number(o?.price) });
-            else if (nm.includes('under')) totals_under.push({ bookie, point, price: Number(o?.price) });
-          }
-        } else if (key === 'spreads') {
-          for (const o of outcomes) {
-            const pt = Number(o?.point);
-            const nm = o?.name || (Number.isFinite(pt) ? (pt>0?`+${pt}`:`${pt}`) : '');
-            spreads.push({ bookie, name: String(nm).trim(), price: Number(o?.price), point: pt });
+    const offers = [];
+    for (const bk of (oddsEvent?.bookmakers||[])) {
+      const bookie = bk.title || "";
+      for (const m of (bk.markets||[])) {
+        const marketKey = m.key || "";
+        for (const o of (m.outcomes||[])) {
+          const label = o.name || "";
+          const price = Number(o.price);
+          if (bookie && marketKey && label && Number.isFinite(price)) {
+            offers.push({ market: marketKey, label, price, bookie, point: o.point ?? null });
           }
         }
       }
     }
-    const bestH2H = arrBest(h2h);
-    return {
-      id, home, away,
-      liga: sport_title, sport_title,
-      commence_time, minutosFaltantes,
-      marketsOffers: { h2h, totals_over, totals_under, spreads },
-      marketsBest: { h2h: bestH2H }
-    };
-  } catch (e) {
-    console.warn('normalizeOddsEvent error:', e?.message || e);
+    if (!offers.length) return null;
+
+    const byKey = new Map();
+    for (const o of offers) {
+      const k = `${o.market}||${o.label}||${o.point ?? "-"}`.toLowerCase();
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(o);
+    }
+
+    const order = ["h2h","totals","spreads"];
+    const keys = Array.from(byKey.keys()).sort((a,b)=>{
+      const ma = order.findIndex(m => a.startsWith(m));
+      const mb = order.findIndex(m => b.startsWith(m));
+      return (ma===-1?99:ma) - (mb===-1?99:mb);
+    });
+
+    let best = null, consensus = null, top3 = null;
+    for (const k of keys) {
+      const arr = byKey.get(k);
+      const prices = arr.map(x=>x.price).sort((a,b)=>a-b);
+      const mid = Math.floor(prices.length/2);
+      const med = prices.length%2 ? prices[mid] : (prices[mid-1]+prices[mid])/2;
+
+      const seen = new Set();
+      const uniq = arr.sort((a,b)=>b.price-a.price).filter(x => {
+        const b = x.bookie.toLowerCase().trim();
+        if (seen.has(b)) return false;
+        seen.add(b);
+        return true;
+      });
+
+      const candidate = uniq[0];
+      if (!best || (candidate && candidate.price > best.price)) {
+        best = candidate;
+        consensus = { market: arr[0].market, label: arr[0].label, price: med, point: arr[0].point ?? null };
+        top3 = uniq.slice(0,3);
+      }
+    }
+    if (!best || !consensus) return null;
+    const gap_pp = Math.max(0, (impliedProbPct(consensus.price)||0) - (impliedProbPct(best.price)||0));
+    return { best, consensus, top3, gap_pp };
+  } catch {
     return null;
   }
 }
 
-// =============== SNAPSHOTS (odds_prev_best) ===============
-// Normaliza clave de mercado para snapshots
-function mapMarketKeyForSnapshotFromApuesta(apuesta) {
-  const s = String(apuesta || '').toLowerCase();
-  if (/over|under|total|más de|menos de|mas de/.test(s)) return 'totals';
-  if (/handicap|spread/.test(s)) return 'spreads';
-  return 'h2h';
+/* ============ IA ============ */
+function buildOAI(model, prompt, maxOut=380){
+  const modern = /gpt-5|gpt-4\.1|4o|o3|mini/i.test(model||"");
+  const base = {
+    model,
+    response_format: { type: "json_object" },
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.2
+  };
+  if (modern) base.max_completion_tokens = maxOut; else base.max_tokens = maxOut;
+  return base;
+}
+function extractJSON(text){
+  if (!text) return null;
+  const t = String(text).replace(/```json|```/gi,"").trim();
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  if (a===-1 || b===-1 || b<=a) return null;
+  try { return JSON.parse(t.slice(a,b+1)); } catch { return null; }
+}
+function ensureLiveShape(p){
+  if (!p || typeof p !== "object") p = {};
+  return {
+    analisis_gratuito: p.analisis_gratuito ?? "s/d",
+    analisis_vip: p.analisis_vip ?? "s/d",
+    apuesta: p.apuesta ?? "",
+    apuestas_extra: Array.isArray(p.apuestas_extra) ? p.apuestas_extra : [],
+    probabilidad: Number.isFinite(p.probabilidad) ? Number(p.probabilidad) : 0,
+    no_pick: p.no_pick === true,
+    motivo_no_pick: p.motivo_no_pick ?? ""
+  };
+}
+async function pedirLiveIA(ctx){
+  const opciones = (ctx.opciones || []).map((s,i)=> `${i+1}) ${s}`).join("\n");
+  const prompt = [
+    "Eres un analista EN VIVO. Devuelve SOLO JSON con forma:",
+    "{",
+    "\"analisis_gratuito\":\"\",",
+    "\"analisis_vip\":\"\",",
+    "\"apuesta\":\"\",",
+    "\"apuestas_extra\":[],",
+    "\"probabilidad\":0.0,",
+    "\"no_pick\":false,",
+    "\"motivo_no_pick\":\"\"",
+    "}",
+    "Reglas:",
+    "- Si no hay valor claro en vivo devuelve {\"no_pick\":true}.",
+    "- Si no_pick=false: 'apuesta' DEBE ser EXACTAMENTE una de las opciones listadas.",
+    "- 'probabilidad' ∈ [0.05, 0.85].",
+    "",
+    "Contexto:",
+    JSON.stringify({
+      partido: ctx.partido,
+      minuto: ctx.minuto,
+      marcador: ctx.marcador,
+      fase: ctx.fase,
+      top3: ctx.top3,
+      mejor_oferta: ctx.best,
+      consenso: ctx.consensus
+    }),
+    "",
+    "opciones_apostables:",
+    opciones
+  ].join("\n");
+
+  const model = OPENAI_MODEL || "gpt-5-mini";
+  const req = buildOAI(model, prompt, 380);
+  const completion = await openai.chat.completions.create(req);
+  const raw = completion?.choices?.[0]?.message?.content || "";
+  const obj = extractJSON(raw) || {};
+  return ensureLiveShape(obj);
 }
 
-// Guardar snapshot de la mejor cuota del mercado/outcome seleccionado
-async function saveOddsSnapshot({ event_key, fixture_id, market, outcome_label, point, best_price, best_bookie, top3_json }) {
+/* ============ Supabase ============ */
+  // dedup: usar la constante PICK_TABLE declarada arriba
+
+async function alreadySentLive({ fixture_id, minute_bucket }){
   try {
-    const row = {
-      event_key: String(event_key || ''),
-      fixture_id: Number.isFinite(fixture_id) ? fixture_id : null,
-      market: String(market || 'h2h'),
-      outcome_label: String(outcome_label || ''),
-      point: (point != null && Number.isFinite(Number(point))) ? Number(point) : null,
-      best_price: Number(best_price),
-      best_bookie: best_bookie ? String(best_bookie) : null,
-      top3_json: Array.isArray(top3_json) ? top3_json : null
-    };
-    if (!row.event_key || !row.market || !row.outcome_label || !Number.isFinite(row.best_price) || row.best_price <= 1) return false;
-
-    const { error } = await supabase.from(ODDS_SNAPSHOTS_TABLE).insert([row]);
-    if (error) { console.warn('[SNAPSHOT] insert error:', error.message); return false; }
-    return true;
-  } catch (e) {
-    console.warn('[SNAPSHOT] exception:', e?.message || e);
-    return false;
-  }
-}
-
-// Obtener best price PREVIO con lookback (minutos)
-async function getPrevBestOdds({ event_key, market, outcome_label, point, lookbackMin }) {
-  try {
-    const cutoffISO = new Date(Date.now() - Math.max(1, lookbackMin || ODDS_PREV_LOOKBACK_MIN) * 60000).toISOString();
-
-    let q = supabase
-      .from(ODDS_SNAPSHOTS_TABLE)
-      .select('best_price,captured_at')
-      .eq('event_key', String(event_key || ''))
-      .eq('market', String(market || 'h2h'))
-      .eq('outcome_label', String(outcome_label || ''))
-      .lt('captured_at', cutoffISO)
-      .order('captured_at', { ascending: false })
+    const { data, error } = await supabase
+      .from(PICK_TABLE)
+      .select("id")
+      .eq("evento", String(fixture_id))
+      .eq("tipo_pick", "LIVE")
+      .gte("timestamp", new Date(Date.now()-90*60*1000).toISOString()) // últimos 90 min
       .limit(1);
+    if (error) return false;
+    return Array.isArray(data) && data.length > 0;
+  } catch { return false; }
+}
+async function saveLivePick({ fixture_id, liga, pais, equipos, ev, probPct, nivel, texto, apuesta, minuto, fase, marcador, market_point, vigencia_text, isVIP }){
+  const entrada = {
+    evento: String(fixture_id),
+    analisis: texto || "",
+    apuesta: apuesta || "",
+    tipo_pick: "LIVE",
+    liga: `${pais} - ${liga}`,
+    equipos,
+    ev: Number(ev)||0,
+    probabilidad: Number(probPct)||0,
+    nivel,
+    timestamp: nowISO(),
+    is_live: true,
+    minute_at_pick: Number(minuto)||0,
+    phase: fase || "",
+    score_at_pick: marcador || "",
+    market_point: market_point ?? null,
+    vigencia_text: vigencia_text || ""
+  };
+  const { error } = await supabase.from(PICK_TABLE).insert([entrada]);
+  if (error) { console.error("Supabase insert LIVE:", error.message); return false; }
+  return true;
+}
 
-    if (point != null && Number.isFinite(Number(point))) q = q.eq('point', Number(point)); else q = q.is('point', null);
+/* ============ API-FOOTBALL — fixtures en vivo (minuto, marcador, liga/país) ============ */
+async function afLiveFixtures(){
+  const url = `https://v3.football.api-sports.io/fixtures?live=all`;
+  const res = await fetch(url, { headers: { "x-apisports-key": API_FOOTBALL_KEY }});
+  if (!res.ok) { console.warn("[AF] fixtures live error:", res.status, await safeText(res)); return []; }
+  const data = await safeJson(res);
+  const arr = Array.isArray(data?.response) ? data.response : [];
+  return arr.map(x => {
+    const f = x.fixture||{}, l = x.league||{}, t = x.teams||{}, g = x.goals||{};
+    const minute = Number(f.status?.elapsed)||0;
+    return {
+      fixture_id: f.id,
+      league: l.name || "",
+      country: l.country || "",
+      teams: `${t.home?.name||"Local"} vs ${t.away?.name||"Visitante"}`,
+      home: t.home?.name || "Local",
+      away: t.away?.name || "Visitante",
+      minute,
+      phase: phaseFromMinute(minute),
+      score: `${g.home ?? 0} - ${g.away ?? 0}`
+    };
+  });
+}
 
-    const { data, error } = await q;
-    if (error) { console.warn('[SNAPSHOT] select error:', error.message); return null; }
-    const r = Array.isArray(data) && data[0] ? data[0] : null;
-    return r ? Number(r.best_price) : null;
+/* ============ Núcleo LIVE: evaluar evento OddsAPI con AF + IA ============ */
+async function evaluateOddsEvent(oddsEvent, afLiveIndex){
+  // 1) Prefiltro (OddsAPI)
+  const pref = consensusAndTop3FromOddsapiEvent(oddsEvent);
+  if (!pref) return;
+
+  const bookiesCount = new Set((oddsEvent.bookmakers||[]).map(b=> (b.title||"").toLowerCase().trim())).size;
+  if (bookiesCount < Number(LIVE_MIN_BOOKIES)||3) return;
+
+  if ((pref.gap_pp||0) < Number(LIVE_PREFILTER_GAP_PP)) return;
+
+  // 2) Enriquecer con API-FOOTBALL (match por nombres)
+  const home = oddsEvent.home_team || "";
+  const away = oddsEvent.away_team || "";
+  const key = `${home}||${away}`.toLowerCase();
+  const fx = afLiveIndex.get(key);
+  if (!fx) return; // sin minuto/score/fase, no seguimos
+
+  // 3) IA live
+  const opciones = [`${pref.consensus.market}: ${pref.consensus.label} — cuota ${pref.best.price} (${pref.best.bookie})`];
+  const ia = await pedirLiveIA({
+    partido: `${home} vs ${away}`,
+    minuto: fx.minute,
+    marcador: fx.score,
+    fase: fx.phase,
+    top3: pref.top3,
+    best: pref.best,
+    consensus: pref.consensus,
+    opciones
+  });
+  if (ia.no_pick) return;
+
+  // 4) Validaciones fuertes
+  const probPct = normalizeProbPct(ia.probabilidad);
+  if (!(Number.isFinite(probPct) && probPct >= PROB_MIN && probPct <= PROB_MAX)) return;
+
+  const impl = impliedProbPct(pref.best.price) || 0;
+  if (Math.abs(probPct - impl) > GAP_MAX) return;
+
+  const ev = calcEV(probPct, pref.best.price);
+  if (ev == null) return;
+
+  const isVIP  = ev >= EV_VIP;
+  const isFREE = !isVIP && ev >= EV_FREE0 && ev < EV_VIP;
+  if (!isVIP && !isFREE) return;
+
+  // Anti-duplicado ligero por fixture (bucket 5')
+  const mb = minuteBucket(fx.minute);
+  const dup = await alreadySentLive({ fixture_id: fx.fixture_id, minute_bucket: mb });
+  if (dup) return;
+
+  // 5) Payloads y envío
+  const nivel = nivelPorEV(ev);
+  const msg = isVIP
+    ? construirMensajeVIP(oddsEvent, ia, probPct, ev, nivel, pref.best, "LIVE")
+    : construirMensajeFREE(oddsEvent, ia, probPct, ev, nivel);
+
+  const sent = isVIP ? await send.vip(msg) : await send.free(msg);
+  if (!sent) {
+    console.warn("Error al enviar mensaje:", sent);
+    return;
+  }
+
+  // Guardar en Supabase
+  try {
+    const ok = await saveLivePick({
+      fixture_id: oddsEvent.id,
+      liga: oddsEvent.league,
+      pais: oddsEvent.country,
+      equipos: oddsEvent.teams,
+      ev,
+      probPct,
+      nivel,
+      texto: ia.analisis_vip,
+      apuesta: ia.apuesta,
+      minuto: fx.minute,
+      fase: fx.phase,
+      marcador: fx.score,
+      market_point: pref.best.point,
+      vigencia_text: `Hasta el min ${Math.max(1, fx.minute+5)}`,
+      isVIP
+    });
+    if (!ok) console.warn("Error al guardar pick en Supabase");
   } catch (e) {
-    console.warn('[SNAPSHOT] select exception:', e?.message || e);
-    return null;
+    console.error("Error en guardarPickSupabase:", e?.message || e);
   }
 }
 
-// =============== NETLIFY HANDLER ===============
+// =============== HANDLER ===============
 exports.handler = async (event, context) => {
-  try { const q = (event && event.queryStringParameters) || {}; if (q.cron) { q.manual = "1"; delete q.cron; } } catch (e) {}
+  const __send_report = (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})();
+try { const q = (event && event.queryStringParameters) || {}; if (q.cron) { q.manual = "1"; delete q.cron; } } catch (e) {}
 try {
     const q = (event && event.queryStringParameters) || {};
     const h = (event && event.headers) || {};
     if ((q.debug === "1" || h["x-debug"] === "1") && q.ping === "1") {
-      return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ send_report: __send_report,
 ok:true, stage:"early-ping" }) };
     }
   } catch (e) {
-    return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+    return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ send_report: __send_report,
 ok:false, stage:"early-ping-error", err: String(e && (e.message || e)) }) };
   }
 // --- IDs / debug / headers ---
@@ -467,7 +621,7 @@ ok:false, stage:"early-ping-error", err: String(e && (e.message || e)) }) };
   try {
     const raw = (event && event.headers) ? event.headers : {};
     // normaliza a minúsculas para acceso seguro
-    for (const k in raw) headers[k.toLowerCase()] = String(raw[k]);
+    for (const k in raw) headers[k.toLowerCase()] = h[k];
     const q = (event && event.queryStringParameters) ? event.queryStringParameters : {};
     debug = (q.debug === '1') || (headers['x-debug'] === '1');
   } catch (e) {
@@ -475,19 +629,8 @@ ok:false, stage:"early-ping-error", err: String(e && (e.message || e)) }) };
     return {
       statusCode: 200,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
-ok:false, stage:'early', req: REQ_ID, error: e?.message || String(e) })
+      body: JSON.stringify({ send_report: __send_report,
+ok:false, stage: 'early', req: REQ_ID, error: e?.message || String(e) })
     };
   }
 
@@ -499,19 +642,8 @@ ok:false, stage:'early', req: REQ_ID, error: e?.message || String(e) })
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
-ok:false, stage:'auth', req:REQ_ID, error:'forbidden', reason:'auth_mismatch' })
+        body: JSON.stringify({ send_report: __send_report,
+ok:false, stage: 'auth', req: REQ_ID, error: 'forbidden', reason: 'auth_mismatch' })
       };
     }
     return { statusCode: 403, body: 'Forbidden' };
@@ -529,37 +661,15 @@ ok:false, stage:'auth', req:REQ_ID, error:'forbidden', reason:'auth_mismatch' })
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
-ok:false, stage:'boot', req:REQ_ID, error: msg, stack: e?.stack || null })
+        body: JSON.stringify({ send_report: __send_report,
+ok:false, stage: 'boot', req: REQ_ID, error: msg, stack: e?.stack || null })
       };
     }
     return {
       statusCode: 500,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
-ok:false, stage:'runtime', req: REQ_ID })
+      body: JSON.stringify({ send_report: __send_report,
+ok:false, stage: 'runtime', req: REQ_ID })
     };
   }
 
@@ -593,18 +703,7 @@ ok:false, stage:'runtime', req: REQ_ID })
     // === lock simple (no dupliques este bloque) ===
     if (global.__punterx_lock) {
       console.warn('LOCK activo → salto ciclo');
-      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
 ok:true, skipped:true, reason:'mem_lock' }) };
     }
     global.__punterx_lock = true;
@@ -618,18 +717,7 @@ ok:true, skipped:true, reason:'mem_lock' }) };
     }
     if (!gotLock) {
       console.warn('LOCK distribuido activo → salto ciclo');
-      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
 ok:true, skipped:true, reason:'dist_lock' }) };
     }
 
@@ -647,18 +735,7 @@ ok:true, skipped:true, reason:'dist_lock' }) };
     const tOddsMs = Date.now() - tOdds;
     if (!resOdds || !resOdds.ok) {
       console.error('OddsAPI error:', resOdds?.status, await safeText(resOdds));
-      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
 ok: false, reason:'oddsapi' }) };
     }
     const eventos = await safeJson(resOdds) || [];
@@ -731,19 +808,8 @@ ok: false, reason:'oddsapi' }) };
           .map(x => ({ mins: Math.round((x.t - Date.now())/60000), label: `${x.home||'—'} vs ${x.away||'—'}` }))
           .sort((a,b) => a.mins - b.mins)[0];
         if (nearest) console.log(`[ventana] Próximo fuera de rango: ~${nearest.mins}m → ${nearest.label}`);
-      } catch {}
-      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      } catch(e) {}
+      return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
 ok:true, resumen }) };
     }
 
@@ -960,18 +1026,7 @@ console.log(`${traceEvt} MATCH OK → fixture_id=${P.af_fixture_id} | league=${P
     }
 
     resumen.af_hits = afHits; resumen.af_fails = afFails;
-    return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+    return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
 ok:true, resumen }) };
 
   } catch (e) {
@@ -982,36 +1037,14 @@ ok:true, resumen }) };
       return {
         statusCode: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+        body: JSON.stringify({ send_report: __send_report,
 ok:false, stage:'runtime', req:REQ_ID, error: msg, stack: e?.stack || null })
       };
     }
     return {
       statusCode: 500,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      body: JSON.stringify({ send_report: __send_report,
 ok:false, stage:'runtime', req: REQ_ID })
     };
   } finally {
@@ -1101,175 +1134,13 @@ async function enriquecerPartidoConAPIFootball(partido) {
     function fixtureScore(fx, homeName, awayName) {
       const th = fx?.teams?.home?.name || "";
       const ta = fx?.teams?.away?.name || "";
+      try {
       const direct = nameScore(homeName, th) + nameScore(awayName, ta);
       const swapped = nameScore(homeName, ta) + nameScore(awayName, th);
       const dt2 = Date.parse(fx?.fixture?.date || "");
-      const deltaH = Number.isFinite(dt2) ? Math.abs(dt2 - kickoffMs) / 3600000 : 999;
-      const timeBoost = deltaH <= 36 ? 0.25 : 0;
-      return Math.max(direct, swapped) + timeBoost;
-    }
-
-    // Re-selección robusta del mejor fixture entre los devueltos por AF
-function selectBestFixture(arr, homeName, awayName, whyTag, evtId) {
-  let best = null;
-  let bestScore = -1;
-  for (const fx of Array.isArray(arr) ? arr : []) {
-    const s = (() => {
-      const h = fx?.teams?.home?.name || '';
-      const a = fx?.teams?.away?.name || '';
-      const H = h.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-      const A = a.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-      const hn = (homeName||'').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-      const an = (awayName||'').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-      const include = (x,y)=> x && y && (x.includes(y) || y.includes(x));
-      const hitDirect = (include(H,hn)?1:0) + (include(A,an)?1:0);
-      const hitSwap   = (include(H,an)?1:0) + (include(A,hn)?1:0);
-      return Math.max(hitDirect, hitSwap);
-    })();
-    if (s > bestScore) {
-      bestScore = s;
-      best = fx;
-    }
-  }
-  if (bestScore < 2) {
-    // Solo aviso; no nombres de equipos fijos
-    console.warn(`[evt:${evtId||'?'}] selectBestFixture(${whyTag}) score bajo=${bestScore}`);
-  }
-  return { best, score: bestScore };
-}
-
-    // === 1) PRIMARIO: fixtures por LIGA + FECHA exacta (UTC)
-    try {
-      const dateStr = new Date(kickoffMs).toISOString().slice(0,10);
-      if (afLeagueId) {
-        const url = `https://v3.football.api-sports.io/fixtures?date=${encodeURIComponent(dateStr)}&league=${encodeURIComponent(afLeagueId)}&timezone=UTC`;
-        const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
-        if (res?.ok) {
-          const data = await safeJson(res);
-          const arr = Array.isArray(data?.response) ? data.response : [];
-          const candidates = arr
-            .filter(x => {
-              const dt2 = Date.parse(x?.fixture?.date || "");
-              if (!Number.isFinite(dt2)) return true;
-              const diffH = Math.abs((dt2 - kickoffMs)/3600000);
-              return diffH <= 60;
-            })
-            .map(x => {
-              const th = norm(x?.teams?.home?.name);
-              const ta = norm(x?.teams?.away?.name);
-              const ns = ((th===homeN && ta===awayN) || (th===awayN && ta===homeN)) ? 2 :
-                         (th.includes(homeN)||ta.includes(awayN)||th.includes(awayN)||ta.includes(homeN) ? 1 : 0);
-              return { x, nameScore: ns };
-            })
-            .sort((a,b)=> b.nameScore - a.nameScore);
-          let best = candidates[0]?.nameScore ? candidates[0]?.x : null;
-
-          if (!best || candidates[0]?.nameScore < 2) {
-            const resolved = resolveFixtureFromList(partido, arr);
-            if (resolved) {
-              best = resolved;
-              console.log(`[evt:${partido?.id}] Resolver AF (league+date): fixture_id=${resolved?.fixture?.id} league="${resolved?.league?.name}"`);
-            }
-          }
-          if (best) {
-            return {
-              liga: best?.league?.name || sportTitle || null,
-              pais: best?.league?.country || null,
-              fixture_id: best?.fixture?.id || null,
-              fecha: best?.fixture?.date || null,
-              estadio: best?.fixture?.venue?.name || null,
-              ciudad: best?.fixture?.venue?.city || null,
-              arbitro: best?.fixture?.referee || null,
-              weather: best?.fixture?.weather || null, // algunos providers
-              xg: null, availability: null // reservados para builders locales
-            };
-          }
-        } else if (res) {
-          console.warn(`[evt:${partido?.id}] AF fixtures league+date falló:`, res.status, await safeText(res));
-        }
-      }
-    } catch (e) {
-      console.warn(`[evt:${partido?.id}] Error league+date:`, e?.message || e);
-    }
-
-    // === 2) SECUNDARIO: fixtures por LIGA en ventana ±2 días (UTC)
-    if (afLeagueId) {
-      try {
-        const from = new Date(kickoffMs - 2 * day).toISOString().slice(0, 10);
-        const to = new Date(kickoffMs + 2 * day).toISOString().slice(0, 10);
-        const url = `https://v3.football.api-sports.io/fixtures?league=${encodeURIComponent(afLeagueId)}&from=${from}&to=${to}&timezone=UTC`;
-        const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
-        if (res?.ok) {
-          const j = await safeJson(res);
-          const arr = Array.isArray(j?.response) ? j.response : [];
-          const best = selectBestFixture(arr, partido.home, partido.away, `league+window±2d (id=${afLeagueId}, ${from}..${to})`, partido?.id);
-          if (best) {
-            return {
-              liga: best?.league?.name || sportTitle || null,
-              pais: best?.league?.country || null,
-              fixture_id: best?.fixture?.id || null,
-              fecha: best?.fixture?.date || null,
-              estadio: best?.fixture?.venue?.name || null,
-              ciudad: best?.fixture?.venue?.city || null,
-              arbitro: best?.fixture?.referee || null,
-              weather: best?.fixture?.weather || null,
-              xg: null, availability: null
-            };
-          }
-        }
-      } catch (e) {
-        console.warn(`[evt:${partido?.id}] Error league±2d:`, e?.message || e);
-      }
-    }
-
-    // === 3) BÚSQUEDA TEXTUAL
-    try {
-      const q = `${partido.home} ${partido.away}`;
-      const url = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(q)}&timezone=UTC`;
-      const res = await fetchWithRetry(url, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
-      if (!res?.ok) {
-        console.warn(`[evt:${partido?.id}] AF search error:`, res?.status, await safeText(res));
-      } else {
-        const j = await safeJson(res);
-        let arr = Array.isArray(j?.response) ? j.response : [];
-        if (!arr.length) {
-          // Fallback por cada equipo
-          const tryOne = async (name) => {
-            const u = `https://v3.football.api-sports.io/fixtures?search=${encodeURIComponent(name)}&timezone=UTC`;
-            const r = await fetchWithRetry(u, { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }, { retries: 1 });
-            if (!r?.ok) return [];
-            const jj = await safeJson(r);
-            return Array.isArray(jj?.response) ? jj.response : [];
-          };
-          const arrH = await tryOne(partido.home);
-          const arrA = await tryOne(partido.away);
-          arr = [...arrH, ...arrA];
-        }
-
-        const filtered = arr.filter(x => {
-          const dt2 = Date.parse(x?.fixture?.date || "");
-          if (!Number.isFinite(dt2)) return true;
-          const diffH = Math.abs((dt2 - kickoffMs) / 3600000);
-          return diffH <= 48;
-        });
-
-        const best = selectBestFixture(filtered, partido.home, partido.away, "search", partido?.id);
-        if (best) {
-          return {
-            liga: best?.league?.name || sportTitle || null,
-            pais: best?.league?.country || null,
-            fixture_id: best?.fixture?.id || null,
-            fecha: best?.fixture?.date || null,
-            estadio: best?.fixture?.venue?.name || null,
-            ciudad: best?.fixture?.venue?.city || null,
-            arbitro: best?.fixture?.referee || null,
-            weather: best?.fixture?.weather || null,
-            xg: null, availability: null
-          };
-        }
-      }
     } catch (e) {
       console.warn(`[evt:${partido?.id}] Error search:`, e?.message || e);
+    }
     }
 
     // === 4) ÚLTIMO RECURSO: IDs equipos & H2H ±2d
@@ -1380,11 +1251,7 @@ function estimarlaProbabilidadPct(pick) {
   return (v > 0 && v < 1) ? +(v*100).toFixed(2) : +v.toFixed(2);
 }
 
-function impliedProbPct(odd) {
-  const o = Number(odd);
-  if (!Number.isFinite(o) || o <= 1) return null;
-  return +(100/o).toFixed(2);
-}
+  // dedup: usar impliedProbPct definida arriba (L136)
 
 function calcularEV(probPct, cuota) {
   if (probPct == null) return null;
@@ -1460,7 +1327,7 @@ async function pedirPickConModelo(modelo, prompt) {
       finish_reason: choice?.finish_reason || "n/d",
       usage: completion?.usage || null
     };
-    try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch {}
+    try { console.info("[OAI] meta=", JSON.stringify(meta)); } catch(e) {}
 
     if (meta.finish_reason === 'length') {
       tokens = Math.min(tokens + 80, 340);
@@ -1486,7 +1353,7 @@ async function pedirPickConModelo(modelo, prompt) {
           finish_reason: c2?.choices?.[0]?.finish_reason || "n/d",
           usage: c2?.usage || null
         }));
-      } catch {}
+      } catch(e) {}
       const raw2 = c2?.choices?.[0]?.message?.content || "";
       const obj2 = extractFirstJsonBlock(raw2) || await repairPickJSON(modelo, raw2);
       return obj2 ? ensurePickShape(obj2) : null;
@@ -1939,7 +1806,7 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
             const { error: e2 } = await supabase.from(PICK_TABLE).insert([ entrada ]);
             if (e2) { console.error('Supabase insert (retry) error:', e2.message); resumen.guardados_fail++; }
             else { resumen.guardados_ok++;
-                  try { console.log('[supabase] insert OK picks_historicos:', { evento }); } catch {}
+                  try { console.log('[supabase] insert OK picks_historicos:', { evento }); } catch(e) {}
                  }
           } catch (e3) {
             console.error('Supabase insert (retry) exception:', e3?.message || e3);
@@ -1950,8 +1817,7 @@ async function guardarPickSupabase(partido, pick, probPct, ev, nivel, cuotaInfoO
         }
       } else {
         resumen.guardados_ok++;
-        try { console.log('[supabase] insert OK (retry) picks_historicos:', { evento }); }
-        catch {}
+        try { console.log('[supabase] insert OK (retry) picks_historicos:', { evento }); } catch(e) {}
       }
     } else {
       try { if (global.__px_causas) global.__px_causas.duplicado++; } catch(_) {}
@@ -1970,7 +1836,7 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
   if (systemMsg) messages.push({ role:'system', content: systemMsg });
   messages.push({ role:'user', content: prompt });
 
-  const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(model||''));
+  const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(modelo||''));
   const payload = { model, messages };
 
   if (isG5) {
@@ -1997,7 +1863,7 @@ function buildOpenAIPayload(model, prompt, maxTokens, systemMsg=null) {
 async function repairPickJSON(model, rawText) {
   const prompt = `El siguiente mensaje debería ser solo un JSON válido pero puede estar malformado:\n<<<\n${rawText}\n>>>\nReescríbelo corrigiendo llaves, comas y comillas para que sea un JSON válido con la misma información.`;
 
-  const fixerModel = (String(model||'').toLowerCase().includes('gpt-5')) ? 'gpt-5-mini' : model;
+  const fixerModel = (String(modelo||'').toLowerCase().includes('gpt-5')) ? 'gpt-5-mini' : modelo;
   const isG5 = /(^|\b)gpt-5(\b|-)/i.test(String(fixerModel||''));
 
   const fixReq = {

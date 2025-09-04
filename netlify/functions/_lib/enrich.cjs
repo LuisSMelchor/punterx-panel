@@ -1,4 +1,5 @@
 'use strict';
+const { resolveTeamsAndLeague: __afResolver } = require("./resolver-af.cjs");
 
 // OddsAPI (real) - import tolerante
 let fetchOddsForFixture = null;
@@ -179,7 +180,7 @@ function composeOneShotPrompt(payload = {}) {
 
 /** exports ÚNICO **/
 /** shim: garantiza mercados_top3 desde fixture/oddsRaw **/
-/* dedup: removed ensureMarketsWithOddsAPI */ = {}) {
+  async function ensureMarketsWithOddsAPI(payload = {}) {
   // --- status guard: cuenta mercados antes ---
   payload = payload || {}; payload.meta = (payload.meta && typeof payload.meta==="object") ? payload.meta : {};
   payload.markets = (payload.markets && typeof payload.markets==="object") ? payload.markets : {};
@@ -219,3 +220,32 @@ module.exports = { enrichFixtureUsingOdds,
 try{ module.exports.composeOneShotPrompt=composeOneShotPrompt; }catch(_){ }
 try{ module.exports.oneShotPayload=oneShotPayload; }catch(_){ }
 try{ module.exports.ensureMarketsWithOddsAPI=ensureMarketsWithOddsAPI; }catch(_){ }
+
+// ---- EVT normalizer hook (safe, idempotente) ----
+try {
+  const { normalizeEvt } = require('./normalize.cjs');
+  if (!module.exports.__evt_normalizer_applied) {
+    const wrap = (fnName) => {
+      const orig = module.exports[fnName];
+      if (typeof orig !== 'function') return;
+      module.exports[fnName] = async function(payload, ...rest){
+        try {
+          if (payload && payload.evt) payload.evt = normalizeEvt(payload.evt);
+        } catch(_) {}
+        return orig.apply(this, [payload, ...rest]);
+      };
+    };
+    // envuelve las entradas principales usadas por diag/oneshot/run
+    wrap('ensureMarketsWithOddsAPI');
+    wrap('oneShotPayload');
+    // marca aplicado
+    module.exports.__evt_normalizer_applied = true;
+  }
+} catch(_){}
+
+// --- export guard: resolveTeamsAndLeague ---
+try {
+  if (!module.exports.resolveTeamsAndLeague && typeof __afResolver === 'function') {
+    module.exports.resolveTeamsAndLeague = __afResolver;
+  }
+} catch(_) { /* no-op */ }

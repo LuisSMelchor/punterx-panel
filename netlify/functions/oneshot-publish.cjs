@@ -1,214 +1,152 @@
 'use strict';
-let send_report = null, send_report2 = null, send_report3 = null;
-try { ({ send_report, send_report2, send_report3 } = require('./_lib/meta.cjs')); } catch (_) {}
-if (typeof send_report !== 'function')  { send_report  = () => ({ enabled:false, results:[] }); }
-if (typeof send_report2 !== 'function') { send_report2 = send_report; }
-if (typeof send_report3 !== 'function') { send_report3 = send_report; }
 
-let ensureEnrichDefaults, setEnrichStatus;
-try { ({ ensureEnrichDefaults, setEnrichStatus } = require('./_lib/meta.cjs')); } catch (_) { /* no-op en dev */ }
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 
-
-
-
-
-
-/*__AI_DEV_STUB__*/
-/*__AI_CALL_GETTER__*/
-function __getCallAI(){
-  try { if (typeof callOpenAIOnce === 'function') return callOpenAIOnce; } catch {}
-  try { if (typeof global.callOpenAIOnce === 'function') return global.callOpenAIOnce; } catch {}
-  // fallback ultra-seguro (no cae en ai_unavailable)
-  return async ({ prompt } = {}) => ({ ok: true, content: `[fallback] ${String(prompt||'').slice(0,160)}...` });
-}
-
-(function __wireAI(){ 
-  try {
-    // intenta cargar implementación local si existe
-    const mod = (()=>{ try { return require('./_lib/ai.cjs'); } catch(_) { return null; }})();
-    const impl =
-      (mod && typeof mod.callOpenAIOnce === 'function' && mod.callOpenAIOnce) ||
-      (mod && typeof mod.callOneShotOpenAI === 'function' && mod.callOneShotOpenAI) ||
-      (mod && typeof mod.default === 'function' && mod.default) || null;
-
-    if (typeof global.callOpenAIOnce !== 'function') {
-      if (impl) {
-        global.callOpenAIOnce = impl;
-      } else {
-        // stub dev para no romper el flujo
-        global.callOpenAIOnce = async ({ prompt } = {}) => ({
-          ok: true,
-          content: `[dev-stub] ${String(prompt||'').slice(0,160)}...`,
-        });
-      }
-    }
-  } catch {}
-})();
-
-/*__ENSURE_MARKETS_GETTER__*/
-function __getEnsureMarkets() {
-  try { if (typeof global.ensureMarketsWithOddsAPI === 'function') return global.ensureMarketsWithOddsAPI; } catch {}
-  try { if (typeof ensureMarketsWithOddsAPI === 'function') return ensureMarketsWithOddsAPI; } catch {}
-  return async (_args = {}) => ({ ok: true, markets_top3: {}, markets: {}, source: 'shim-fallback' });
-}
-
-/*__ODDSAPI_TOLERANT__*/
-let __odds = {};
-try { __odds = require('./_lib/oddsapi.cjs'); } catch (_) {}
-
-// Preferir implementación real si existe; si no, no-op que permite continuar:
-const ensureMarketsWithOddsAPI =
-  (typeof (__odds && __odds.ensureMarketsWithOddsAPI) === 'function' && __odds.ensureMarketsWithOddsAPI) ||
-  (async (_args = {}) => ({ ok: true, markets_top3: {}, markets: {}, source: 'shim' }));
-
-try { if (typeof global.ensureMarketsWithOddsAPI !== 'function') global.ensureMarketsWithOddsAPI = ensureMarketsWithOddsAPI; } catch {}
-
-/*__SEND_REPORT_HOIST_V2__*/
-function __send_report_base(payload = {}) {
-  try {
-    if (typeof global.send_report === 'function') {
-      return global.send_report(payload);
-    }
-    const __send_report = (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})();
-return { ok: true, results: [] };
-  } catch (e) {
-    return { ok: false, error: String(e) };
+/** Utils */
+function marketSamples(markets = {}) {
+  const out = {};
+  for (const k of Object.keys(markets || {})) {
+    const arr = markets[k];
+    out[k] = Array.isArray(arr) ? arr.length : 0;
   }
+  return out;
 }
-if (typeof global.send_report !== 'function') {
-  function send_report(payload = {}) { return __send_report_base(payload); }
-  try { global.send_report = send_report; } catch {}
+function uniq(arr){ return Array.from(new Set(arr||[])); }
+function keyOfBook(x){ return (x && (x.bookmaker || x.source || 'n/a')); }
+function booksCount(arr=[]) { return new Set((arr||[]).map(keyOfBook).filter(Boolean)).size; }
+function normalizePrices(arr=[]) {
+  return arr.map(x => Number(x && x.price)).filter(v => Number.isFinite(v) && v>0).sort((a,b)=>a-b);
 }
-/* removed: send_report2 local dup */
-/* removed: send_report3 local dup */
-try { global.send_report2 = send_report2; global.send_report3 = send_report3; } catch {}
+function median(numbers){
+  const arr = numbers.filter(n => Number.isFinite(n)).sort((a,b) => a-b);
+  if (!arr.length) return 0;
+  const n = arr.length;
+  return n % 2 ? arr[(n-1)/2] : 0.5*(arr[n/2-1]+arr[n/2]);
+}
 
-/*__AI_ALIAS_TOLERANT__*/
-let __ai = {};
-try { __ai = require('./_lib/ai.cjs'); } catch (_) {}
-
-
-try { if (typeof global.callOpenAIOnce === 'undefined') global.callOpenAIOnce = callOpenAIOnce; } catch {}
-
-const enrich = require('./_lib/enrich.cjs');
-const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
-
-const buildOneShot = enrich.oneShotPayload || enrich.buildOneShotPayload;
-
-async function publishToTelegram(payload) {
-  const bot = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_VIP_ID || process.env.TELEGRAM_CHANNEL_ID;
-  if (!bot || !chatId) return { ok: false, reason: 'missing_telegram_env' };
-
-  const liga = payload?.league || payload?.enriched?.league || '-';
-  const kickoff = payload?.evt?.commence || payload?.enriched?.kickoff || '-';
-  const home = payload?.evt?.home || '-';
-  const away = payload?.evt?.away || '-';
-  const when = payload?.when_text || payload?.enriched?.when_text || null;
-
-  const text = [
-    '🎯 *One-Shot Preview*',
-    `*Liga:* ${liga}`,
-    `*Partido:* ${home} vs ${away}`,
-    `*Kickoff:* ${kickoff}`,
-    when ? `*Cuando:* ${when}` : null,
-  ].filter(Boolean).join('\n');
-
-  const url = `https://api.telegram.org/bot${bot}/sendMessage`;
-  const body = JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' });
-  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
-  const json = await res.json().catch(() => ({}));
-  return { ok: Boolean(json?.ok), response: json };
+/** score compuesto 1x2 */
+function score1x2_v2(markets = {}) {
+  try {
+    const h2x = markets['1x2'];
+    if (!Array.isArray(h2x) || h2x.length < 2) return 0;
+    const prices = normalizePrices(h2x);
+    if (!prices.length) return 0;
+    const mid = median(prices);
+    const best = prices[prices.length-1];
+    if (!mid || !best) return 0;
+    const raw = (best/mid) - 1;                         // 0..+
+    const bc = Math.min(booksCount(h2x), 4) / 4;       // 0..1
+    const n = Math.min(h2x.length, 6) / 6;              // 0..1
+    const edge = Math.min(Math.max(raw, 0), 0.25);      // cap 25%
+    return 0.60*edge + 0.25*bc + 0.15*n;                // 0..~0.25
+  } catch(_){ return 0; }
 }
 
 exports.handler = async (event) => {
-  try {
-    const q = event?.queryStringParameters || {};
-    const evt = {
-      home: q.home || 'Charlotte FC',
-      away: q.away || 'New York Red Bulls',
-      league: q.league || 'Major League Soccer',
-      commence: q.commence || new Date(Date.now() + 60*60*1000).toISOString(),
-    };
-
-    let match = {};
-    try { match = await resolveTeamsAndLeague(evt, {}); }
-    catch (e) { match = { ok: false, method: 'none', reason: 'resolver_error', error: e?.message }; }
-
-    const fixture = {
-      fixture_id: match?.fixture_id ?? null,
-      kickoff: evt.commence,
-      league_id: match?.league_id ?? null,
-      league_name: match?.league_name ?? evt.league,
-      country: match?.country ?? null,
-      home_id: match?.home_id ?? null,
-      away_id: match?.away_id ?? null,
-    };
-
-    const enriched = await enrich.enrichFixtureUsingOdds({ fixture });
-    const payload = await buildOneShot({ evt, match, enriched });
-
-    // No publicar si no hay datos mínimos
-    const hasMinData = Boolean((payload?.league || payload?.enriched?.league) && (payload?.evt?.commence || payload?.enriched?.kickoff));
-    const canPublish = !!(process.env.TELEGRAM_BOT_TOKEN && (process.env.TELEGRAM_VIP_ID || process.env.TELEGRAM_CHANNEL_ID));
-    if (!hasMinData || !canPublish || match?.ok === false) {
-      return {
-        statusCode: 200,
-        headers: { 'content-type': 'application/json' },
-        const __send_report = (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
+  const baseSendReport = {
     enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
+    results: []
   };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})();
-      body: JSON.stringify({ send_report: __send_report, published: false,
-          preview: true,
-          reason: !canPublish ? 'missing_telegram_env' : (!hasMinData ? 'insufficient_payload' : (match?.ok === false ? 'match_not_resolved' : 'preview')),
-          payload
-         }, null, 2),
-      };
+
+  if (enabled && typeof message_vip !== 'undefined' && message_vip && !process.env.TG_VIP_CHAT_ID)  baseSendReport.missing_vip_id = true;
+  if (enabled && typeof message_free !== 'undefined' && message_free && !process.env.TG_FREE_CHAT_ID) baseSendReport.missing_free_id = true;
+
+  const __send_report = baseSendReport;
+
+  let body = {};
+  try { body = event && event.body ? JSON.parse(event.body) : {}; } catch(_){ body = {}; }
+
+  const list = Array.isArray(body.events) ? body.events : [];
+  const limit = Math.max(1, Math.min(Number(body.limit || 50), 200));
+  const sleepMs = Number(process.env.BATCH_SLEEP_MS || 0);
+
+  const min_h2x_len = Math.max(0, Number(body.min_h2x_len ?? 2));
+  const require_markets = Array.isArray(body.require_markets) ? body.require_markets : [];
+  const needBooks = Number(body.min_books_1x2 || process.env.RANK_MIN_BOOKS_1X2 || 1);
+
+  const results = [];
+  const skipped = [];
+
+  for (const evt of list) {
+    try {
+      // payload base
+      let payload = await oneShotPayload({
+        evt,
+        match: null,
+        fixture: { kickoff: evt && evt.commence || null, league_name: evt && evt.league || null }
+      }) || {};
+      payload.meta = (payload.meta && typeof payload.meta === 'object') ? payload.meta : {};
+
+      const before = Object.keys((payload && payload.markets) || {}).length;
+
+      // enrich SAFE
+      payload = await ensureMarketsWithOddsAPI(payload, evt || {});
+      const after  = Object.keys((payload && payload.markets) || {}).length;
+
+      // status/meta
+      payload.meta.enrich_info   = Object.assign({ before, after, source:'oddsapi:ensure' }, payload.meta && payload.meta.enrich_info || {});
+      payload.meta.enrich_status = (after > 0 ? 'ok' : 'error');
+
+      // datos de 1x2 para filtros
+      const h2xArr  = Array.isArray(payload.markets && payload.markets['1x2']) ? payload.markets['1x2'] : [];
+      const h2xLen  = h2xArr.length;
+      const books1x2= booksCount(h2xArr);
+
+      // filtros rápidos
+      if (min_h2x_len > 0 && h2xLen < min_h2x_len) {
+        skipped.push({ evt, reason: `h2x_len<${min_h2x_len}`, h2x_len: h2xLen, markets_keys: Object.keys(payload.markets||{}) });
+        if (sleepMs > 0) await new Promise(r => setTimeout(r, sleepMs));
+        continue;
+      }
+      if (require_markets.length && !require_markets.every(mk => {
+        const v = payload.markets && payload.markets[mk];
+        return Array.isArray(v) ? v.length>0 : !!v;
+      })) {
+        skipped.push({ evt, reason: `missing required markets: ${require_markets.join(',')}`, markets_keys: Object.keys(payload.markets||{}) });
+        if (sleepMs > 0) await new Promise(r => setTimeout(r, sleepMs));
+        continue;
+      }
+      if (needBooks > 0 && books1x2 < needBooks) {
+        skipped.push({ evt, reason: `min_books_1x2<${needBooks}`, h2x_len: h2xLen, books_1x2: books1x2 });
+        if (sleepMs > 0) await new Promise(r => setTimeout(r, sleepMs));
+        continue;
+      }
+
+      // scoring (por ahora sólo 1x2)
+      const s1x2 = score1x2_v2(payload.markets || {});
+      const score = s1x2;
+
+      results.push({
+        evt,
+        score,
+        score_1x2: s1x2,
+        market_samples: marketSamples(payload.markets || {}),
+        has_markets: Object.keys(payload.markets||{}),
+        h2x_len: h2xLen,
+        payload_meta: payload.meta || {}
+      });
+
+      if (sleepMs > 0) await new Promise(r => setTimeout(r, sleepMs));
+    } catch (e) {
+      results.push({ evt, score: 0, error: String((e && e.message) || e) });
     }
-
-    const pub = await publishToTelegram(payload);
-    return {
-      statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ send_report: __send_report, published: pub.ok, preview: false, payload, publish_result: pub  }, null, 2),
-    };
-  } catch (e) {
-    return {
-      statusCode: 500,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
-error: e?.message || String(e) }),
-    };
   }
+
+  // ordenar y recortar
+  const ranked = results.filter(r => !r.skipped).sort((a,b)=> (b.score - a.score));
+  const kept   = ranked.slice(0, limit);
+
+  return {
+    statusCode: 200,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      ok: true,
+      count_in: list.length,
+      count_ranked: ranked.length,
+      count_skipped: skipped.length,
+      results: kept,
+      skipped: skipped.slice(0,50)
+    })
+  };
 };

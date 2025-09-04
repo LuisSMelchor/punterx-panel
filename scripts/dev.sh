@@ -65,7 +65,7 @@ scan_batch_demo() {
     limit: 10,
     events: [
       {home:"Liverpool", away:"Chelsea",   league:"Premier League", commence:"2025-08-16T16:30:00Z"},
-      {home:"Arsenal",   away:"Man City",  league:"Premier League", commence:"2025-08-16T16:30:00Z"},
+      {home:"Alpha City",   away:"Metropolis United",  league:"Premier League", commence:"2025-08-16T16:30:00Z"},
       {home:"Real Madrid", away:"Barcelona", league:"La Liga",      commence:"2025-09-01T19:00:00Z"},
       {home:"Inter",     away:"Juventus",  league:"Serie A",        commence:"2025-09-01T18:45:00Z"}
     ]
@@ -82,7 +82,7 @@ scan_batch_demo_filters() {
     require_markets: ["1x2"],
     events: [
       {home:"Liverpool", away:"Chelsea",   league:"Premier League", commence:"2025-08-16T16:30:00Z"},
-      {home:"Arsenal",   away:"Man City",  league:"Premier League", commence:"2025-08-16T16:30:00Z"},
+      {home:"Alpha City",   away:"Metropolis United",  league:"Premier League", commence:"2025-08-16T16:30:00Z"},
       {home:"Real Madrid", away:"Barcelona", league:"La Liga",      commence:"2025-09-01T19:00:00Z"},
       {home:"Inter",     away:"Juventus",  league:"Serie A",        commence:"2025-09-01T18:45:00Z"}
     ]

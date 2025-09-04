@@ -47,7 +47,7 @@ function __cacheGet(evt){
   if ((Date.now()-at) > ENRICH_CACHE_TTL_MS) { __ENRICH_CACHE.delete(k); return null; }
   return bm;
 }
-function __cachePut(evt,bm){ try{ __ENRICH_CACHE.set(__cacheKey(evt){ at: Date.now(), bm }); }catch(_){} }
+function __cachePut(evt,bm){ try{ __ENRICH_CACHE.set(__cacheKey(evt), { at: Date.now(), bm }); }catch(_){} }
 /* --- /cache --- */
 
 function __withTimeout(ms){
@@ -81,7 +81,7 @@ try {
     const doFetch = async () => {
       const ctl = __withTimeout(ENRICH_TIMEOUT_MS);
       try {
-        const r = await __fetch(u.toString(){ signal: ctl.signal });
+        const r = await __fetch(u.toString(), { signal: ctl.signal });
         if (!r || !r.ok) throw new Error(`HTTP ${r && r.status}`);
         const j = await r.json();
           const arr = Array.isArray(j.bookmakers) ? j.bookmakers : null;
@@ -95,7 +95,8 @@ try {
 }
 // handler principal (CJS)
 module.exports.handler = async (event, context) => {
-  const base = await scan.handler(event, context);
+  const __send_report = (() => { const en=(String(process.env.SEND_ENABLED)==='1'); const base={ enabled: en, results:(typeof send_report!=='undefined'&&send_report&&Array.isArray(send_report.results))?send_report.results:[] }; if(en&&typeof message_vip!=='undefined'&&message_vip&&!process.env.TG_VIP_CHAT_ID) base.missing_vip_id=true; if(en&&typeof message_free!=='undefined'&&message_free&&!process.env.TG_FREE_CHAT_ID) base.missing_free_id=true; return base; })();
+const base = await scan.handler(event, context);
   let payload; try { payload = JSON.parse(base.body||"{}"); } catch { payload = {}; }
 
   const results = (payload && payload.batch && Array.isArray(payload.batch.results)) ? payload.batch.results : [];
@@ -127,7 +128,7 @@ module.exports.handler = async (event, context) => {
           const doFetch = async () => {
             const ctl = __withTimeout(ENRICH_TIMEOUT_MS);
             try {
-              const r = await ((module.exports??null)&&module.exports.__fetch||__fetch||fetch)(u.toString(){ signal: ctl.signal });
+              const r = await ((module.exports??null)&&module.exports.__fetch||__fetch||fetch)(u.toString(), { signal: ctl.signal });
               if (!r || !r.ok) throw new Error(`HTTP ${r && r.status}`);
               const j = await r.json();
               const arr = Array.isArray(j.bookmakers) ? j.bookmakers : null;
@@ -202,8 +203,8 @@ const hit = (typeof __cacheGet === "function" ? __cacheGet(evt) : null);
   for (let i=0; i<attempts; i++){
     const ctl = (typeof __withTimeout==="function" ? __withTimeout(ENRICH_TIMEOUT_MS) : { signal: undefined, cancel(){}} );
     try {
-      const r = await fx(u.toString(){ signal: ctl.signal });
-      if (!r || !r.ok) throw Object.assign(new Error(`HTTP ${r && r.status}`){ status: r && r.status });
+      const r = await fx(u.toString(), { signal: ctl.signal });
+      if (!r || !r.ok) throw Object.assign(new Error(`HTTP ${r && r.status}`), { status: r && r.status });
       const j = await r.json();
       const arr = Array.isArray(j.bookmakers) ? j.bookmakers : null;
         if (arr) __cachePut(evt, arr);
@@ -219,4 +220,25 @@ const hit = (typeof __cacheGet === "function" ? __cacheGet(evt) : null);
     }
   }
   throw lastErr;
+};
+
+'use strict';
+
+// dedup: require ya presente al inicio del archivo
+
+exports.handler = async (event, context) => {
+  const __send_report = (() => { const en=(String(process.env.SEND_ENABLED)==='1'); const base={ enabled: en, results:(typeof send_report!=='undefined'&&send_report&&Array.isArray(send_report.results))?send_report.results:[] }; if(en&&typeof message_vip!=='undefined'&&message_vip&&!process.env.TG_VIP_CHAT_ID) base.missing_vip_id=true; if(en&&typeof message_free!=='undefined'&&message_free&&!process.env.TG_FREE_CHAT_ID) base.missing_free_id=true; return base; })();
+  try {
+    const q = (event && event.queryStringParameters) || {};
+    if (q.ping === '1') return { statusCode: 200, body: 'pong' };
+
+    const body = event.body ? JSON.parse(event.body) : {};
+    const evt = body.evt || {};
+
+    const enriched = await ensureMarketsWithOddsAPI({ evt });
+
+    return { statusCode: 200, body: JSON.stringify({ send_report: __send_report, enriched }) };
+  } catch (e) {
+    return { statusCode: 500, body: JSON.stringify({ send_report: __send_report, error: e?.message || String(e) }) };
+  }
 };

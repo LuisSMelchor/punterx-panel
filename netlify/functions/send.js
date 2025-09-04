@@ -104,12 +104,12 @@ async function sendTelegram(text, tipo = "free") {
 
 function ok(body){ return { statusCode:200, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }; }
 function html(){ return `<!doctype html><meta charset="utf-8">
-<title>PunterX — Send</title>
+<title>PunterX  Send</title>
 <style>body{background:#0b0b10;color:#e5e7eb;font:14px/1.5 system-ui,Segoe UI,Roboto;margin:0}.card{background:#11131a;border:1px solid #1f2330;border-radius:12px;padding:14px;margin:14px}</style>
 <div class="card">
   <h1>send</h1>
-  <p>POST JSON → {"text":"hola","tipo":"vip|free"}</p>
-  <p>GET ping → ?ping=1</p>
+  <p>POST JSON 1 {"text":"hola","tipo":"vip|free"}</p>
+  <p>GET ping 1 ?ping=1</p>
 </div>`; }
 
 exports.handler = async (event) => {
@@ -119,7 +119,7 @@ exports.handler = async (event) => {
       // ping simple
       if (qs.ping) return { statusCode:200, headers:{'Content-Type':'text/plain; charset=utf-8'}, body:"pong" };
       
-      // acción admin: re‑publicar y fijar el mensaje con botón al bot en el canal FREE
+      // acción admin: re­publicar y fijar el mensaje con botón al bot en el canal FREE
       // uso: GET /.netlify/functions/send?pin=free  con header: x-auth-code: <AUTH_CODE>
       if (qs.pin === 'free') {
         const hdr = (event.headers && (event.headers['x-auth-code'] || event.headers['x-auth'])) || "";
@@ -199,15 +199,15 @@ function _fmt(str, map) {
 }
 function _renderBullets(arr) {
   const a = Array.isArray(arr) ? arr : [];
-  if (!a.length) return "—";
+  if (!a.length) return "";
   return a.map(s => `- ${s}`).join("\n");
 }
 function _renderTop3NoNumbers(top3) {
   const a = Array.isArray(top3) ? top3 : [];
-  if (!a.length) return "—";
+  if (!a.length) return "";
   // HTML: mejor cuota en <b>negritas</b>
   return a.map((t, i) => {
-    const line = `${t.bookie} — ${Number(t.price).toFixed(2)}`;
+    const line = `${t.bookie}  ${Number(t.price).toFixed(2)}`;
     return i === 0 ? `<b>${line}</b>` : line;
   }).join("\n");
 }
@@ -216,129 +216,95 @@ function _renderTop3NoNumbers(top3) {
 // Plantillas EN VIVO
 // ===================
 const _TPL_LIVE_FREE = [
-  "🔴 EN VIVO - RADAR DE VALOR",
-  "🏆 {pais} - {liga} - {equipos}",
-  "⏱️ {minuto}  |  Marcador: {marcador}  |  Fase: {fase}",
+  " EN VIVO - RADAR DE VALOR",
+  " {pais} - {liga} - {equipos}",
+  " {minuto}  |  Marcador: {marcador}  |  Fase: {fase}",
   "",
-  "📊 Análisis en tiempo real:",
+  " Análisis en tiempo real:",
   "{razonamiento}",
   "",
-  "💬 “En vivo, cada jugada puede cambiarlo todo. Aquí es donde nacen las oportunidades.”",
+  " “En vivo, cada jugada puede cambiarlo todo. Aquí es donde nacen las oportunidades.”",
   "",
-  "🎁 Únete al VIP para ver:",
+  " Únete al VIP para ver:",
   "- Apuesta sugerida y apuestas extra",
   "- EV y probabilidad estimada",
   "- Top-3 casas con la mejor cuota",
   "",
-  "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.",
-  "⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder."
+  " IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.",
+  "6 Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder."
 ].join("\n");
 
 const _TPL_LIVE_VIP = [
-  "🔴 LIVE PICK - {nivel}",
-  "🏆 {pais} - {liga} - {equipos}",
-  "⏱️ {minuto}  |  Marcador: {marcador}  |  Fase: {fase}",
+  " LIVE PICK - {nivel}",
+  " {pais} - {liga} - {equipos}",
+  " {minuto}  |  Marcador: {marcador}  |  Fase: {fase}",
   "",
   "EV: {ev}% | Prob. estimada IA: {probabilidad}% | Momio: {momio}",
   "",
-  "💡 Apuesta sugerida: {apuesta_sugerida}",
-  "📌 Vigencia: {vigencia}",
+  " Apuesta sugerida: {apuesta_sugerida}",
+  " Vigencia: {vigencia}",
   "",
   "Apuestas extra:",
   "{apuestas_extra}",
   "",
-  "📊 Razonamiento EN VIVO:",
+  " Razonamiento EN VIVO:",
   "{razonamiento}",
   "",
-  "🏆 Top-3 casas (mejor resaltada):",
+  " Top-3 casas (mejor resaltada):",
   "{top3}",
   "",
-  "🧭 Snapshot mercado:",
+  " Snapshot mercado:",
   "{snapshot}",
   "",
-  "🔎 IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.",
-  "⚠️ Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder."
+  " IA Avanzada, monitoreando el mercado global 24/7 en busca de oportunidades ocultas y valiosas.",
+  "6 Este contenido es informativo. Apostar conlleva riesgo: juega de forma responsable y solo con dinero que puedas permitirte perder."
 ].join("\n");
 
 // ============================
 // Plantillas PRE-MATCH (NEW)
 // ============================
 const _TPL_PRE_FREE = [
-  "📡 RADAR DE VALOR",
-  "🏆 {pais} - {liga} - {equipos}",
-  "🕒 Inicio: {kickoff}",
+  " RADAR DE VALOR",
+  " {pais} - {liga} - {equipos}",
+  " Inicio: {kickoff}",
   "",
-  "📊 Análisis:",
+  " Análisis:",
   "{analisis}",
   "",
-  "🎁 Únete al VIP para ver:",
+  " Únete al VIP para ver:",
   "- EV y probabilidad estimada",
   "- Apuesta sugerida + Apuestas extra",
   "- Top-3 casas con mejor cuota",
   "",
-  "🔎 IA Avanzada, monitoreando el mercado global 24/7.",
-  "⚠️ Este contenido es informativo. Apostar conlleva riesgo."
+  " IA Avanzada, monitoreando el mercado global 24/7.",
+  "6 Este contenido es informativo. Apostar conlleva riesgo."
 ].join("\n");
 
 const _TPL_PRE_VIP = [
-  "🎯 PICK {nivel}",
-  "🏆 {pais} - {liga} - {equipos}",
-  "🕒 Inicio: {kickoff}",
+  " PICK {nivel}",
+  " {pais} - {liga} - {equipos}",
+  " Inicio: {kickoff}",
   "",
   "EV: {ev}% | Prob. estimada IA: {probabilidad}% | Momio: {momio}",
   "",
-  "💡 Apuesta sugerida: {apuesta_sugerida}",
+  " Apuesta sugerida: {apuesta_sugerida}",
   "",
   "Apuestas extra:",
   "{apuestas_extra}",
   "",
-  "🏆 Top-3 casas (mejor resaltada):",
+  " Top-3 casas (mejor resaltada):",
   "{top3}",
   "",
-  "📊 Datos avanzados:",
+  " Datos avanzados:",
   "{datos}",
   "",
-  "🔎 IA Avanzada, monitoreando el mercado global 24/7.",
-  "⚠️ Este contenido es informativo. Apostar conlleva riesgo."
+  " IA Avanzada, monitoreando el mercado global 24/7.",
+  "6 Este contenido es informativo. Apostar conlleva riesgo."
 ].join("\n");
 
 // ============================
-// Plantillas OUTRIGHTS (NEW)
-// ============================
-const _TPL_OUT_FREE = [
-  "📡 RADAR DE VALOR — OUTRIGHT",
-  "🏆 {pais} - {liga} - {mercado}",
-  "",
-  "📊 Análisis:",
-  "{analisis}",
-  "",
-  "🎁 Únete al VIP para ver EV, probabilidad y mejores casas.",
-  "",
-  "🔎 IA Avanzada, monitoreando el mercado global 24/7.",
-  "⚠️ Este contenido es informativo. Apostar conlleva riesgo."
-].join("\n");
-
-const _TPL_OUT_VIP = [
-  "🎯 PICK OUTRIGHT {nivel}",
-  "🏆 {pais} - {liga} - {mercado}",
-  "",
-  "EV: {ev}% | Prob. estimada IA: {probabilidad}% | Momio: {momio}",
-  "",
-  "💡 Apuesta sugerida: {apuesta_sugerida}",
-  "",
-  "Apuestas extra:",
-  "{apuestas_extra}",
-  "",
-  "🏆 Top-3 casas (mejor resaltada):",
-  "{top3}",
-  "",
-  "🔎 IA Avanzada, monitoreando el mercado global 24/7.",
-  "⚠️ Este contenido es informativo. Apostar conlleva riesgo."
-].join("\n");
-
-// ========================
 // Builders de texto LIVE
-// ========================
+// ============================
 function _buildLiveFreeMessage(payload) {
   const razonamiento = _renderBullets(payload.razonamiento || []);
   return _fmt(_TPL_LIVE_FREE, {
@@ -409,7 +375,6 @@ function _buildPreVipMessage(p) {
     momio: (p.momio ?? "").toString(),
     apuesta_sugerida: p.apuesta_sugerida || "—",
     apuestas_extra,
-    top3,
     datos
   });
 }
