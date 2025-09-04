@@ -7,8 +7,8 @@ const norm = require(path.join(__dirname, '..', 'netlify', 'functions', '_lib', 
 const resolver = require(path.join(__dirname, '..', 'netlify', 'functions', '_lib', 'resolver-af.cjs'));
 
 // --- normalizeTeam ---
-assert(norm.normalizeTeam('Alpha City FC') === 'Dallas', 'normalizeTeam FC');
-assert(norm.normalizeTeam('Atlético  Metropolis') === 'Atletico Mineiro', 'normalizeTeam acentos/espacios');
+assert(norm.normalizeTeam('Alpha City FC') === 'Alpha City', 'normalizeTeam FC');
+assert(norm.normalizeTeam('Atlético  Metropolis') === 'Atletico Metropolis', 'normalizeTeam acentos/espacios');
 
 // --- normalizeLeagueHint ---
 assert(norm.normalizeLeagueHint('mls') === 'Major League Soccer', 'league MLS');
@@ -16,7 +16,7 @@ assert(norm.normalizeLeagueHint('LaLiga') === 'La Liga', 'league LaLiga');
 
 // --- normalizeCountryHint ---
 assert(norm.normalizeCountryHint('us') === 'USA', 'country US');
-assert(norm.normalizeCountryHint('Countryland') === 'Countryland', 'country Countryland passthrough');
+assert(norm.normalizeCountryHint('England') === 'England', 'country Countryland passthrough');
 
 // --- scoreNameMatch ---
 const s1 = resolver.__test__?.scoreNameMatch ? resolver.__test__.scoreNameMatch('Alpha City','Alpha City') : undefined;
@@ -44,7 +44,7 @@ assert(norm.normalizeWhenText('bad-date') === '', 'when_text inválida → ""');
 
 // --- normalizeCountryHint extra ---
 assert(norm.normalizeCountryHint('US') === 'USA', 'country US→USA');
-assert(norm.normalizeCountryHint('UNITED KINGDOM') === 'Countryland', 'country UK→Countryland (alias)');
+assert(norm.normalizeCountryHint('UNITED KINGDOM') === 'England', 'country UK→Countryland (alias)');
 
 console.log('OK: extended asserts');
 
