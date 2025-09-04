@@ -1,3 +1,4 @@
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const { handler: publish } = require('./oneshot-publish.cjs');
 
 /**
@@ -6,20 +7,19 @@ const { handler: publish } = require('./oneshot-publish.cjs');
  * - Si no se pasa, usa un set mínimo demo.
  */
 exports.handler = async (event) => {
-  if (process.env.FEATURE_ONESHOT !== '1') {
-    return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
+  const baseSendReport = {
     enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
+    results: []
   };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
-status: 'feature_off' }) };
+
+  if (enabled && typeof message_vip !== 'undefined' && message_vip && !process.env.TG_VIP_CHAT_ID)  baseSendReport.missing_vip_id = true;
+  if (enabled && typeof message_free !== 'undefined' && message_free && !process.env.TG_FREE_CHAT_ID) baseSendReport.missing_free_id = true;
+
+  const __send_report = baseSendReport;
+
+  if (process.env.FEATURE_ONESHOT !== '1') {
+    return { statusCode: 200, body: JSON.stringify({ send_report: __send_report, status: 'feature_off'  }) };
   }
   const q = event?.queryStringParameters || {};
   const items = [];
@@ -30,8 +30,7 @@ status: 'feature_off' }) };
       items.push({ home, away, league, commence });
     }
   } else {
-    // Demo mínima (ajústalo a tu “script maestro” real)
-    items.push({ home: 'Charlotte FC', away: 'New York Red Bulls', league: 'Major League Soccer', commence: '2025-08-24T23:00:00Z' });
+    // Demo mínima (ajústalo a tu "script maestro" real)
   }
 
   const results = [];
@@ -46,17 +45,5 @@ status: 'feature_off' }) };
     }
   }
 
-  return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
-status: 'ok', count: results.length, results }, null, 2) };
+  return { statusCode: 200, body: JSON.stringify({ send_report: __send_report, status: 'ok', count: results.length, results   }, null, 2),};
 };

@@ -16,7 +16,19 @@ function _get(url) {
 }
 
 exports.handler = async (event) => {
-  try {
+  const __send_report = (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})();
+try {
     const q = event?.queryStringParameters || {};
     const league = q.league || 'Major League Soccer';
     const home = q.home || 'Charlotte FC';
@@ -25,53 +37,20 @@ exports.handler = async (event) => {
 
     const sport = guessSportKeyFromLeague(league);
     if (!process.env.ODDS_API_KEY || !sport) {
-      return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ send_report: __send_report,
 sport, hasKey: !!process.env.ODDS_API_KEY, events_len: 0, sample: null })};
     }
 
     const url = `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(sport)}/events?apiKey=${encodeURIComponent(process.env.ODDS_API_KEY)}&dateFormat=iso`;
     const arr = await _get(url);
     return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({
-      send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      send_report: __send_report,
 sport, hasKey: !!process.env.ODDS_API_KEY,
       events_len: Array.isArray(arr) ? arr.length : 0,
       first: Array.isArray(arr) ? arr.slice(0,3) : null
     }, null, 2) };
   } catch (e) {
-    return { statusCode: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+    return { statusCode: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ send_report: __send_report,
 error: e?.message || String(e) }) };
   }
 };

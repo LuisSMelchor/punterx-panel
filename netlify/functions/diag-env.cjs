@@ -14,21 +14,33 @@ function __send_report_base(payload = {}) {
 }
 if (typeof global.send_report !== 'function') {
   function send_report(payload = {}) { return __send_report_base(payload); }
-  try { global.send_report = send_report; } catch {}
+  try { global.send_report = send_report; } catch(e) {}
 }
 function send_report2(base = {}, extra = {}) { return __send_report_base({ ...(base||{}), ...(extra||{}) }); }
 function send_report3(base = {}, extra = {}) { return __send_report_base({ ...(base||{}), ...(extra||{}) }); }
-try { global.send_report2 = send_report2; global.send_report3 = send_report3; } catch {}
+try { global.send_report2 = send_report2; global.send_report3 = send_report3; } catch(e) {}
 
 /*__AI_ALIAS_TOLERANT__*/
 let __ai = {};
 try { __ai = require('./_lib/ai.cjs'); } catch (_) {}
 
 
-try { if (typeof global.callOpenAIOnce === 'undefined') global.callOpenAIOnce = callOpenAIOnce; } catch {}
+try { if (typeof global.callOpenAIOnce === 'undefined') global.callOpenAIOnce = callOpenAIOnce; } catch(e) {}
 
 exports.handler = async () => {
-  const keys = [
+  const __send_report = (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})();
+const keys = [
     "LOG_VERBOSE",
     "DEBUG_TRACE",
     "STRICT_MATCH",
@@ -49,19 +61,11 @@ exports.handler = async () => {
     statusCode: 200,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!null  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!null && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      send_report: __send_report,
 now: new Date().toISOString(),
+        af_verbose: Number(process.env.AF_VERBOSE ?? 0),
+        sim_thr: Number(process.env.SIM_THR ?? 0.60),
+        has_af_key: !!(process.env.API_FOOTBALL_KEY || process.env.API_FOOTBALL || process.env.APIFOOTBALL_KEY),
       env: envDump
     }, null, 2)
   };

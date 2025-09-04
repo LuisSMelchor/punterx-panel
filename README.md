@@ -1,3 +1,5 @@
+[![CI](https://github.com/LuisSMelchor/punterx-panel/actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
+
 # PunterX (Oneshot Odds Enrichment)
 
 ## Cómo correr todo en Codespace

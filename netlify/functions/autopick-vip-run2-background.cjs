@@ -1,50 +1,41 @@
 'use strict';
 
-const __accepted = () => ({ statusCode: 202, body: '' });
-const qbool = (v) => v === '1' || v === 'true' || v === 'yes';
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
+const { createClient } = require('@supabase/supabase-js');
+const OpenAI = require('openai');
+
+const {
+  SUPABASE_URL,
+  SUPABASE_KEY,
+  OPENAI_API_KEY,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_CHANNEL_ID,
+  TELEGRAM_GROUP_ID,
+  OPENAI_MODEL,
+  OPENAI_MODEL_FALLBACK,
+  COUNTRY_FLAG,
+  ODDS_API_KEY,
+  API_FOOTBALL_KEY
+} = process.env;
+
+function assertEnv() {
+  const required = [
+    'SUPABASE_URL','SUPABASE_KEY','OPENAI_API_KEY','TELEGRAM_BOT_TOKEN',
+    'TELEGRAM_CHANNEL_ID','TELEGRAM_GROUP_ID','ODDS_API_KEY','API_FOOTBALL_KEY'
+  ];
+  const missing = required.filter(k => !process.env[k]);
+  if (missing.length) {
+    console.error('❌ ENV faltantes:', missing.join(', '));
+    throw new Error('Variables de entorno faltantes');
+  }
+}
+
+const supabase = createClient(SUPABASE_URL || '', SUPABASE_KEY || '');
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY || '' });
 
 exports.handler = async (event, context) => {
-  try {
-    const rq = eval('require');
-    const path = rq('path');
-    const fsx  = rq('fs');
-
-    // Localiza el impl igual que el wrapper principal
-    let implPath = path.join(__dirname, 'autopick-vip-nuevo-impl.cjs');
-    if (!fsx.existsSync(implPath) && process.env.LAMBDA_TASK_ROOT) {
-      const alt = path.join(process.env.LAMBDA_TASK_ROOT, 'netlify/functions', 'autopick-vip-nuevo-impl.cjs');
-      if (fsx.existsSync(alt)) implPath = alt;
-    }
-
-    const impl = rq(implPath);
-
-    // Inyecta auth si es cron o manual (mismo criterio que run2)
-    const qs = (event && event.queryStringParameters) || {};
-    const isScheduled = !!((event && event.headers) || {})['x-nf-scheduled'];
-    const inHeaders = Object.assign({}, (event && event.headers) || {});
-    if ((isScheduled || qbool(qs.manual)) && process.env.AUTH_CODE) {
-      inHeaders["x-auth"]        = process.env.AUTH_CODE;
-      inHeaders["x-auth-code"]   = process.env.AUTH_CODE;
-      inHeaders["authorization"] = "Bearer " + process.env.AUTH_CODE;
-      inHeaders["x-api-key"]     = process.env.AUTH_CODE;
-    }
-
-    const newEvent = Object.assign({}, event, {
-      headers: inHeaders,
-      queryStringParameters: Object.assign({}, qs, { manual: (isScheduled || qbool(qs.manual)) ? '1' : undefined })
-    });
-
-    // Dispara en background y responde 202 inmediatamente
-    setTimeout(() => {
-      Promise.resolve()
-        .then(() => impl.handler(newEvent, context))
-        .catch(e => console.error('[bg impl error]', e && (e.stack || e.message || e)));
-    }, 0);
-
-    return __accepted();
-  } catch (e) {
-    console.error('[bg wrapper error]', e && (e.stack || e.message || e));
-    // Aún así respondemos 202 para cumplir contrato de background
-    return __accepted();
-  }
+  assertEnv();
+  // Lógica del handler aquí
+  return { statusCode: 200, body: JSON.stringify({ ok: true }) };
 };

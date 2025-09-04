@@ -7,10 +7,29 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20]
+    env:
+      AF_VERBOSE: "0"
+      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      ODDS_REGIONS: "us,uk,eu,au"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - run: npm ci || npm i
-      - run: npm run verify:all
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run -s ci:guard
+      - run: npm run -s ci:unit
+      - name: Install Netlify CLI (pinned)
+        run: npm i -g netlify-cli@17
+      - name: Start functions:serve
+        run: npm run -s ci:serve
+      - name: Make CI dump (optional)
+        run: npm run -s ci:dump
+      - name: Smoke resolveEvt (optional)
+        run: npm run -s ci:smoke

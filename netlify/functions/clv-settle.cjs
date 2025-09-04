@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
 
@@ -53,7 +55,19 @@ async function fetchClosePrice(row) {
 }
 
 exports.handler = async () => {
-  const started = Date.now();
+  const __send_report = (() => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const base = {
+    enabled,
+    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
+      ? send_report.results
+      : []
+  };
+  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  return base;
+})();
+const started = Date.now();
   const resumen = { toCheck: 0, updated: 0, skipped: 0, errors: 0 };
 
   try {
@@ -68,18 +82,7 @@ exports.handler = async () => {
 
     if (error) {
       console.error('[clv-settle] supabase select error', error);
-      return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+      return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
 ok: false, stage: 'select', error: String(error) }) };
     }
 
@@ -111,33 +114,11 @@ ok: false, stage: 'select', error: String(error) }) };
     }
 
     console.log('[clv-settle] resumen', resumen, 'ms=', Date.now() - started);
-    return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+    return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
 ok: true, resumen }) };
   } catch (e) {
     console.error('[clv-settle] fatal', e?.message || e);
-    return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
+    return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
 ok: false, stage: 'fatal', error: String(e) }) };
   }
 };

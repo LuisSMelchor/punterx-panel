@@ -5,3 +5,14 @@
 # (opcional) build command dummy por si no hay frontend
 [build.environment]
   NODE_VERSION = "22"
+
+[functions."admin-grant-vip"]
+  node_bundler = "zisi"
+
+# --- override solo para autopick-live (resolver parser de zisi) ---
+[functions."autopick-live"]
+  node_bundler = "esbuild"
+
+# --- override solo para autopick-outrights (resolver parser de zisi) ---
+[functions."autopick-outrights"]
+  node_bundler = "esbuild"

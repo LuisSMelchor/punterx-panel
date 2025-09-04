@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 // deps base
 const scan = require('./run-picks-scan.cjs');
 
@@ -93,7 +95,8 @@ try {
 }
 // handler principal (CJS)
 module.exports.handler = async (event, context) => {
-  const base = await scan.handler(event, context);
+  const __send_report = (() => { const en=(String(process.env.SEND_ENABLED)==='1'); const base={ enabled: en, results:(typeof send_report!=='undefined'&&send_report&&Array.isArray(send_report.results))?send_report.results:[] }; if(en&&typeof message_vip!=='undefined'&&message_vip&&!process.env.TG_VIP_CHAT_ID) base.missing_vip_id=true; if(en&&typeof message_free!=='undefined'&&message_free&&!process.env.TG_FREE_CHAT_ID) base.missing_free_id=true; return base; })();
+const base = await scan.handler(event, context);
   let payload; try { payload = JSON.parse(base.body||"{}"); } catch { payload = {}; }
 
   const results = (payload && payload.batch && Array.isArray(payload.batch.results)) ? payload.batch.results : [];
@@ -217,4 +220,25 @@ const hit = (typeof __cacheGet === "function" ? __cacheGet(evt) : null);
     }
   }
   throw lastErr;
+};
+
+'use strict';
+
+// dedup: require ya presente al inicio del archivo
+
+exports.handler = async (event, context) => {
+  const __send_report = (() => { const en=(String(process.env.SEND_ENABLED)==='1'); const base={ enabled: en, results:(typeof send_report!=='undefined'&&send_report&&Array.isArray(send_report.results))?send_report.results:[] }; if(en&&typeof message_vip!=='undefined'&&message_vip&&!process.env.TG_VIP_CHAT_ID) base.missing_vip_id=true; if(en&&typeof message_free!=='undefined'&&message_free&&!process.env.TG_FREE_CHAT_ID) base.missing_free_id=true; return base; })();
+  try {
+    const q = (event && event.queryStringParameters) || {};
+    if (q.ping === '1') return { statusCode: 200, body: 'pong' };
+
+    const body = event.body ? JSON.parse(event.body) : {};
+    const evt = body.evt || {};
+
+    const enriched = await ensureMarketsWithOddsAPI({ evt });
+
+    return { statusCode: 200, body: JSON.stringify({ send_report: __send_report, enriched }) };
+  } catch (e) {
+    return { statusCode: 500, body: JSON.stringify({ send_report: __send_report, error: e?.message || String(e) }) };
+  }
 };

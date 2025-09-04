@@ -1,41 +1,43 @@
-const { resolveTeamsAndLeague } = require('./_lib/af-resolver.cjs');
-// fetchOddsForFixture existe pero aún no lo usamos aquí para no exponer secretos
+"use strict";
+// diag-enrich: diagnóstico de matching AF con normalización de evt
+const _norm = require("./_lib/normalize.cjs");
+const lib   = require("./_lib/enrich.cjs");
+
+function parseBody(event){
+  try { return (event && event.body) ? JSON.parse(event.body) : {}; }
+  catch(_){ return {}; }
+}
 exports.handler = async (event) => {
+  const bodyIn = parseBody(event);
+  const STRICT_MATCH = Number(bodyIn.STRICT_MATCH ?? process.env.STRICT_MATCH ?? 1);
+  const AF_VERBOSE   = Number(bodyIn.AF_VERBOSE   ?? process.env.AF_VERBOSE   ?? 0);
+
+  let evt = _norm.normalizeEvt(bodyIn.evt || {});
+  const out = {
+    name: "diag-enrich",
+    ok: true,
+    STRICT_MATCH,
+    AF_VERBOSE,
+    resolver: { used:false, has_fn:false },
+    enriched: {}
+  };
   try {
-    const q = event?.queryStringParameters || {};
-    const evt = {
-      home: q.home || 'Charlotte FC',
-      away: q.away || 'New York Red Bulls',
-      league: q.league || 'Major League Soccer',
-      commence: q.commence || '2025-08-24T23:00:00Z'
-    };
-    const match = await resolveTeamsAndLeague(evt, {});
-    return { statusCode: 200, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
-evt, match }) };
-  } catch (e) {
-    return { statusCode: 500, body: JSON.stringify({ send_report: (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})(),
-error: e?.message || String(e) }) };
+    const hasFn = !!(lib && typeof lib.resolveTeamsAndLeague === "function");
+    out.resolver.has_fn = hasFn;
+    if (hasFn){
+      out.resolver.used = true;
+      const r = await lib.resolveTeamsAndLeague(evt, { verbose: AF_VERBOSE });
+      out.enriched = r || {};
+    } else {
+      out.enriched = { fixture_id:null, league:null, country:null, when_text:_norm.normalizeWhenText(evt.when_text||"") };
+    }
+  } catch(e){
+    out.ok = false;
+    out.error = String(e && e.message || e);
   }
+  return {
+    statusCode: 200,
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify(out)
+  };
 };
