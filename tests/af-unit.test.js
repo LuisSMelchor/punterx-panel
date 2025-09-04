@@ -27,8 +27,6 @@ if (s1 === undefined || s2 === undefined) {
   const _score = _resolver.scoreNameMatch || (function(){ throw new Error('scoreNameMatch no exportado');})();
 }
 
-console.log('OK: normalize + scoring basics');
-process.exit(0);
 
 // --- umbrales & orden ---
 const _score = resolver.__test__.scoreNameMatch;
@@ -49,3 +47,6 @@ assert(norm.normalizeCountryHint('US') === 'USA', 'country US→USA');
 assert(norm.normalizeCountryHint('UNITED KINGDOM') === 'England', 'country UK→England (alias)');
 
 console.log('OK: extended asserts');
+
+console.log('OK: all unit asserts');
+process.exit(0);
