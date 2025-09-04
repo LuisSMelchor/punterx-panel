@@ -7,10 +7,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20]
     env:
-      # Opcionalmente define AF_VERBOSE para tener trazas en resolver
       AF_VERBOSE: "0"
-      # Si defines estos secretos en el repo, el job generará dump real y correrá el smoke:
       API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       ODDS_REGIONS: "us,uk,eu,au"
@@ -18,12 +20,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ matrix.node-version }}
           cache: 'npm'
       - run: npm ci
       - run: npm run -s ci:unit
-      - name: Install Netlify CLI
-        run: npm i -g netlify-cli
+      - name: Install Netlify CLI (pinned)
+        run: npm i -g netlify-cli@17
       - name: Start functions:serve
         run: npm run -s ci:serve
       - name: Make CI dump (optional)

@@ -7,8 +7,8 @@ const norm = require(path.join(__dirname, '..', 'netlify', 'functions', '_lib', 
 const resolver = require(path.join(__dirname, '..', 'netlify', 'functions', '_lib', 'resolver-af.cjs'));
 
 // --- normalizeTeam ---
-assert(norm.normalizeTeam('FC Dallas') === 'Dallas', 'normalizeTeam FC');
-assert(norm.normalizeTeam('Atlético  Mineiro') === 'Atletico Mineiro', 'normalizeTeam acentos/espacios');
+assert(norm.normalizeTeam('Alpha City FC') === 'Dallas', 'normalizeTeam FC');
+assert(norm.normalizeTeam('Atlético  Metropolis') === 'Atletico Mineiro', 'normalizeTeam acentos/espacios');
 
 // --- normalizeLeagueHint ---
 assert(norm.normalizeLeagueHint('mls') === 'Major League Soccer', 'league MLS');
@@ -16,11 +16,11 @@ assert(norm.normalizeLeagueHint('LaLiga') === 'La Liga', 'league LaLiga');
 
 // --- normalizeCountryHint ---
 assert(norm.normalizeCountryHint('us') === 'USA', 'country US');
-assert(norm.normalizeCountryHint('England') === 'England', 'country England passthrough');
+assert(norm.normalizeCountryHint('Countryland') === 'Countryland', 'country Countryland passthrough');
 
 // --- scoreNameMatch ---
-const s1 = resolver.__test__?.scoreNameMatch ? resolver.__test__.scoreNameMatch('Houston Dynamo','Houston Dynamo') : undefined;
-const s2 = resolver.__test__?.scoreNameMatch ? resolver.__test__.scoreNameMatch('San Jose Earthquakes II','San Jose Earthquakes') : undefined;
+const s1 = resolver.__test__?.scoreNameMatch ? resolver.__test__.scoreNameMatch('Alpha City','Alpha City') : undefined;
+const s2 = resolver.__test__?.scoreNameMatch ? resolver.__test__.scoreNameMatch('Metropolis United II','Metropolis United Earthquakes') : undefined;
 if (s1 === undefined || s2 === undefined) {
   // fallback: require internal via eval-free path
   const _resolver = require(path.join(__dirname, '..', 'netlify', 'functions', '_lib', 'resolver-af.cjs'));
@@ -30,9 +30,9 @@ if (s1 === undefined || s2 === undefined) {
 
 // --- umbrales & orden ---
 const _score = resolver.__test__.scoreNameMatch;
-const eq = _score('Houston Dynamo','Houston Dynamo');           // 1.0
-const contains = _score('San Jose Earthquakes II','San Jose');  // ~0.85
-const partial = _score('Chicago Fire','Chicago');               // ~0.85
+const eq = _score('Alpha City','Alpha City');           // 1.0
+const contains = _score('Metropolis United II','Metropolis United');  // ~0.85
+const partial = _score('Coastline Rangers','Coastline');               // ~0.85
 assert(eq === 1.0, 'score exacto debe ser 1.0');
 assert(contains >= 0.80 && contains <= 0.90, 'contains ~0.85');
 assert(partial   >= 0.80 && partial   <= 0.90, 'partial ~0.85');
@@ -44,7 +44,7 @@ assert(norm.normalizeWhenText('bad-date') === '', 'when_text inválida → ""');
 
 // --- normalizeCountryHint extra ---
 assert(norm.normalizeCountryHint('US') === 'USA', 'country US→USA');
-assert(norm.normalizeCountryHint('UNITED KINGDOM') === 'England', 'country UK→England (alias)');
+assert(norm.normalizeCountryHint('UNITED KINGDOM') === 'Countryland', 'country UK→Countryland (alias)');
 
 console.log('OK: extended asserts');
 
