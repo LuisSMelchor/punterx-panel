@@ -7,7 +7,7 @@
 'use strict';
 
 
-const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
+const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./enrich.cjs');
 /* ============ Blindaje runtime ============ */
 try { if (typeof fetch === 'undefined') global.fetch = require('node-fetch'); } catch (_) {}
 try {
@@ -19,11 +19,13 @@ try {
 let OpenAICtor = null; // se resuelve por import() cuando se necesite
 const fs = require('fs');
 const path = require('path');
-const { afApi, resolveFixtureFromList } = require('./_lib/af-resolver.cjs');
+const { afApi, resolveFixtureFromList } = require('./af-resolver.cjs');
 // Corazonada (tu módulo ya existente)
-const { computeCorazonada } = require('./_lib/_corazonada.cjs');
-const { createLogger } = require('./_lib/_logger.cjs');
-const { resolveTeamsAndLeague } = require('./_lib/match-helper.cjs');
+const { computeCorazonada } = require('./_corazonada.cjs');
+const { createLogger } = require('./_logger.cjs');
+const { resolveTeamsAndLeague } = require('./match-helper.cjs');
+const OpenAI = require('openai'); // __SANE_OAI_IMPORT__
+const { ensureSupabase } = require('./_supabase-client.cjs'); // __SANE_SUPABASE_IMPORT__
 
 // =============== ENV ===============
 const {
@@ -110,14 +112,14 @@ function assertEnv() {
 }
 
 /* =============== CLIENTES =============== */
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+let supabase = null; // __SANE_SUPABASE_INIT__
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // Helpers de envío (debes tener netlify/functions/send.js con LIVE FREE/VIP)
 let send = null;
-try { send = require("./send"); }
+try { send = require('../send.js'); }
 catch {
-  try { send = require('./send'); }
+  try { send = require('../send.js'); }
   catch (e) { throw new Error("No se pudo cargar send.js (helpers LIVE)"); }
 }
 
@@ -597,8 +599,8 @@ exports.handler = async (event, context) => {
       ? send_report.results
       : []
   };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
+  if (enabled && (typeof message_vip !== 'undefined') && !!message_vip && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
+  if (enabled && (typeof message_free !== 'undefined') && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
   return base;
 })();
 try { const q = (event && event.queryStringParameters) || {}; if (q.cron) { q.manual = "1"; delete q.cron; } } catch (e) {}
