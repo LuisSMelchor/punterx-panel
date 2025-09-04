@@ -29,7 +29,8 @@
     "scanm:full": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=10&limit=10&fast=0&enrich_max=10&enrich_conc=4' | scripts/jq_safe.sh '{results: (.batch.results|length), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'",
     "scanm:check": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=7&limit=10&min_h2x_len=3&require_markets=1x2&fetch_odds=1&max_fetch=10&enrich_max=10&enrich_conc=4' | scripts/jq_safe.sh '{results: (.batch.results|length), with_bm: ((.batch.results // []) | map((.bookmakers? | (if type==\"array\" then 1 else 0 end))) | add // 0), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'",
     "scanm:chk:fast": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=10&limit=10' | scripts/jq_safe.sh '{ok_limited: ((.__bookmakers_after == (.__enrich_dbg.ok // 0)) and (.__bookmakers_after <= (.__enrich_dbg.maxN // 0))), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'",
-    "scanm:chk:full": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=10&limit=10&fast=0&enrich_max=10' | scripts/jq_safe.sh '{ok_all: (.__bookmakers_after == (.__enrich_dbg.results_len // 0)), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'"
+    "scanm:chk:full": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=10&limit=10&fast=0&enrich_max=10' | scripts/jq_safe.sh '{ok_all: (.__bookmakers_after == (.__enrich_dbg.results_len // 0)), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'",
+    "test:unit-af": "NODE_ENV=test node tests/af-unit.test.js"
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
@@ -40,8 +41,11 @@
     "openai": "^4.104.0"
   },
   "devDependencies": {
+    "@babel/parser": "^7.28.3",
+    "@netlify/zip-it-and-ship-it": "^14.1.6",
     "@tsconfig/node18": "^18.2.4",
     "esbuild": "^0.23.0",
+    "esprima": "^4.0.1",
     "netlify-cli": "^17.38.1",
     "typescript": "^5.9.2"
   }
