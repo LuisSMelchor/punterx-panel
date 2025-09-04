@@ -1,0 +1,16 @@
+{
+	"telemetryDisabled": false,
+	"cliId": "5367bcf4-9200-4859-a17b-aaa9c8b259d3",
+	"userId": "6887b600ac9b720066bf6b5b",
+	"users": {
+		"6887b600ac9b720066bf6b5b": {
+			"id": "6887b600ac9b720066bf6b5b",
+			"name": "Luis Jesus Sanchez Melchor",
+			"email": "luissmmelchor@gmail.com",
+			"auth": {
+				"token": "nfc_GS99Hk6LJMUi84NhkW8m9G7DE218aDwm127d",
+				"github": {}
+			}
+		}
+	}
+}

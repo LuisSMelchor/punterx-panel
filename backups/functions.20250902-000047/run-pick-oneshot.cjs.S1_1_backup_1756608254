@@ -1,0 +1,219 @@
+'use strict';
+(function(){
+  var prev = (typeof global.normalizeFinal === "function") ? global.normalizeFinal : function(x){return x;};
+  global.normalizeFinal = function(x){
+    try {
+      var y = prev(x) || {};
+      var pld = (y && y.payload) ? y.payload : y;
+      var ai  = (pld && pld.ai_json) ? pld.ai_json : null;
+      if (ai){
+        var pick = ai.ap_sugerida || {}, parts = ["✅ Sugerencia AI"];
+        if (pick.mercado) parts.push("Mercado: "+pick.mercado);
+        if (pick.pick)    parts.push("Selección: "+pick.pick);
+        if (pick.cuota!=null) parts.push("Cuota: "+pick.cuota);
+        if (typeof ai.probabilidad === "number") parts.push("Prob.: "+(ai.probabilidad*100).toFixed(1)+"%");
+        if (typeof ai.ev_estimado   === "number") parts.push("EV: "+(ai.ev_estimado*100).toFixed(1)+"%");
+        if (ai.resumen) parts.push("Notas: "+ai.resumen);
+        var msg = parts.join("\n");
+        pld.messages = { free: msg, vip: msg };
+        y.meta = Object.assign({}, y.meta||{}, {
+          ai_ok: !!(y.meta && y.meta.ai_ok),
+          resolved: !!(y.meta && y.meta.resolved),
+          will_send: !!(y.meta && y.meta.will_send)
+        });
+      }
+      return y;
+    } catch(e){ return x; }
+  };
+})();
+if (typeof canalMsg==="undefined") var canalMsg=""; if (typeof vipMsg==="undefined") var vipMsg="";
+if (typeof canalMsg === "undefined") var canalMsg = "";
+if (typeof vipMsg   === "undefined") var vipMsg   = "";
+/* normalizeFinal: ensure JSON with AI summary even on resolver fallback */
+  const prev = (typeof global.normalizeFinal==="function") ? global.normalizeFinal : (x)=>x;
+  const prev = (typeof global.normalizeFinal === "function") ? global.normalizeFinal : (x)=>x;
+    try{ console.log("[normalizeFinal.called] keys:", Object.keys(x||{})); }catch(e){}
+    return prev(x);
+/* === normalizeFinal ENHANCER: siempre envuelve y agrega messages desde ai_json === */
+  const prev = (typeof global.normalizeFinal === "function") ? global.normalizeFinal : null;
+    try{
+      const y = prev ? prev(x) : x;
+      const ai   = (y && y.payload && y.payload.ai_json) ? y.payload.ai_json : (y && y.ai_json ? y.ai_json : null);
+        const pick = ai.ap_sugerida || {};
+        const parts = [];
+        parts.push("✅ Sugerencia AI");
+        if (pick.mercado) parts.push(`Mercado: ${pick.mercado}`);
+        if (pick.pick)    parts.push(`Selección: ${pick.pick}`);
+        if (pick.cuota!=null) parts.push(`Cuota: ${pick.cuota}`);
+        if (typeof ai.probabilidad === "number") parts.push(`Prob.: ${(ai.probabilidad*100).toFixed(1)}%`);
+        if (typeof ai.ev_estimado   === "number") parts.push(`EV: ${(ai.ev_estimado*100).toFixed(1)}%`);
+        if (ai.resumen) parts.push(`Notas: ${ai.resumen}`);
+        const msg = parts.join("\n");
+        if (y && y.payload) y.payload.messages = { free: msg, vip: msg };
+        else if (y) y.messages = { free: msg, vip: msg };
+        if (y){
+          y.meta = Object.assign({}, y.meta||{}, {
+            ai_ok: !!(y.meta && y.meta.ai_ok),
+            resolved: (y.meta && typeof y.meta.resolved!=="undefined") ? y.meta.resolved : false,
+            will_send: (y.meta && typeof y.meta.will_send!=="undefined") ? y.meta.will_send : false
+          });
+        }
+;/* === normalizeFinal: arma mensajes cuando resolver falla (fallback) === */
+if (typeof global.normalizeFinal !== 'function') {
+      if (x && x.reason === 'fallback-return' && x.payload && x.payload.ai_json){
+        const ai   = x.payload.ai_json || {};
+        const msg = [
+          '✅ Sugerencia AI (fallback)',
+          pick.mercado ? `Mercado: ${pick.mercado}` : null,
+          pick.pick    ? `Selección: ${pick.pick}`   : null,
+          (pick.cuota != null) ? `Cuota: ${pick.cuota}` : null,
+          (typeof ai.probabilidad === 'number') ? `Prob.: ${(ai.probabilidad*100).toFixed(1)}%` : null,
+          (typeof ai.ev_estimado   === 'number') ? `EV: ${(ai.ev_estimado*100).toFixed(1)}%`   : null,
+        ].filter(Boolean).join('\n');
+        x.payload.messages = { free: msg, vip: msg };
+        x.meta = Object.assign({ ai_ok: !!x.meta?.ai_ok }, x.meta, { resolved:false, will_send:false });
+    } catch(e) {}
+    return x;
+  }
+}
+;/* === AI_JSON sanity helper (seguro, idempotente) === */
+global.__applyAISanity = function(){
+  try{
+    if (typeof global.ai_json === 'string') {
+      try { global.ai_json = JSON.parse(global.ai_json); } catch { global.ai_json = {}; }
+    }
+    if (!global.ai_json || typeof global.ai_json !== 'object') global.ai_json = {};
+    global.AI_SAFE = {
+      resumen: global.ai_json.resumen || "",
+      ev_estimado: Number(global.ai_json.ev_estimado || 0),
+      probabilidad: Number(global.ai_json.probabilidad || 0),
+      ap_sugerida: global.ai_json.ap_sugerida || {}
+    };
+    try { console.log('[AI.sanity.ok]', Object.keys(global.AI_SAFE)); } catch {}
+  } catch(e){
+    try { console.warn('[AI.sanity.fail]', e && e.message || e); } catch {}
+    global.AI_SAFE = {};
+};
+/* === /AI_JSON sanity helper === */
+
+;
+/* === finalize helper: usa AI_SAFE y limpia reason === */
+payload = ensureEnrichDefaults(payload, { optIn: (String(process.env.ODDS_ENRICH_ONESHOT) === "1") });
+payload.meta = payload.meta || {};
+// Ensure meta bag exists + annotate safe 'skipped' flags
+    payload.meta = payload.meta || {};
+    if (String(process.env.DISABLE_OPENAI) === '1') payload.meta.ai = payload.meta.ai || 'skipped';
+    if (String(process.env.ODDS_ENRICH_ONESHOT) !== '1') payload.meta.enrich_attempt = payload.meta.enrich_attempt || 'skipped';
+// Enriquecimiento OddsAPI (opt-in): telemetría mínima + try/catch seguro
+if (String(process.env.ODDS_ENRICH_ONESHOT) === '1') {
+  payload.meta = { ...(payload.meta||{}), enrich_attempt: 'oddsapi:events' };
+    payload = await ensureMarketsWithOddsAPI(payload, evt);
+payload = setEnrichStatus(payload, "ok");
+  } catch (e) {
+    if (Number(process.env.DEBUG_TRACE) === 1) {
+      console.log('[ENRICH] ensureMarketsWithOddsAPI error:', e?.message || String(e));
+    payload.meta = { ...(payload.meta||{}), enrich_status: 'error' };
+} else {
+  payload.meta = { ...(payload.meta||{}), enrich_attempt: 'skipped' };
+const prompt = composeOneShotPrompt(payload);
+    const ai = await callOpenAIOnce({ prompt });
+    if (!ai.ok) {
+      
+      // --- safe guard: ap_sugerida ---
+      const ap_sugerida = (
+        (payload && payload.ai_json && payload.ai_json.ap_sugerida) ||
+        (typeof global !== 'undefined' && global.AI_SAFE && global.AI_SAFE.ap_sugerida) ||
+        (typeof ai_json !== 'undefined' && ai_json && ai_json.ap_sugerida) ||
+        {}
+      );
+      let oddsToUse = isFiniteNum(Number(ap_sugerida?.cuota)) ? Number(ap_sugerida.cuota) : null;
+      if (!isFiniteNum(oddsToUse) && ap_sugerida?.mercado && payload?.markets) {
+      // --- guards de AI ---
+      const __AI_SAFE = (typeof global!=='undefined' && global.AI_SAFE) ? global.AI_SAFE : {};
+      const __AI_IN   = (payload && payload.ai_json) ? payload.ai_json : {};
+      const ev = (Number.isFinite(Number(__AI_IN.ev_estimado))
+        ? Number(__AI_IN.ev_estimado)
+        : (Number.isFinite(Number(__AI_SAFE.ev_estimado)) ? Number(__AI_SAFE.ev_estimado) : NaN));
+      const prob = (Number.isFinite(Number(__AI_IN.probabilidad))
+        ? Number(__AI_IN.probabilidad)
+        : (Number.isFinite(Number(__AI_SAFE.probabilidad)) ? Number(__AI_SAFE.probabilidad) : NaN));
+    const evOut = isFiniteNum(ev) ? ev : null;
+    // Envío automático a Telegram (si habilitado)
+    send_report = { enabled: false };
+const minVipEv = Number.isFinite(Number(process.env.MIN_VIP_EV)) ? Number(process.env.MIN_VIP_EV) : 15;
+const sendToVip = (evOut != null && evOut >= minVipEv);
+if (String(process.env.SEND_ENABLED) === '1' && typeof sendTelegramText === 'function') {
+      const vipId = process.env.TG_VIP_CHAT_ID || null;
+      const freeId = process.env.TG_FREE_CHAT_ID || null;
+      send_report = { enabled:true, results: [] };
+      if (sendToVip) {
+  if (vipId && message_vip) {
+    const r = await 
+sendTelegramText({ chatId: vipId, text: (typeof vipMsg!=="undefined" ? vipMsg : "") });
+    send_report.results.push({ target: 'VIP', ok: r.ok, parts: r.parts, errors: r.errors });
+  } else {
+    send_report.missing_vip_id = (String(process.env.SEND_ENABLED)==='1') && !!message_vip  && !process.env.TG_VIP_CHAT_ID;
+  if (freeId && message_free) {
+    const r = await sendTelegramText({ chatId: freeId, text: (typeof canalMsg!=="undefined" ? canalMsg : "") });
+    send_report.results.push({ target: 'FREE', ok: r.ok, parts: r.parts, errors: r.errors });
+    send_report.missing_free_id = (String(process.env.SEND_ENABLED)==='1') && !!message_free && !process.env.TG_FREE_CHAT_ID;
+    message_vip = sendToVip ? vipMsg : null;
+message_free = sendToVip ? null : canalMsg;
+  // === FINAL_GATE_START ===
+(() => {
+  const vipMin = Number(process.env.MIN_VIP_EV || '15');
+  // 0) EV robusto (acepta evOut, ev, ev_estimado %, ai_json.ev_estimado fracción)
+  let evNum = 0;
+    if (typeof evOut !== 'undefined') evNum = Number(evOut);
+    else if (typeof ev !== 'undefined') evNum = Number(ev);
+    else if (typeof ev_estimado !== 'undefined') evNum = Number(ev_estimado);
+    else if (typeof ai_json !== 'undefined' && ai_json && ai_json.ev_estimado != null) {
+      const v = Number(ai_json.ev_estimado);
+      evNum = (v <= 1 ? v * 100 : v);
+  } catch (_) {}
+  // 1) ¿hay bookies?
+  // hasOdds: verdadero si existe al menos un mercado con elementos
+  const hasOdds = (() => {
+      const src = (typeof markets !== 'undefined' && markets && typeof markets === 'object') ? markets
+                : (typeof markets_top3 !== 'undefined' && markets_top3 && typeof markets_top3 === 'object') ? markets_top3
+                : null;
+      if (!src) return false;
+      const keys = Object.keys(src);
+      if (!keys.length) return false;
+      for (const k of keys) {
+        const v = src[k];
+        if (Array.isArray(v) && v.length) return true;
+      return false;
+    } catch { return false; }
+  // 2) Determinar destino
+  let target = 'none';
+  if (!hasOdds) {
+    // Sin odds: nunca VIP. FREE sólo si nivel == Informativo.
+    target = (nivel === 'Informativo') ? 'free' : 'none';
+    if (nivel === 'Informativo')      target = 'free';
+    else if (evNum >= vipMin)         target = 'vip';
+    else                              target = 'none';
+  // 3) Limpieza y FREE sin bookies
+const clean=(txt)=>String(txt||'')
+  .replace(/\s{3,}/g,' ')
+  .replace(/[ \t]+/g,' ')
+  .trimEnd();
+const stripBookiesForFree = (txt) => {
+    if (!txt) return txt;
+    return txt
+      .replace(/Top\s*3\s*bookies[\s\S]*$/i, '')
+      .replace(/\s{3}/g, ' ')
+  // 4) Asignación final (sin redeclarar)
+  if (target === 'free') {
+    message_free = clean(stripBookiesForFree(canalMsg));
+    message_vip  = null;
+  } else if (target === 'vip') {
+    message_vip  = clean(vipMsg);
+    message_free = null;
+ // === FINAL_GATE_END ===
+} catch(e) { try{ console.warn("[fix.try.tail]", e && (e.message||e)); } catch{} };
+module.exports.marketKeyFromName = marketKeyFromName;
+// --- fallback final: garantiza respuesta HTTP ---
+  // NO-OP: ya se retornó en los caminos felices
+} catch(_) {}
+      };
