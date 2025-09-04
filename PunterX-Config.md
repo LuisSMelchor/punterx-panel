@@ -1,168 +1,244 @@
-[PunterX-Config.md](https://github.com/user-attachments/files/21976767/PunterX-Config.md)
-# PunterX-Config.md
+PunterX-Config.md
+1) Propósito
 
-## 1) Introducción
-PunterX es un sistema avanzado de picks automatizados y panel de control, que integra fuentes de datos de cuotas, enriquecimiento con API-Football, modelado con OpenAI y publicación a Telegram/PANEL. El objetivo es generar picks de alto valor sin usar listas fijas de equipos ni partidos simulados, cumpliendo con políticas estrictas de calidad y seguridad de datos.
+PunterX es un sistema de autopicks con cobertura mundial de fútbol que integra OddsAPI (v4), API-Football, OpenAI, Supabase y publicación a Telegram/Panel. Genera picks de alto valor sin listas fijas de equipos ni partidos simulados, con guardrails de calidad y seguridad.
 
-Además, a partir de agosto 2025, el sistema integra:
-- **Auditoría CLV (Closing Line Value)**: cálculo y registro de cuánto valor agregado tiene un pick comparado con el movimiento de la línea de cierre.  
-- **Flujo Bot Start Trial**: desde el canal FREE, el usuario va al bot, da `/start` y automáticamente recibe **15 días de prueba VIP**, con onboarding y acceso directo al grupo privado.  
+Novedades clave (2025):
 
-## 2) Arquitectura general
-- **Netlify Functions** (CJS/JS): funciones serverless para pipelines de autopick, envío de mensajes, auditorías y endpoints administrativos.
-- **Supabase**: almacenamiento (picks, locks distribuidos, snapshots de odds, usuarios, membresías, eventos de usuario, auditorías CLV).
-- **OddsAPI (v4)**: fuente de mercados (h2h/totals/spreads) y cuotas.
-- **API-Football**: enriquecimiento (fixture_id, liga, país, xG/availability/contexto).
-- **OpenAI**: modelado (GPT-5 + fallback).
-- **Telegram**: canal FREE y grupo VIP. El bot gestiona prueba y membresías.
-- **Panel (endpoint opcional)**: distribución y métricas.
+Auditoría CLV (Closing Line Value) integrada en pipelines.
 
-> Reglas: **sin equipos fijos**, **sin partidos simulados**, matching de fixtures **estricto** si `STRICT_MATCH=1`.
+Bot Start Trial: flujo de prueba VIP de 15 días desde canal FREE → bot → invitación al grupo VIP.
 
-## 3) Estructura de directorios (Netlify/functions)
-Incluye ahora:
-- `_users.cjs`: alta, baja, VIP, bans, eventos de usuarios.
-- `autopick-vip-nuevo-impl.cjs`: implementación real del handler de autopick VIP.
-- `autopick-vip-run2.cjs`: wrapper estable actual, usado para cron y manual (sustituye versiones anteriores).
-- `telegram-webhook.cjs`: recibe comandos del bot (ej. `/start` → activa prueba VIP 15 días).
-- `admin-grant-vip.cjs`: concesión manual de VIP (solo admins).
-- `diag-require.cjs`, `diag-env.cjs`: diagnósticos de runtime.
-- `clv-audit.cjs` (integrado en pipelines): calcula CLV al cierre y audita picks.
+Wrapper estable autopick-vip-run2.cjs con rutas de diagnóstico (ping, ls, lsroot) y delegación al impl.
 
-## 4) Variables de entorno (visibles en Netlify)
-Se añadieron:
-- `TRIAL_DAYS` → duración de la prueba (default: 15).
-- `TRIAL_INVITE_TTL_SECONDS` → vigencia del link de invitación al grupo VIP.
-- Todas las anteriores (SUPABASE_URL, SUPABASE_KEY, AUTH_CODE, TELEGRAM_BOT_TOKEN, etc.) siguen siendo obligatorias.  
-- Confirmado: Node 20 (`NODE_VERSION=20.x`) y modelo por defecto `OPENAI_MODEL=gpt-5-mini`.
+2) Principios y Guardrails
 
-## 5) Reglas operativas
-- **Sin equipos fijos** en código/prompt/filters (regla general).
-- **Sin simulaciones** (no se hacen tests con partidos simulados; sólo fixtures reales).
-- Uso de **STRICT_MATCH** cuando corresponde para evitar falsos positivos en el matching AF.
+Sin equipos fijos en código/prompts/filtros.
 
-## 6) Flujo del handler `autopick-vip-run2`
-1. **Auth temprana** (header `x-auth-code` vs `AUTH_CODE`).
-   - Si es ejecución scheduled (cron) → wrapper inyecta AUTH automáticamente.  
-   - Si es modo debug (?debug=1 o x-debug:1) → siempre responde en JSON, incluso en errores.
-2. **Boot defensivo** (`assertEnv()`, `ensureSupabase()`).
-3. **Logger de ciclo** (traceId + sección).
-4. **Locks**: en memoria y distribuido (Supabase).
-5. **OddsAPI**: fetch, normalización, ventana (principal y fallback).
-6. **Prefiltro** (prioriza, no descarta).
-7. **AF resolver** (`resolveTeamsAndLeague`) + enriquecimiento (xG, availability, contexto).
-8. **OpenAI**: prompt maestro con mercados válidos, fallback, reintentos; guardrail de no-pick.
-9. **Selección de cuota** exacta; coherencias probabilidad/implícita/EV.
-10. **Snapshots de mercado** (NOW y lookup PREV).
-11. **Corazonada IA**.
-12. **Clasificación y envío** (VIP/FREE).
-13. **Persistencia** (Supabase).
-14. **Resumen y finally** (liberar locks, logs, métricas).
+Sin partidos simulados (solo fixtures reales).
 
-## 7) Logs típicos de ciclo
-- Inicio ciclo, now(UTC)
-- Config ventanas
-- `ODDSAPI ok=true count=N`
-- Vista previa de próximos eventos (si `LOG_VERBOSE=1`)
-- `📊 Filtrado (OddsAPI): …`
-- `STRICT_MATCH=1 → sin AF.fixture_id → DESCARTADO (…)`
-- Resumen ciclo (conteos/causas)
+Matching estricto con AF si STRICT_MATCH=1: si no hay fixture_id inequívoco → se descarta.
 
-## 8) Causas de descarte (conteos)
-- `strict_mismatch`
-- `no_pick_flag`
-- `outcome_invalido`
-- `prob_fuera_rango`
-- `incoherencia_pp`
-- `ev_insuficiente`
-- `ventana_fuera`
-- `duplicado`
-- `otros`
+Logs de depuración solo con etiqueta [AF_DEBUG]. Producción silenciosa.
 
-## 9) Señal de mercado (snapshots)
-- `odds_snapshots` con NOW (best price, top3, point si aplica) y lookup PREV (lookback min configurable).
-- Útil para detectar movimientos de cuota y priorización.
+Cambios mínimos e idempotentes; uso de sentinelas para evitar duplicados.
 
-## 10) Corazonada IA
-- `computeCorazonada` calcula `score` y `motivo` en base a:
-  - Mercado/outcome (side, market)
-  - oddsNow/oddsPrev (best)
-  - xG, availability, contexto AF
-- Activable con `CORAZONADA_ENABLED`.
+Sin secretos en repos/docs. Variables de entorno: solo nombres.
 
-## 11) OpenAI y guardrails
-- **Modelo**: `OPENAI_MODEL` (por defecto `gpt-5-mini`) con fallback `OPENAI_MODEL_FALLBACK` (por defecto `gpt-5`).
-- **Retries** y **fallback** encapsulados en `obtenerPickConFallback`.
-- **no_pick**: permitido (no enviar en condiciones de baja calidad).
-- **Coherencias**: apuesta ↔ outcome seleccionado; probabilidad ↔ implícita; EV mínimo.
+3) Arquitectura (alto nivel)
 
-## 12) OddsAPI
-- **Endpoint**: `/v4/sports/<SPORT_KEY>/odds`
-- **markets**: `h2h,totals,spreads` (puedes extender si el prompt los soporta).
-- **regions** configurable: `ODDS_REGIONS`.
-- **Filtro por ventana** (minutos hasta kickoff) y orden por score preliminar.
+Netlify Functions (CJS): pipelines de autopick, envíos, diagnósticos, admin.
 
-## 13) API-Football (AF)
-- `resolveTeamsAndLeague` (con `afApi`) para obtener `fixture_id` inequívoco.
-- Enriquecimiento: liga, país, xG, availability, contexto.
-- Si `STRICT_MATCH=1` y no hay match inequívoco → descartar.
+Supabase: tabla de picks, locks distribuidos, snapshots de odds, usuarios/membresías, eventos, auditoría CLV.
 
-## 14) Telegram / Panel
-- VIP/FREE mediante `enviarVIP` / `enviarFREE`.
-- `PANEL_ENDPOINT` (si se usa) para registrar/visualizar.
+OddsAPI (v4): mercados h2h/totals/spreads y cuotas.
 
-## 15) Defaults en código (sumario)
-- `OPENAI_MODEL`=`gpt-5-mini`
-- `OPENAI_MODEL_FALLBACK`=`gpt-5`
-- `ODDS_REGIONS`=`us,uk,eu,au`
-- `ODDS_SPORT_KEY`=`soccer`
-- **Ventanas**:
-  - `WINDOW_MAIN_MIN`=45, `WINDOW_MAIN_MAX`=55
-  - `WINDOW_FB_MIN`=35, `WINDOW_FB_MAX`=70
-  - `SUB_MAIN_MIN`=45, `SUB_MAIN_MAX`=55
-- `LOG_VERBOSE`=`1`
-- `DEBUG_TRACE`=`1`
-- `PREFILTER_MIN_BOOKIES`=2
-- `MAX_CONCURRENCY`=6
-- `MAX_PER_CYCLE`=50
-- `SOFT_BUDGET_MS`=70000
-- `MAX_OAI_CALLS_PER_CYCLE`=40
-- `ODDS_PREV_LOOKBACK_MIN`=7
-- `STRICT_MATCH` (1 recomendado)
+API-Football: resolveTeamsAndLeague + enriquecimiento (liga/país/xG/availability/contexto).
 
----
+OpenAI: modelo principal + fallback, guardrails de no-pick, coherencias.
 
-## 28) Diagnóstico de errores 500 opacos y soluciones
-**Problema**: al principio la función devolvía *Internal Error. ID: ...* sin logs visibles.  
-**Soluciones aplicadas**:
-- Se añadieron **diag-require** y **diag-env** para confirmar dependencias y variables.
-- Se migró a **autopick-vip-run2** como wrapper estable, que:
-  - Ignora `cron/tick` y fuerza `manual=1` para logs consistentes.
-  - Inyecta AUTH automáticamente si falta.
-  - Tiene modo `smoke=1` para probar respuesta sin cargar la implementación real.
-- Se eliminaron archivos basura (run, wrapper, probe, hello).
-- netlify.toml actualizado con bloque `[functions."autopick-vip-run2"]` y cron cada 15 minutos.
-- Confirmado que ahora logs de resumen se ven completos en ejecuciones manuales y programadas.
+Telegram: canal FREE y grupo VIP; bot gestiona trial y membresías.
 
-## 29) Matching estricto (STRICT_MATCH)
-- Observamos descartes frecuentes `STRICT_MATCH=1 → sin AF.fixture_id`.
-- Esto **no es bug**, sino política estricta: si no hay match inequívoco en API-Football, se descarta.
-- Próximos pasos: afinar `resolveTeamsAndLeague` con `MATCH_RESOLVE_CONFIDENCE` y normalización de nombres para reducir descartes sin listas fijas.
+Panel (opcional): endpoints para visualización/métricas.
 
-## 30) Errores solucionados
-- SyntaxError por llaves extras en `autopick-vip-nuevo.cjs` → resuelto con wrapper.
-- 500 opaco en cron → resuelto con `autopick-vip-run2`.
-- Duplicación de bloques en netlify.toml → limpiado.
-- Bloques de lock duplicados → corregido.
-- Ahora logs muestran `resumen` con conteos y causas.
+4) Estructura relevante (netlify/functions)
 
-## 31) Próximos pasos inmediatos
-- Afinar **matching** (STRICT_MATCH vs flexibilidad).
-- Implementar métricas de descartes por tipo y ajustar resolver AF.
-- Seguir integrando auditoría CLV en cron de cierre.
-- Validar end-to-end con usuarios reales (bot de Telegram).
-- Consolidar documentación y panel.
+autopick-vip-run2.cjs → wrapper estable: ping/ls/lsroot, inyección de AUTH en scheduled/manual, delegación al impl.
 
----
+/_lib/autopick-vip-nuevo-impl.cjs → implementación de negocio (handler real).
+
+/_lib/ módulos: enrich.cjs, attach-odds.cjs, match-helper.cjs, af-resolver.cjs, markets-*, format-*, _logger.cjs, _telemetry.cjs, _users.cjs, _supabase-client.cjs, ai.cjs, score.cjs, etc.
+
+Funciones diagnósticas: diag-*.cjs (require/env/odds/resolver/enrich).
+
+Admin/Bot: admin-grant-vip.cjs, telegram-webhook.cjs.
+
+Otros pipelines: clv-settle.cjs, send.js, ping.cjs.
+
+5) Flujo del handler (Run2 → Impl)
+
+Wrapper (autopick-vip-run2.cjs):
+
+Rutas de diagnóstico: ?ping=1, ?ls=1, ?lsroot=1.
+
+Inyección AUTH si scheduled o ?manual=1 (headers: x-auth, x-auth-code, authorization, x-api-key).
+
+Delegación dinámica a /_lib/autopick-vip-nuevo-impl.cjs.
+
+Impl (autopick-vip-nuevo-impl.cjs – negocio):
+
+assertEnv y boot defensivo.
+
+Locks (memoria + distribuido).
+
+OddsAPI: fetch + normalización + ventana principal/fallback.
+
+Prefiltro (prioriza, no descarta).
+
+API-Football: resolveTeamsAndLeague y enriquecimiento.
+
+OpenAI: prompt maestro, fallback/retries, no_pick permitido.
+
+Coherencias: outcome ↔ apuesta, probabilidad ↔ implícita, EV mínimo.
+
+Snapshots NOW/PREV (señal de mercado).
+
+Corazonada IA (score + motivo).
+
+Clasificación y envío (VIP/FREE) + persistencia (Supabase).
+
+Resumen y liberación de locks.
+
+6) Variables de entorno (nombres y uso breve)
+Variable	Uso breve
+SUPABASE_URL	Endpoint Supabase
+SUPABASE_KEY	API Key Supabase
+OPENAI_API_KEY	Acceso a OpenAI
+OPENAI_MODEL	Modelo principal (p.ej. gpt-5-mini)
+OPENAI_MODEL_FALLBACK	Fallback (p.ej. gpt-5)
+ODDS_API_KEY	OddsAPI v4
+API_FOOTBALL_KEY	API-Football
+TELEGRAM_BOT_TOKEN	Bot Telegram
+TELEGRAM_CHANNEL_ID	Canal FREE
+TELEGRAM_GROUP_ID	Grupo VIP
+AUTH_CODE	Código de autenticación interno (wrapper/cron/manual)
+PANEL_ENDPOINT	Endpoint del Panel (opcional)
+COUNTRY_FLAG	Localización/branding opcional
+ODDS_SPORT_KEY	Deporte base (p.ej. soccer)
+ODDS_REGIONS	Regiones OddsAPI (us,uk,eu,au)
+WINDOW_MAIN_MIN/MAX	Ventana principal (min a kickoff)
+WINDOW_FB_MIN/MAX	Ventana fallback
+SUB_MAIN_MIN/MAX	Sub-ventana interna
+PREFILTER_MIN_BOOKIES	Mín. casas con cuota para considerar
+MAX_CONCURRENCY	Concurrencia procesamiento
+MAX_PER_CYCLE	Máx. picks por ciclo
+SOFT_BUDGET_MS	Presupuesto de tiempo
+MAX_OAI_CALLS_PER_CYCLE	Límite de llamadas a OpenAI por ciclo
+ODDS_PREV_LOOKBACK_MIN	Lookback minutos para snapshot PREV
+STRICT_MATCH	1 = AF matching estricto
+MATCH_RESOLVE_CONFIDENCE	Umbral de confianza en resolver nombres
+LOG_VERBOSE	1 = logs ampliados (dev)
+DEBUG_TRACE	1 = trazas detalladas (dev)
+CORAZONADA_ENABLED	1 = activa Corazonada IA
+TRIAL_DAYS	Días de prueba VIP (ej. 15)
+TRIAL_INVITE_TTL_SECONDS	TTL del link de invitación VIP
+NODE_VERSION	(Netlify) versión Node en runtime
+LAMBDA_TASK_ROOT	(ambiente serverless) raíz ejecución
+
+Solo nombres; no incluir valores en este documento.
+
+7) Defaults recomendados (código/config)
+
+OPENAI_MODEL = gpt-5-mini
+
+OPENAI_MODEL_FALLBACK = gpt-5
+
+ODDS_REGIONS = us,uk,eu,au
+
+ODDS_SPORT_KEY = soccer
+
+Ventanas:
+
+WINDOW_MAIN_MIN=45, WINDOW_MAIN_MAX=55
+
+WINDOW_FB_MIN=35, WINDOW_FB_MAX=70
+
+SUB_MAIN_MIN=45, SUB_MAIN_MAX=55
+
+PREFILTER_MIN_BOOKIES=2
+
+MAX_CONCURRENCY=6, MAX_PER_CYCLE=50
+
+SOFT_BUDGET_MS=70000
+
+MAX_OAI_CALLS_PER_CYCLE=40
+
+ODDS_PREV_LOOKBACK_MIN=7
+
+STRICT_MATCH=1 (recomendado)
+
+LOG_VERBOSE=0 en prod; usar [AF_DEBUG] en dev.
+
+8) Componentes clave (módulos _lib/)
+
+enrich.cjs → compone mercados top-3 (markets_top3), formatea prompt, payload one-shot.
+
+match-helper.cjs → resolveTeamsAndLeague y normalización de nombres.
+
+attach-odds.cjs / odds-helpers.cjs → extracción, consenso, top-3.
+
+ai.cjs → cliente OpenAI + retries/fallback + guardrails de no-pick.
+
+_logger.cjs → logger con niveles; [AF_DEBUG] en dev.
+
+_supabase-client.cjs / db.cjs → persistencia y locks distribuidos.
+
+_users.cjs → altas/bajas, VIP, bans, eventos de usuario.
+
+_telemetry.cjs → métrica opcional (opt-in).
+
+score.cjs → scoring/EV mínimo.
+
+format-* → salida canónica (Telegram/Panel).
+
+9) Señal de mercado (snapshots)
+
+NOW: mejor precio/top-3/point.
+
+PREV: lookup por ODDS_PREV_LOOKBACK_MIN.
+
+Usos: detectar movimientos y priorizar picks, apoyar CLV.
+
+10) Corazonada IA
+
+computeCorazonada: calcula score y motivo a partir de mercado/outcome, oddsNow/oddsPrev, xG/availability/contexto AF.
+
+Controlado por CORAZONADA_ENABLED.
+
+11) Telegram/Bot/Panel
+
+FREE/VIP mediante compositores de mensaje (formatters) y bot con flujo /start → trial de TRIAL_DAYS.
+
+TRIAL_INVITE_TTL_SECONDS para vigencia del enlace.
+
+PANEL_ENDPOINT (si se usa) para registro/visualización.
+
+12) Rutas de diagnóstico (wrapper)
+
+?ping=1 → latido JSON.
+
+?ls=1 → lista __dirname en runtime.
+
+?lsroot=1 → lista LAMBDA_TASK_ROOT (si aplica).
+
+?manual=1 (+AUTH) → fuerza modo manual con delegación al impl.
+
+13) Criterios de DONE (picks)
+
+Fixture AF válido (si STRICT_MATCH=1).
+
+Mercado/outcome válido con cuota coherente (prob implícita/EV).
+
+Guardrail no-pick respetado.
+
+Snapshot NOW y (si aplica) PREV registrados.
+
+Persistencia correcta (Supabase) y, si procede, envíos a Telegram/Panel.
+
+14) Pruebas y smoke (local)
+
+Wrapper: ?ping=1, ?ls=1, ?lsroot=1.
+
+Manual: ?manual=1 con AUTH_CODE presente en entorno.
+
+Módulos: validación sintaxis CJS con new Function(...).
+
+Dev: usar [AF_DEBUG] y LOG_VERBOSE=1 en pruebas; no en prod.
+
+15) Compatibilidad de runtime
+
+Objetivo: Node 20+ en Netlify.
+
+Probado localmente también con Node 22 (compatibilidad confirmada en CJS).
 
 Fin del documento.
