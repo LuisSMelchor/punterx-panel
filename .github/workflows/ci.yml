@@ -23,6 +23,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
       - run: npm ci
+      - run: npm run -s ci:guard
       - run: npm run -s ci:unit
       - name: Install Netlify CLI (pinned)
         run: npm i -g netlify-cli@17
