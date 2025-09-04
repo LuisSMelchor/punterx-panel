@@ -7,32 +7,19 @@ const { handler: publish } = require('./oneshot-publish.cjs');
  * - Si no se pasa, usa un set mínimo demo.
  */
 exports.handler = async (event) => {
+  const enabled = (String(process.env.SEND_ENABLED) === '1');
+  const baseSendReport = {
+    enabled,
+    results: []
+  };
+
+  if (enabled && typeof message_vip !== 'undefined' && message_vip && !process.env.TG_VIP_CHAT_ID)  baseSendReport.missing_vip_id = true;
+  if (enabled && typeof message_free !== 'undefined' && message_free && !process.env.TG_FREE_CHAT_ID) baseSendReport.missing_free_id = true;
+
+  const __send_report = baseSendReport;
+
   if (process.env.FEATURE_ONESHOT !== '1') {
-    const __send_report = (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})();
-return { statusCode: 200, const __send_report = (() => {
-  const enabled = (String(process.env.SEND_ENABLED) === '1');
-  const base = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && !!message_vip  && !process.env.TG_VIP_CHAT_ID)  base.missing_vip_id = true;
-  if (enabled && !!message_free && !process.env.TG_FREE_CHAT_ID) base.missing_free_id = true;
-  return base;
-})();
-      body: JSON.stringify({ send_report: __send_report, status: 'feature_off' }) };
+    return { statusCode: 200, body: JSON.stringify({ send_report: __send_report, status: 'feature_off'  }) };
   }
   const q = event?.queryStringParameters || {};
   const items = [];
@@ -44,7 +31,6 @@ return { statusCode: 200, const __send_report = (() => {
     }
   } else {
     // Demo mínima (ajústalo a tu "script maestro" real)
-    items.push({ home: 'Charlotte FC', away: 'New York Red Bulls', league: 'Major League Soccer', commence: '2025-08-24T23:00:00Z' });
   }
 
   const results = [];
