@@ -15,3 +15,8 @@ tools/*.js
 *.BAK.*
 .backup.*
 *.bak
+
+# local backups
+backups/
+*.bak*
+netlify/functions.bak.*/
