@@ -31,7 +31,12 @@
     "scanm:chk:fast": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=10&limit=10' | scripts/jq_safe.sh '{ok_limited: ((.__bookmakers_after == (.__enrich_dbg.ok // 0)) and (.__bookmakers_after <= (.__enrich_dbg.maxN // 0))), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'",
     "scanm:chk:full": "curl -sS 'http://localhost:4999/.netlify/functions/run-picks-scan-markets?days_ahead=10&limit=10&fast=0&enrich_max=10' | scripts/jq_safe.sh '{ok_all: (.__bookmakers_after == (.__enrich_dbg.results_len // 0)), bm_after: .__bookmakers_after, dbg: .__enrich_dbg}'",
     "test:unit-af": "NODE_ENV=test node tests/af-unit.test.js",
-    "test:af-smoke": "bash scripts/smoke-resolveEvt.sh"
+    "test:af-smoke": "bash scripts/smoke-resolveEvt.sh",
+    "ci:unit": "NODE_ENV=test node tests/af-unit.test.js",
+    "ci:serve": "bash scripts/ci-serve.sh",
+    "ci:dump": "bash scripts/ci-make-dump.sh",
+    "ci:smoke": "bash scripts/smoke-resolveEvt.sh",
+    "ci": "npm run -s ci:unit && npm run -s ci:serve && npm run -s ci:dump && npm run -s ci:smoke"
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
