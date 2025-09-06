@@ -37,9 +37,8 @@ exports.handler = async (event, context) => {
   }
 
   // Carga diferida del impl real
-  let impl;
+  let impl = require('./_lib/autopick-vip-nuevo-impl.cjs');
   
-  // [IMPL_RESOLVER_CLEAN]
   try {
     const path = require('path');
     const candidates = [
@@ -55,7 +54,7 @@ exports.handler = async (event, context) => {
     ].filter(Boolean);
     for (const cand of candidates) {
   try {
-    impl = require(cand);
+    impl = require('./_lib/autopick-vip-nuevo-impl.cjs');
     if (process.env.AF_DEBUG) console.log('[AF_DEBUG] impl resolved at', cand, 'keys=', (impl && Object.keys(impl)) );
     if (impl) break;
   } catch(_) {}
@@ -105,6 +104,16 @@ if (impl && typeof impl === 'function') {
   }
 }
 if (process.env.AF_DEBUG) try { console.log('[AF_DEBUG] impl normalize keys=', Object.keys(impl||{})); } catch {}
+// [IMPL_NORMALIZE_FINAL]
+if (impl && typeof impl === 'function') impl = { handler: impl };
+else if (impl && typeof impl.handler === 'function') { /* ok */ }
+else if (impl && impl.default && typeof impl.default === 'function') impl = { handler: impl.default };
+else if (impl && impl.default && typeof impl.default.handler === 'function') impl = { handler: impl.default.handler };
+else if (impl) {
+  const funcs = Object.entries(impl).filter(([k,v]) => typeof v === 'function');
+  if (funcs.length === 1) impl = { handler: funcs[0][1] };
+}
+
 
   
   if (!impl || typeof impl.handler !== 'function') {
