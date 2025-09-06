@@ -14,19 +14,20 @@ jobs:
 
       - name: Measure via step env (env-secrets)
         shell: bash
-        env:
-          SB: ${{ secrets.SITE_BASE }}
-          DT: ${{ secrets.DEBUG_TOKEN }}
-          CTRL: ${{ secrets.ECHO_TEST }}
         run: |
           set -euo pipefail
+          # lee de secrets.* inline dentro del step (sin job-level env)
+          SB="${{ secrets.SITE_BASE }}"
+          DT="${{ secrets.DEBUG_TOKEN }}"
+          CTRL="${{ secrets.ECHO_TEST }}"
+
           for k in SB DT CTRL; do
             v="${!k:-}"
             b=$(printf '%s' "$v" | wc -c)
-            hx=$(printf '%s' "$v" | head -n1 | head -c1 | od -An -t x1 | tr -d ' \n' || true)
+            hx=$(printf '%s' "$v" | head -c1 | od -An -t x1 | tr -d ' \n' || true)
             echo "[AF_DEBUG] STEP_ENV $k bytes=$b first-byte-hex=${hx:-NA}"
           done
-          echo "::notice::step-env medido (no falla el job)"
+          echo "::notice::step-env medido"
 
       - name: Measure via inline expr (env-secrets)
         shell: bash
@@ -38,4 +39,4 @@ jobs:
           echo "[AF_DEBUG] INLINE SITE_BASE bytes=$sb_b"
           echo "[AF_DEBUG] INLINE DEBUG_TOKEN bytes=$dt_b"
           echo "[AF_DEBUG] INLINE ECHO_TEST bytes=$ct_b"
-          echo "::notice::inline medido (no falla el job)"
+          echo "::notice::inline medido"
