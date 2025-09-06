@@ -4,34 +4,47 @@ on:
   workflow_dispatch:
   push:
     branches: [ "main" ]
-  pull_request:
+
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      SITE_BASE: ${{ secrets.SITE_BASE }}     # ej: https://punterx-panel-vip.netlify.app/.netlify/functions
-      DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }} # mismo valor que en Netlify (production)
+      SITE_BASE: ${{ secrets.SITE_BASE }}
+      DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Show context
+        shell: bash
         run: |
           echo "[AF_DEBUG] GITHUB_SHA=$GITHUB_SHA"
           echo "[AF_DEBUG] SITE_BASE len=${#SITE_BASE}"
           echo "[AF_DEBUG] DEBUG_TOKEN len=${#DEBUG_TOKEN}"
 
       - name: Install jq & curl
+        shell: bash
         run: sudo apt-get update -y && sudo apt-get install -y jq curl
 
       - name: Ensure executable
-        run: chmod +x scripts/smoke-functions.sh
+        shell: bash
+        run: test -f scripts/smoke-functions.sh && chmod +x scripts/smoke-functions.sh
 
-      - name: Run smoke against SITE_BASE
+      - name: Run smoke (diag-impl-call + autopick-vip-run3)
+        shell: bash
         env:
-          BASE: ${{ env.SITE_BASE }}
+          BASE: ${{ secrets.SITE_BASE }}
+          DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
         run: |
-          export DEBUG_TOKEN="${DEBUG_TOKEN}"
+          set -euo pipefail
+          echo "[AF_DEBUG] BASE len=${#BASE}"
+          echo "[AF_DEBUG] DEBUG_TOKEN len=${#DEBUG_TOKEN}"
+          if [ -z "${BASE:-}" ] || [ -z "${DEBUG_TOKEN:-}" ]; then
+            echo "::error::Missing secrets (BASE/DEBUG_TOKEN)"; exit 1
+          fi
           ./scripts/smoke-functions.sh
