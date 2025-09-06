@@ -17,10 +17,6 @@
 [functions."autopick-outrights"]
   node_bundler = "esbuild"
 
-[functions."autopick-vip-run3"]
-  node_bundler = "zisi"
-  included_files = ["netlify/functions/_lib/autopick-vip-nuevo-impl.cjs"]
-
 [functions."diag-impl-call"]
   node_bundler = "zisi"
   included_files = ["netlify/functions/_lib/autopick-vip-nuevo-impl.cjs"]
