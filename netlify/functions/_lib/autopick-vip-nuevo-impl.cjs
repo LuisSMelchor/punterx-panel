@@ -96,10 +96,9 @@ function isDebug(event) {
   const q = (event && event.queryStringParameters) || {};
   const h = getHeaders(event);
   return q.debug === '1' || h['x-debug'] === '1';
-};
-  const h = getHeaders(event);
-  return q.debug === '1' || (getHeaders(event)['x-debug'] === '1';
 }
+
+
 
 function assertEnv() {
   const required = [
