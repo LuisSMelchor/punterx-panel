@@ -2,7 +2,7 @@
 // autopick-vip-run3: delegator robusto con inspect
 exports.handler = async (event, context) => {
   const qs = (event && event.queryStringParameters) || {};
-  if ('ping' in qs) return { statusCode: 200, body: JSON.stringify({ ok: true, ping: 'autopick-vip-run3 (pong)' }) };
+  if ('ping' in qs) return { statusCode: 200, body: JSON.stringify({ ok: true, ping: 'autopick-vip-run3 (pong)', requireTrace: __trace.slice(-300) }) };
 
   // --- dynamic require con candidates + declaración de impl ---
   let impl;
@@ -10,7 +10,27 @@ exports.handler = async (event, context) => {
   const fsx = rq('fs');
   const p = rq('path');
 
-  const candidates = [
+  
+  /* REQUIRE_TRACE_V1 */
+  const Module = rq('module');
+  const __origLoad = Module._load;
+  const __trace = [];
+  const __loading = [];
+  Module._load = function(request, parent, isMain){
+    let resolved;
+    try {
+      resolved = Module._resolveFilename(request, parent, isMain);
+    } catch(_) {
+      resolved = request;
+    }
+    const parentFile = parent && parent.filename;
+    const circular = __loading.includes(resolved);
+    __trace.push({ request, resolved, parent: parentFile, circular });
+    __loading.push(resolved);
+    try { return __origLoad.apply(this, arguments); }
+    finally { __loading.pop(); }
+  };
+      const candidates = [
     p.join(process.cwd(), 'netlify/functions/_lib/autopick-vip-nuevo-impl.cjs'),
     p.join(__dirname, '_lib/autopick-vip-nuevo-impl.cjs'),
     p.join(__dirname, '../functions/_lib/autopick-vip-nuevo-impl.cjs'),
