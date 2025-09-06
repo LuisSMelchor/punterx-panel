@@ -95,6 +95,9 @@ function getHeaders(event) {
 function isDebug(event) {
   const q = (event && event.queryStringParameters) || {};
   const h = getHeaders(event);
+  return q.debug === '1' || h['x-debug'] === '1';
+};
+  const h = getHeaders(event);
   return q.debug === '1' || (getHeaders(event)['x-debug'] === '1';
 }
 
@@ -641,7 +644,7 @@ ok:false, stage:"early-ping-error", err: String(e && (e.message || e)) }) };
   try {
     const raw = (event && event.headers) ? event.headers : {};
     // normaliza a minúsculas para acceso seguro
-    for (const k in raw) headers[k.toLowerCase()] = h[k];
+    for (const k in raw) headers[k.toLowerCase()] = raw[k];
     const q = (event && event.queryStringParameters) ? event.queryStringParameters : {};
     debug = (q.debug === '1') || (headers['x-debug'] === '1');
   } catch (e) {
