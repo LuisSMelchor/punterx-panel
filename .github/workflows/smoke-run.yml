@@ -1,0 +1,46 @@
+name: Smoke Run (vars + netlify)
+on: { workflow_dispatch: {} }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Gather inputs (SITE_BASE from vars, DEBUG_TOKEN from Netlify)
+        id: prep
+        shell: bash
+        run: |
+          set -euo pipefail
+          SB="${{ vars.SITE_BASE_VAR }}"
+          echo "SB=$SB" >> "$GITHUB_ENV"
+
+          # Netlify token desde secrets del repo si lo tienes (NETLIFY_AUTH_TOKEN)
+          # El CLI ya está en imagen runner, pero instalamos por si acaso.
+          npm i -g netlify-cli >/dev/null 2>&1 || true
+
+          DT="$(npx -y netlify env:get DEBUG_TOKEN --context production | tr -d '\r\n' | tr -d ' ')"
+          echo "DT=$DT" >> "$GITHUB_ENV"
+
+          # métricas
+          echo "[AF_DEBUG] VAR SITE_BASE_VAR bytes=$(printf '%s' "$SB" | wc -c)"
+          echo "[AF_DEBUG] NETLIFY DEBUG_TOKEN bytes=$(printf '%s' "$DT" | wc -c)"
+
+      - name: Quick ping + header check
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "[AF_DEBUG] curl --version:"; curl --version | head -n1 || true
+          echo "[AF_DEBUG] BASE=$SB"
+          echo "[AF_DEBUG] DT_len=${#DT}"
+
+          code=$(curl -sS -o /tmp/ping.json -w '%{http_code}' "$SB/ping" || echo curl_failed)
+          echo "[AF_DEBUG] /ping code=$code"
+          cat /tmp/ping.json 2>/dev/null || true
+
+          # intento con header privado
+          code2=$(curl -sS -o /tmp/i.json -w '%{http_code}' \
+            "$SB/diag-resolver?inspect=1" \
+            -H "x-debug: 1" -H "x-debug-token: $DT" || echo curl_failed)
+          echo "[AF_DEBUG] /diag-resolver?inspect=1 code=$code2"
+          jq . /tmp/i.json 2>/dev/null || cat /tmp/i.json || true
