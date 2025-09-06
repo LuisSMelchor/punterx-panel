@@ -8,16 +8,9 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      SITE_BASE: ${{ secrets.SITE_BASE }}
-      DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
-    steps:
       - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Show context (raw vs trim)
-        shell: bash
-        run: |
           set -euo pipefail
           SB_RAW="${SITE_BASE:-}"
           DT_RAW="${DEBUG_TOKEN:-}"
@@ -37,11 +30,6 @@ jobs:
             exit 1
           fi
       - name: Measure via step env
-        shell: bash
-        env:
-          SB: ${{ secrets.SITE_BASE }}
-          DT: ${{ secrets.DEBUG_TOKEN }}
-        run: |
           set -euo pipefail
           sbb=$(printf '%s' "$SB" | wc -c)
           dtb=$(printf '%s' "$DT" | wc -c)
@@ -52,8 +40,6 @@ jobs:
           fi
 
       - name: Measure via inline expression (no job env)
-        shell: bash
-        run: |
           set -euo pipefail
           SBB=$(
             # OJO: solo numérico (no imprime el secreto)
