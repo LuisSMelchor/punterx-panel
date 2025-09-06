@@ -1,0 +1,38 @@
+name: Smoke Functions
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SITE_BASE: ${{ secrets.SITE_BASE }} # ej: https://punterx-panel-vip.netlify.app/.netlify/functions
+      DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }} # mismo valor que en Netlify (production)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show context
+        run: |
+          echo "[AF_DEBUG] GITHUB_SHA=$GITHUB_SHA"
+          echo "[AF_DEBUG] SITE_BASE len=${#SITE_BASE}"
+          echo "[AF_DEBUG] DEBUG_TOKEN len=${#DEBUG_TOKEN}"
+
+      - name: Install jq & curl
+        run: sudo apt-get update -y && sudo apt-get install -y jq curl
+
+      - name: Ensure executable
+        run: chmod +x scripts/smoke-functions.sh
+
+      - name: Run smoke against SITE_BASE
+        env:
+          BASE: ${{ env.SITE_BASE }}
+        run: |
+          export DEBUG_TOKEN="${DEBUG_TOKEN}"
+          export BASE="${BASE}"
+          ./scripts/smoke-functions.sh
