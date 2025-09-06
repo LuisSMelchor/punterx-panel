@@ -47,6 +47,15 @@ jobs:
           {
             echo "SB_TRIM=$SB_TRIM"
             echo "DT_TRIM=$DT_TRIM"
+          # sanity: longitudes mínimas
+          SB_BYTES=$(printf "%s" "$SB_TRIM" | wc -c)
+          DT_BYTES=$(printf "%s" "$DT_TRIM" | wc -c)
+          echo "[AF_DEBUG] SITE_BASE bytes="${SB_BYTES}
+          echo "[AF_DEBUG] DEBUG_TOKEN bytes="${DT_BYTES}
+          if [ "$SB_BYTES" -lt 10 ] || [ "$DT_BYTES" -lt 8 ]; then
+            echo "::error::Secrets con bytes insuficientes (¿espacio único?)"
+            exit 1
+          fi
           } >> "$GITHUB_ENV"
       - name: Install jq & curl
         shell: bash
