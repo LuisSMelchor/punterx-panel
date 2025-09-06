@@ -11,10 +11,11 @@ permissions:
 
 jobs:
   smoke:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      SITE_BASE: ${{ secrets.SITE_BASE }}
+      SITE_BASE: ${{ vars.SITE_BASE }}
       DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
     steps:
       - name: Checkout
@@ -24,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          SB_RAW="${SITE_BASE:-}"
+      SITE_BASE: ${{ vars.SITE_BASE }}
           DT_RAW="${DEBUG_TOKEN:-}"
 
           SB_TRIM="$(printf "%s" "$SB_RAW" | tr -d '\r\n' | tr -d ' ')"
@@ -45,7 +46,8 @@ jobs:
 
           {
             echo "SB_TRIM=$SB_TRIM"
-            echo "DT_TRIM=$DT_TRIM"
+          echo "[AF_DEBUG] SB_TRIM_is_star=$([ \"$SB_TRIM\" = \"*\" ] && echo yes || echo no)"
+          echo "[AF_DEBUG] DT_TRIM_is_star=$([ \"$DT_TRIM\" = \"*\" ] && echo yes || echo no)"
           } >> "$GITHUB_ENV"
       - name: Debug duro (bytes + codepoint)
         shell: bash
@@ -133,3 +135,10 @@ jobs:
             echo "::error::SMOKE FAILED"
             exit 1
           fi
+      - name: Export secrets/vars al runtime
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SB_TRIM=${{ vars.SITE_BASE }}" >> "$GITHUB_ENV"
+          echo "DT_TRIM=${{ secrets.DEBUG_TOKEN }}" >> "$GITHUB_ENV"
