@@ -36,3 +36,34 @@ jobs:
             echo "::error::Secrets vacíos o demasiado cortos tras trim"
             exit 1
           fi
+      - name: Measure via step env
+        shell: bash
+        env:
+          SB: ${{ secrets.SITE_BASE }}
+          DT: ${{ secrets.DEBUG_TOKEN }}
+        run: |
+          set -euo pipefail
+          sbb=$(printf '%s' "$SB" | wc -c)
+          dtb=$(printf '%s' "$DT" | wc -c)
+          echo "[AF_DEBUG] STEP_ENV SITE_BASE bytes=$sbb"
+          echo "[AF_DEBUG] STEP_ENV DEBUG_TOKEN bytes=$dtb"
+          if [ "$sbb" -lt 10 ] || [ "$dtb" -lt 8 ]; then
+            echo "::warning::step-env looks short (SB=$sbb, DT=$dtb)"
+          fi
+
+      - name: Measure via inline expression (no job env)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SBB=$(
+            # OJO: solo numérico (no imprime el secreto)
+            printf '%s' "${{ secrets.SITE_BASE }}" | wc -c
+          )
+          DTB=$(
+            printf '%s' "${{ secrets.DEBUG_TOKEN }}" | wc -c
+          )
+          echo "[AF_DEBUG] INLINE SITE_BASE bytes=$SBB"
+          echo "[AF_DEBUG] INLINE DEBUG_TOKEN bytes=$DTB"
+          if [ "$SBB" -lt 10 ] || [ "$DTB" -lt 8 ]; then
+            echo "::error::inline looks short (SB=$SBB, DT=$DTB)"; exit 1
+          fi
