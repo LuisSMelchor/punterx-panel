@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      SITE_BASE: ${{ vars.SITE_BASE }}
+      SITE_BASE: ${{ secrets.SITE_BASE }}
       DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
     steps:
       - name: Checkout
@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
 
-      SITE_BASE: ${{ vars.SITE_BASE }}
+      SITE_BASE: ${{ secrets.SITE_BASE }}
           DT_RAW="${DEBUG_TOKEN:-}"
 
           SB_TRIM="$(printf "%s" "$SB_RAW" | tr -d '\r\n' | tr -d ' ')"
