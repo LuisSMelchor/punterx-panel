@@ -27,43 +27,56 @@ jobs:
           SB_RAW="${SITE_BASE:-}"
           DT_RAW="${DEBUG_TOKEN:-}"
 
-          SB_TRIM="$(printf "%s" "$SB_RAW" | tr -d '\r\n')"
-          DT_TRIM="$(printf "%s" "$DT_RAW" | tr -d '\r\n')"
+          SB_TRIM="$(printf "%s" "$SB_RAW" | tr -d '\r\n' | tr -d ' ')"
+          DT_TRIM="$(printf "%s" "$DT_RAW" | tr -d '\r\n' | tr -d ' ')"
 
-          echo "::group::[AF_DEBUG] Secrets lens"
           echo "[AF_DEBUG] SITE_BASE raw len=${#SB_RAW}  trim len=${#SB_TRIM}"
           echo "[AF_DEBUG] DEBUG_TOKEN raw len=${#DT_RAW} trim len=${#DT_TRIM}"
-          printf "%s" "$SB_TRIM" | wc -c | xargs echo "[AF_DEBUG] SITE_BASE wc -c:"
-          printf "%s" "$DT_TRIM" | wc -c | xargs echo "[AF_DEBUG] DEBUG_TOKEN wc -c:"
-          printf "%s" "$SB_TRIM" | head -c 16 | xxd -p -c 999 | xargs echo "[AF_DEBUG] SITE_BASE hex(16):"
-          printf "%s" "$DT_TRIM" | head -c 16 | xxd -p -c 999 | xargs echo "[AF_DEBUG] DEBUG_TOKEN hex(16):"
-          echo "::endgroup::"
 
-          if [ -z "$SB_TRIM" ] || [ -z "$DT_TRIM" ]; then
-            echo "::error::Secrets vacíos (tras trim). Revisa SITE_BASE/DEBUG_TOKEN"
+          SB_BYTES=$(printf "%s" "$SB_TRIM" | wc -c)
+          DT_BYTES=$(printf "%s" "$DT_TRIM" | wc -c)
+          echo "[AF_DEBUG] SITE_BASE bytes=$SB_BYTES"
+          echo "[AF_DEBUG] DEBUG_TOKEN bytes=$DT_BYTES"
+
+          if [ "$SB_BYTES" -lt 10 ] || [ "$DT_BYTES" -lt 8 ]; then
+            echo "::error::Secrets vacíos o demasiado cortos tras trim"
             exit 1
           fi
 
           {
             echo "SB_TRIM=$SB_TRIM"
             echo "DT_TRIM=$DT_TRIM"
-          # sanity: longitudes mínimas
-          SB_BYTES=$(printf "%s" "$SB_TRIM" | wc -c)
-          DT_BYTES=$(printf "%s" "$DT_TRIM" | wc -c)
-          echo "[AF_DEBUG] SITE_BASE bytes="${SB_BYTES}
-          echo "[AF_DEBUG] DEBUG_TOKEN bytes="${DT_BYTES}
-          if [ "$SB_BYTES" -lt 10 ] || [ "$DT_BYTES" -lt 8 ]; then
-            echo "::error::Secrets con bytes insuficientes (¿espacio único?)"
-            exit 1
-          fi
           } >> "$GITHUB_ENV"
+      - name: Debug duro (bytes + codepoint)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SB="${SB_TRIM:-}"; DT="${DT_TRIM:-}"
+
+          echo "::group::[AF_DEBUG] bytes y codepoints"
+          echo "[AF_DEBUG] SITE_BASE bytes: $(printf '%s' "$SB" | wc -c)"
+          echo "[AF_DEBUG] DEBUG_TOKEN bytes: $(printf '%s' "$DT" | wc -c)"
+
+          sb_hex="$(printf '%s' "$SB" | head -c1 | od -An -t x1 | tr -d ' \n' || true)"
+          dt_hex="$(printf '%s' "$DT" | head -c1 | od -An -t x1 | tr -d ' \n' || true)"
+          sb_dec="$(printf '%s' "$SB" | head -c1 | od -An -t u1 | tr -d ' \n' || true)"
+          dt_dec="$(printf '%s' "$DT" | head -c1 | od -An -t u1 | tr -d ' \n' || true)"
+          echo "[AF_DEBUG] SITE_BASE first-byte: hex=$sb_hex dec=$sb_dec"
+          echo "[AF_DEBUG] DEBUG_TOKEN first-byte: hex=$dt_hex dec=$dt_dec"
+          echo "[AF_DEBUG] SITE_BASE head8 hex: $(printf '%s' "$SB" | head -c8 | od -An -t x1 | tr -s ' ' | tr ' ' '-')"
+          echo "::endgroup::"
+
+          sb_bytes="$(printf '%s' "$SB" | wc -c)"; dt_bytes="$(printf '%s' "$DT" | wc -c)"
+          if [ "$sb_bytes" -lt 10 ] || [ "$dt_bytes" -lt 8 ]; then
+            echo "::error::Secrets con bytes insuficientes (SB=$sb_bytes, DT=$dt_bytes)."
+            exit 2
+          fi
       - name: Install jq & curl
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -y
           sudo apt-get install -y jq curl
-
       - name: Smoke (diag-impl-call + autopick-vip-run3)
         shell: bash
         run: |
@@ -71,27 +84,26 @@ jobs:
 
           BASE="$SB_TRIM"
           TKN="$DT_TRIM"
-
           echo "[AF_DEBUG] BASE=$BASE"
           echo "[AF_DEBUG] DEBUG_TOKEN len (trim) = ${#TKN}"
+
+          # ping BASE
+          echo "[AF_DEBUG] curl --version:"; curl --version | head -n1 || true
+          pingc=$(curl -sS -o /tmp/ping.json -w '%{http_code}' "$BASE/ping" || echo curl_failed)
+          echo "[AF_DEBUG] /ping code=$pingc"
+          jq . /tmp/ping.json 2>/dev/null || cat /tmp/ping.json || true
 
           pass=1
 
           smoke_fn () {
-            echo "[AF_DEBUG] curl --version:"; curl --version | head -n1 || true
-            pingc=$(curl -sS -o /tmp/ping.json -w '%{http_code}' "$BASE/ping" || echo curl_failed)
-            echo "[AF_DEBUG] /ping code=$pingc"
-            jq . /tmp/ping.json 2>/dev/null || cat /tmp/ping.json || true
             local fn="$1"
             local code
 
             echo "::group::[AF_DEBUG] $fn /inspect"
             code=$(curl -sS -o "/tmp/${fn}_i.json" -w '%{http_code}' \
               "$BASE/$fn?inspect=1&debug=1" \
-              -H "x-debug: 1" -H "x-debug-token: $TKN" || echo "curl_failed")
-            if [ "$code" = "curl_failed" ]; then
-              echo "::error::curl fallo en /inspect ($fn)"; pass=0
-            elif [ "$code" = "200" ] && jq -e '.hasHandler==true' "/tmp/${fn}_i.json" >/dev/null 2>&1; then
+              -H "x-debug: 1" -H "x-debug-token: $TKN" || echo curl_failed)
+            if [ "$code" = "200" ] && jq -e '.hasHandler==true' "/tmp/${fn}_i.json" >/dev/null 2>&1; then
               echo "[AF_DEBUG] $fn inspect OK (200)"
             else
               echo "[AF_DEBUG] $fn inspect FAIL (code=$code)"; pass=0
@@ -102,10 +114,8 @@ jobs:
             echo "::group::[AF_DEBUG] $fn /bypass"
             code=$(curl -sS -o "/tmp/${fn}_b.json" -w '%{http_code}' \
               "$BASE/$fn?bypass=1&debug=1" \
-              -H "x-debug: 1" -H "x-debug-token: $TKN" || echo "curl_failed")
-            if [ "$code" = "curl_failed" ]; then
-              echo "::error::curl fallo en /bypass ($fn)"; pass=0
-            elif [ "$code" = "403" ]; then
+              -H "x-debug: 1" -H "x-debug-token: $TKN" || echo curl_failed)
+            if [ "$code" = "403" ]; then
               echo "[AF_DEBUG] $fn bypass OK (403)"
             else
               echo "[AF_DEBUG] $fn bypass FAIL (code=$code)"; pass=0
@@ -121,29 +131,5 @@ jobs:
             echo "[AF_DEBUG] SMOKE OK"
           else
             echo "::error::SMOKE FAILED"
-            exit 2
-          fi
-      - name: Debug duro (bytes + codepoint)
-        shell: bash
-        run: |
-          set -euo pipefail
-          # re-lee lo que exportaste en $GITHUB_ENV
-          SB="${SB_TRIM:-}"; DT="${DT_TRIM:-}"
-
-          echo "::group::[AF_DEBUG] bytes y codepoints"
-          echo "[AF_DEBUG] SITE_BASE bytes: $(printf \"%s\" \"$SB\" | wc -c)"
-          echo "[AF_DEBUG] DEBUG_TOKEN bytes: $(printf \"%s\" \"$DT\" | wc -c)"
-          sb_hex="$(printf \"%s\" \"$SB\" | head -c1 | od -An -t x1 | tr -d \" \n\")"
-          dt_hex="$(printf \"%s\" \"$DT\" | head -c1 | od -An -t x1 | tr -d \" \n\")"
-          sb_dec="$(printf \"%s\" \"$SB\" | head -c1 | od -An -t u1 | tr -d \" \n\")"
-          dt_dec="$(printf \"%s\" \"$DT\" | head -c1 | od -An -t u1 | tr -d \" \n\")"
-          echo "[AF_DEBUG] SITE_BASE first-byte: hex=$sb_hex dec=$sb_dec"
-          echo "[AF_DEBUG] DEBUG_TOKEN first-byte: hex=$dt_hex dec=$dt_dec"
-          echo "[AF_DEBUG] SITE_BASE head8 hex: $(printf \"%s\" \"$SB\" | head -c8 | od -An -t x1 | tr -s \" \" | tr \" \" -)"
-          echo "::endgroup::"
-
-          sb_bytes="$(printf \"%s\" \"$SB\" | wc -c)"; dt_bytes="$(printf \"%s\" \"$DT\" | wc -c)"
-          if [ \"$sb_bytes\" -lt 10 ] || [ \"$dt_bytes\" -lt 8 ]; then
-            echo "::error::Secrets con bytes insuficientes (SB=$sb_bytes, DT=$dt_bytes)."
-            exit 2
+            exit 1
           fi
