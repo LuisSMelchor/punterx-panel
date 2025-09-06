@@ -1,4 +1,16 @@
 'use strict';
+
+// --- begin: harden JSON output ---
+function jsonifyResponse(x){
+  if (x && typeof x === 'object' && 'statusCode' in x && 'body' in x) return jsonifyResponse(x);
+  const body = (x === undefined) ? { ok:true } : x;
+  return {
+    statusCode: 200,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(body)
+  };
+}
+// --- end: harden JSON output ---
 // diag-impl-call: delegator robusto con inspect
 exports.handler = async (event, context) => {
   const qs = (event && event.queryStringParameters) || {};
@@ -92,7 +104,7 @@ exports.handler = async (event, context) => {
     if (!res || typeof res.statusCode !== 'number') {
       return { statusCode: 200, body: JSON.stringify(res && typeof res === 'object' ? res : { ok: !!res }) };
     }
-    return res;
+    return jsonifyResponse(res);
   } catch (e) {
     return { statusCode: 200, body: JSON.stringify({ ok: false, stage: 'impl.call', error: (e && e.message) || String(e) }) };
   }
