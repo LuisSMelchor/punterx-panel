@@ -74,9 +74,17 @@ async function callImpl(event, context){
           return { statusCode: status, headers, body: JSON.stringify(payload) };
         }
       }
-      // body objeto -> devuélvelo tal cual (JSON)
-      const obj = (res.body == null) ? { ok:true } : res.body;
-      return { statusCode: status, headers, body: JSON.stringify(obj) };
+      // body objeto -> devuélvelo tal cual (JSON) con normalización de forbidden->403
+const obj = (res.body == null) ? { ok:true } : res.body;
+let outStatus = status;
+try {
+  const err = (obj && (obj.error || obj.raw || obj.stage));
+  const isForbidden =
+    (obj && (obj.error === 'forbidden' || obj.raw === 'Forbidden')) ||
+    (obj && obj.ok === false && String(obj.stage||'').toLowerCase() === 'auth');
+  if (isForbidden) outStatus = 403;
+} catch (_) {}
+return { statusCode: outStatus, headers, body: JSON.stringify(obj) };
     }
 
     // No es Netlify-style: si es objeto, pásalo; si es primitivo, booleanízalo
