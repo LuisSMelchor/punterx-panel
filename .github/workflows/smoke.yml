@@ -34,7 +34,10 @@ jobs:
 
       - name: Install jq & curl
         shell: bash
-        run: sudo apt-get update -y && sudo apt-get install -y jq curl
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y jq curl
 
       - name: Smoke (diag-impl-call + autopick-vip-run3)
         shell: bash
