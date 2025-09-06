@@ -125,8 +125,14 @@ if (!send) {
 }
 /* =============== CLIENTES =============== */
 let supabase = null; // __SANE_SUPABASE_INIT__
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
+let openai = null;
+async function ensureOpenAI(){
+  if (!openai) {
+    const OpenAI = await getOpenAI();
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openai;
+}
 // Helpers de envío (debes tener netlify/functions/send.js con LIVE FREE/VIP)}
 
 /* =============== Utils =============== */
