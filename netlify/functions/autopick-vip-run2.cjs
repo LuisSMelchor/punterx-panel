@@ -24,7 +24,7 @@ exports.handler = async (event, context) => {
   if (qbool(qs.ls) || qbool(qs.lsroot)) {
     try {
       const rq = eval('require');
-      const fs = rq('fs');
+      const fs = require('fs');
       const dir = qbool(qs.lsroot) && process.env.LAMBDA_TASK_ROOT
         ? process.env.LAMBDA_TASK_ROOT
         : __dirname;
@@ -59,13 +59,9 @@ exports.handler = async (event, context) => {
   } catch(_) {}
 try {
     const rq = eval('require');
-    const path = rq('path');
-    const fs = rq('fs');
-    if (!fs.existsSync(implPath) && process.env.LAMBDA_TASK_ROOT) {
-      if (fs.existsSync(alt)) implPath = alt;
-    }
-    impl = rq(implPath);
-  } catch (e) {
+    const path = require('path');
+    const fs = require('fs');
+    } catch (e) {
     if (debug) console.log('[AF_DEBUG] require impl error:', e && (e.message || e));
     return __json(200, { ok: false, fatal: true, stage: 'require(impl)', error: (e && e.message) || String(e) });
   }
