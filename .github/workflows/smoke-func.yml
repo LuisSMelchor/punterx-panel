@@ -39,3 +39,4 @@ jobs:
             echo "::error::Secrets vacíos o demasiado cortos tras trim"
             exit 1
           fi
+
