@@ -95,7 +95,7 @@ function getHeaders(event) {
 function isDebug(event) {
   const q = (event && event.queryStringParameters) || {};
   const h = getHeaders(event);
-  return q.debug === '1' || h['x-debug'] === '1';
+  return q.debug === '1' || (getHeaders(event)['x-debug'] === '1';
 }
 
 function assertEnv() {
@@ -625,7 +625,7 @@ try { const q = (event && event.queryStringParameters) || {}; if (q.cron) { q.ma
 try {
     const q = (event && event.queryStringParameters) || {};
     const h = (event && event.headers) || {};
-    if ((q.debug === "1" || h["x-debug"] === "1") && q.ping === "1") {
+    if ((q.debug === "1" || (getHeaders(event)["x-debug"] === "1") && q.ping === "1") {
       return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ send_report: __send_report,
 ok:true, stage:"early-ping" }) };
     }
@@ -1642,7 +1642,7 @@ function buildXgStatsFromAF(af) {
     const h = af.xg.home || {};
     const a = af.xg.away || {};
     return {
-      home: { xg_for: Number(h.for || h.xg_for || 0), xg_against: Number(h.against || h.xg_against || 0), n: Number(h.n || 5) },
+      home: { xg_for: Number((getHeaders(event).for) || (getHeaders(event).xg_for) || 0), xg_against: Number((getHeaders(event).against) || (getHeaders(event).xg_against) || 0), n: Number((getHeaders(event).n) || 5) },
       away: { xg_for: Number(a.for || a.xg_for || 0), xg_against: Number(a.against || a.xg_against || 0), n: Number(a.n || 5) }
     };
   } catch { return null; }
