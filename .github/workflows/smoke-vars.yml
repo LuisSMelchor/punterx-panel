@@ -1,0 +1,14 @@
+name: Smoke Repo Vars
+on: { workflow_dispatch: {} }
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Measure repo-level vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          sb_b=$(printf '%s' "${{ vars.SITE_BASE_VAR }}" | wc -c)
+          ct_b=$(printf '%s' "${{ vars.ECHO_TEST_VAR }}" | wc -c)
+          echo "[AF_DEBUG] VAR SITE_BASE_VAR bytes=$sb_b"
+          echo "[AF_DEBUG] VAR ECHO_TEST_VAR bytes=$ct_b"
