@@ -4,7 +4,8 @@ jobs:
   j:
     runs-on: ubuntu-latest
     steps:
-      - shell: bash
+      - name: Measure CTRL
+        shell: bash
         env: { CTRL: ${{ secrets.ECHO_TEST }} }
         run: |
           echo "[AF_DEBUG] CTRL bytes=$(printf '%s' "$CTRL" | wc -c)"
