@@ -19,13 +19,7 @@ function isAllowed(event){
   if (!token) return false;
   return isDebug(event) && (h['x-debug-token'] === token);
 }
-function isAllowed(event){
-  // Gating seguro: requiere debug activo + coincidencia exacta de token
-  const h = getHeaders(event);
-  const token = process.env.DEBUG_TOKEN || "";
-  if (!token) return false;
-  return isDebug(event) && (h['x-debug-token'] === token);
-};
+
 function respond(body, code = 200){
   let b;
   try { b = (typeof body === 'string') ? body : JSON.stringify(body ?? { ok:true }); }
