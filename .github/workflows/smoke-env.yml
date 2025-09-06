@@ -1,0 +1,41 @@
+name: Smoke Env Secrets
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    environment: ci-smoke
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Measure via step env (env-secrets)
+        shell: bash
+        env:
+          SB: ${{ secrets.SITE_BASE }}
+          DT: ${{ secrets.DEBUG_TOKEN }}
+          CTRL: ${{ secrets.ECHO_TEST }}
+        run: |
+          set -euo pipefail
+          for k in SB DT CTRL; do
+            v="${!k:-}"
+            b=$(printf '%s' "$v" | wc -c)
+            hx=$(printf '%s' "$v" | head -n1 | head -c1 | od -An -t x1 | tr -d ' \n' || true)
+            echo "[AF_DEBUG] STEP_ENV $k bytes=$b first-byte-hex=${hx:-NA}"
+          done
+          echo "::notice::step-env medido (no falla el job)"
+
+      - name: Measure via inline expr (env-secrets)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sb_b=$(printf '%s' "${{ secrets.SITE_BASE }}" | wc -c)
+          dt_b=$(printf '%s' "${{ secrets.DEBUG_TOKEN }}" | wc -c)
+          ct_b=$(printf '%s' "${{ secrets.ECHO_TEST }}" | wc -c)
+          echo "[AF_DEBUG] INLINE SITE_BASE bytes=$sb_b"
+          echo "[AF_DEBUG] INLINE DEBUG_TOKEN bytes=$dt_b"
+          echo "[AF_DEBUG] INLINE ECHO_TEST bytes=$ct_b"
+          echo "::notice::inline medido (no falla el job)"
