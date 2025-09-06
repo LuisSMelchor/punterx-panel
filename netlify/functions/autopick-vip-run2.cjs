@@ -74,7 +74,35 @@ exports.handler = async (event, context) => {
   });
 
   // Delegar al handler del impl
-  if (!impl || typeof impl.handler !== 'function') {
+  
+  // [IMPL_RESOLVER_V2] robust path resolver for impl
+  let impl = typeof impl !== 'undefined' ? impl : null;
+  try {
+    const candidates = [
+      // Netlify empaquetado típico
+      path.join(__dirname, 'netlify/functions/_lib/autopick-vip-nuevo-impl.cjs'),
+      // Layout local (dev)
+      path.join(__dirname, '_lib/autopick-vip-nuevo-impl.cjs'),
+      // Legacy (mismo dir)
+      path.join(__dirname, 'autopick-vip-nuevo-impl.cjs'),
+      // Lambda root explícito
+      process.env.LAMBDA_TASK_ROOT ? path.join(process.env.LAMBDA_TASK_ROOT, 'netlify/functions/_lib/autopick-vip-nuevo-impl.cjs') : null,
+      process.env.LAMBDA_TASK_ROOT ? path.join(process.env.LAMBDA_TASK_ROOT, '_lib/autopick-vip-nuevo-impl.cjs') : null
+    ].filter(Boolean);
+
+    for (const c of candidates) {
+      try {
+        impl = require(c);
+        if (process.env.AF_DEBUG) console.log('[AF_DEBUG] impl resolved at', c);
+        break;
+      } catch (_) {}
+    }
+    if (!impl) throw new Error('impl not found in any candidate');
+  } catch(e) {
+    if (process.env.AF_DEBUG) console.log('[AF_DEBUG] impl resolver error:', (e && (e.stack||e.message)) || String(e));
+  }
+
+if (!impl || typeof impl.handler !== 'function') {
     return __json(200, { ok: false, fatal: true, stage: 'impl', error: 'impl.handler no encontrado' });
   }
   try {
@@ -95,7 +123,6 @@ exports.handler = async (event, context) => {
     ].filter(Boolean);
     for (const c of cand) {
       try {
-        impl = require(c);
         if (process.env.AF_DEBUG) console.log('[AF_DEBUG] impl resolved at', c);
         break;
       } catch(e) { /* continue */ }
