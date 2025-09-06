@@ -31,20 +31,61 @@ jobs:
         shell: bash
         run: sudo apt-get update -y && sudo apt-get install -y jq curl
 
-      - name: Ensure executable
-        shell: bash
-        run: test -f scripts/smoke-functions.sh && chmod +x scripts/smoke-functions.sh
-
-      - name: Run smoke (diag-impl-call + autopick-vip-run3)
+      - name: Smoke (diag-impl-call + autopick-vip-run3)
         shell: bash
         env:
           BASE: ${{ secrets.SITE_BASE }}
-          DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
+          TOKEN_RAW: ${{ secrets.DEBUG_TOKEN }}
         run: |
           set -euo pipefail
-          echo "[AF_DEBUG] BASE len=${#BASE}"
-          echo "[AF_DEBUG] DEBUG_TOKEN len=${#DEBUG_TOKEN}"
-          if [ -z "${BASE:-}" ] || [ -z "${DEBUG_TOKEN:-}" ]; then
-            echo "::error::Missing secrets (BASE/DEBUG_TOKEN)"; exit 1
+          BASE="${BASE:?missing SITE_BASE}"
+          TOKEN="$(printf "%s" "${TOKEN_RAW:?missing DEBUG_TOKEN}" | tr -d '\r\n')"
+
+          echo "[AF_DEBUG] BASE=$BASE"
+          echo "[AF_DEBUG] DEBUG_TOKEN len (trim) = ${#TOKEN}"
+
+          if [ -z "$TOKEN" ]; then
+            echo "::error::DEBUG_TOKEN vacío"; exit 1
           fi
-          ./scripts/smoke-functions.sh
+
+          pass=1
+
+          smoke_inspect () {
+            local fn="$1"
+            local code
+            code=$(curl -sS -o "/tmp/${fn}_i.json" -w '%{http_code}' \
+              "$BASE/$fn?inspect=1&debug=1" \
+              -H "x-debug: 1" -H "x-debug-token: $TOKEN")
+            jq . "/tmp/${fn}_i.json" >/dev/null 2>&1 || true
+            if [ "$code" = "200" ] && jq -e '.hasHandler==true' "/tmp/${fn}_i.json" >/dev/null 2>&1; then
+              echo "[AF_DEBUG] $fn inspect OK (200)"
+            else
+              echo "[AF_DEBUG] $fn inspect FAIL (code=$code)"; pass=0
+            fi
+          }
+
+          smoke_bypass () {
+            local fn="$1"
+            local code
+            code=$(curl -sS -o "/tmp/${fn}_b.json" -w '%{http_code}' \
+              "$BASE/$fn?bypass=1&debug=1" \
+              -H "x-debug: 1" -H "x-debug-token: $TOKEN")
+            echo "[AF_DEBUG] $fn bypass code=$code"
+            jq . "/tmp/${fn}_b.json" || cat "/tmp/${fn}_b.json" || true
+            if [ "$code" = "403" ]; then
+              echo "[AF_DEBUG] $fn bypass OK (403)"
+            else
+              echo "[AF_DEBUG] $fn bypass FAIL (code=$code)"; pass=0
+            fi
+          }
+
+          smoke_inspect diag-impl-call
+          smoke_inspect autopick-vip-run3
+          smoke_bypass  diag-impl-call
+          smoke_bypass  autopick-vip-run3
+
+          if [ "$pass" -eq 1 ]; then
+            echo "[AF_DEBUG] SMOKE OK"
+          else
+            echo "::error::SMOKE FAILED"; exit 1
+          fi
