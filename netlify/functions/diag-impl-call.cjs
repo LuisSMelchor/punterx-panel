@@ -33,6 +33,16 @@ exports.handler = async (event, context) => {
   }
 
   // normaliza shape
+  // Fallback require plano si todo falló (bundle zisi expone vecinos en /var/task)
+  if (!resolved) {
+    try {
+      const direct = './_lib/autopick-vip-nuevo-impl.cjs';
+      impl = rq(direct); resolved = direct;
+      if (process.env.AF_DEBUG) console.log('[AF_DEBUG] fallback require', direct, 'keys=', (impl && Object.keys(impl)||[]));
+    } catch(_) {}
+  }
+
+  // normaliza shape
   if (impl && typeof impl === 'function') impl = { handler: impl };
   else if (impl && impl.default && typeof impl.default === 'function') impl = { handler: impl.default };
   else if (impl && impl.default && typeof impl.default.handler === 'function') impl = { handler: impl.default.handler };
