@@ -627,7 +627,7 @@ try { const q = (event && event.queryStringParameters) || {}; if (q.cron) { q.ma
 try {
     const q = (event && event.queryStringParameters) || {};
     const h = (event && event.headers) || {};
-    if ((q.debug === "1" || (getHeaders(event)["x-debug"] === "1") && q.ping === "1") {
+    if (isDebug(event) && q.ping === "1") {
       return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ send_report: __send_report,
 ok:true, stage:"early-ping" }) };
     }
