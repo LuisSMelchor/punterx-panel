@@ -18,13 +18,14 @@ function isAllowed(event){
   const token = process.env.DEBUG_TOKEN || "";
   if (!token) return false;
   return isDebug(event) && (h['x-debug-token'] === token);
-};
-  const h = getHeaders(event);
-  
-const token = process.env.DEBUG_TOKEN || "";
-const allowed = isDebug(event) && token && h['x-debug-token'] === token;
-return q.debug === '1' || h['x-debug'] === '1';
 }
+function isAllowed(event){
+  // Gating seguro: requiere debug activo + coincidencia exacta de token
+  const h = getHeaders(event);
+  const token = process.env.DEBUG_TOKEN || "";
+  if (!token) return false;
+  return isDebug(event) && (h['x-debug-token'] === token);
+};
 function respond(body, code = 200){
   let b;
   try { b = (typeof body === 'string') ? body : JSON.stringify(body ?? { ok:true }); }
@@ -88,6 +89,7 @@ async function callImpl(event, context){
 
 exports.handler = async function(event, context){
   const q = (event && event.queryStringParameters) || {};
+  const allowed = isAllowed(event);
 
   // 1) ping
   if (isDebug(event) && (q.ping === '1' || ('ping' in q))) {
