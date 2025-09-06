@@ -19,8 +19,8 @@
 
 [functions."diag-impl-call"]
   node_bundler = "zisi"
-  included_files = ["netlify/functions/_lib/autopick-vip-nuevo-impl.cjs"]
+  included_files = ["netlify/functions/_lib/**"]
 
 [functions."autopick-vip-run3"]
   node_bundler = "zisi"
-  included_files = ["netlify/functions/_lib/autopick-vip-nuevo-impl.cjs"]
+  included_files = ["netlify/functions/_lib/**"]
