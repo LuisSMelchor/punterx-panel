@@ -4,7 +4,6 @@ const __PX_DEBUG = !!(process.env.AF_DEBUG || process.env.DEBUG || process.env.P
 const dlog = (...args) => {
   if (!__PX_DEBUG) return;
   try { (console.debug || console.log)('[match-helper]', ...args); } catch(_) {}
-};
 
 
 
