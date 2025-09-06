@@ -115,12 +115,16 @@ function assertEnv() {
 const SEND_DISABLED = (process.env.SEND_TELEGRAM === '0' || process.env.PUBLISH_PREVIEW_ONLY === '1');
 let send = null;
 if (!SEND_DISABLED) {
-  catch(_) { /* ignore, fallback below */ }
+  try {
+    const rq = eval('require');
+    send = rq('../send.js');
+  } catch (_) {}
 }
 if (!send) {
-  // no-op compatible: firma simple que devuelve ack
   send = async function noopSend(/*...args*/) {
     return { ok: true, dry: true, reason: 'send_disabled_or_missing' };
+  };
+};
   };
 }
 /* =============== CLIENTES =============== */
