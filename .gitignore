@@ -31,3 +31,6 @@ netlify/functions.bak.*/
 *.funcbak.*
 *.bak.*
 *.bak
+*.bak.*
+scripts/patch-*.cjs
+scripts/cleanup-*.cjs
