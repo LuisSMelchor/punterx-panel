@@ -98,32 +98,7 @@ try {
     return __json(200, { ok: false, fatal: true, stage: 'impl', error: 'impl.handler no encontrado' });
   }
   try {
-    const res = await impl
-  // [IMPL_RESOLVER_V1] robust path resolver for impl
-  /* reuse predeclared impl */
-  try {
-    const path = require('path');
-    const cand = [
-      // empaquetado de Netlify (funciones dentro de /var/task/netlify/functions/_lib)
-      path.join(__dirname, 'netlify/functions/_lib/autopick-vip-nuevo-impl.cjs'),
-      // layout local dev (desde netlify/functions/)
-      path.join(__dirname, '_lib/autopick-vip-nuevo-impl.cjs'),
-      // layout legacy (mismo dir que el wrapper)
-      path.join(__dirname, 'autopick-vip-nuevo-impl.cjs'),
-      // LAMBDA_TASK_ROOT explícito
-      process.env.LAMBDA_TASK_ROOT ? path.join(process.env.LAMBDA_TASK_ROOT, 'netlify/functions/_lib/autopick-vip-nuevo-impl.cjs') : null,
-    ].filter(Boolean);
-    for (const c of cand) {
-      try {
-        if (process.env.AF_DEBUG) console.log('[AF_DEBUG] impl resolved at', c);
-        break;
-      } catch(e) { /* continue */ }
-    }
-    if (!impl) throw new Error('impl not found in candidates');
-  } catch(e) {
-    if (process.env.AF_DEBUG) console.log('[AF_DEBUG] impl resolver error:', (e && (e.stack||e.message)) || String(e));
-  }
-  .handler(newEvent, context);
+    const res = await impl.handler(newEvent, context);
     if (!res || typeof res.statusCode !== 'number') {
       // Normalizar salida si impl retornó algo no estándar
       return __json(200, (res && typeof res === 'object') ? res : { ok: !!res });
