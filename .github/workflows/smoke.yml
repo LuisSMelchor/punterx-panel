@@ -34,5 +34,4 @@ jobs:
           BASE: ${{ env.SITE_BASE }}
         run: |
           export DEBUG_TOKEN="${DEBUG_TOKEN}"
-          export BASE="${BASE}"
           ./scripts/smoke-functions.sh
