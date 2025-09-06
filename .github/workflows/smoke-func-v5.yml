@@ -56,3 +56,24 @@ jobs:
           if [ "$SBB" -lt 10 ] || [ "$DTB" -lt 8 ]; then
             echo "::error::inline looks short (SB=$SBB, DT=$DTB)"; exit 1
           fi
+      - name: Control via step env (ECHO_TEST)
+        shell: bash
+        env:
+          CTRL: ${{ secrets.ECHO_TEST }}
+        run: |
+          set -euo pipefail
+          echo "::group::CTRL step-env"
+          cbytes=$(printf '%s' "$CTRL" | wc -c)
+          chex=$(printf '%s' "$CTRL" | head -c1 | od -An -t x1 | tr -d ' \n' || true)
+          cdec=$(printf '%s' "$CTRL" | head -c1 | od -An -t u1 | tr -d ' \n' || true)
+          echo "[AF_DEBUG] CTRL bytes=$cbytes first-byte hex=$chex dec=$cdec"
+          echo "::endgroup::"
+
+      - name: Control via inline (ECHO_TEST)
+        shell: bash
+        run: |
+          set -euo pipefail
+          CBYTES=$(printf '%s' "${{ secrets.ECHO_TEST }}" | wc -c)
+          CHEX=$(printf '%s' "${{ secrets.ECHO_TEST }}" | head -c1 | od -An -t x1 | tr -d ' \n' || true)
+          CDEC=$(printf '%s' "${{ secrets.ECHO_TEST }}" | head -c1 | od -An -t u1 | tr -d ' \n' || true)
+          echo "[AF_DEBUG] CTRL_INLINE bytes=$CBYTES first-byte hex=$CHEX dec=$CDEC"
