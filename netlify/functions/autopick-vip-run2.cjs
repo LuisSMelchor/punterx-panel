@@ -54,8 +54,12 @@ exports.handler = async (event, context) => {
       '/var/task/_lib/autopick-vip-nuevo-impl.cjs'
     ].filter(Boolean);
     for (const cand of candidates) {
-      try { impl = require(cand); if (impl) break; } catch(_) {}
-    }
+  try {
+    impl = require(cand);
+    if (process.env.AF_DEBUG) console.log('[AF_DEBUG] impl resolved at', cand, 'keys=', (impl && Object.keys(impl)) );
+    if (impl) break;
+  } catch(_) {}
+}
   } catch(_) {}
 try {
     const rq = eval('require');
@@ -89,6 +93,19 @@ try {
   });
 
   // Delegar al handler del impl
+// [IMPL_NORMALIZE_V1] normalize shapes of the impl export
+if (impl && typeof impl === 'function') {
+  impl = { handler: impl };
+} else if (impl && typeof impl.handler !== 'function' && typeof impl.default === 'function') {
+  impl = { handler: impl.default };
+} else if (impl && typeof impl.handler !== 'function') {
+  const aliases = ['run','main','execute','handle','start'];
+  for (const k of aliases) {
+    if (typeof impl[k] === 'function') { impl = { handler: impl[k] }; break; }
+  }
+}
+if (process.env.AF_DEBUG) try { console.log('[AF_DEBUG] impl normalize keys=', Object.keys(impl||{})); } catch {}
+
   
   if (!impl || typeof impl.handler !== 'function') {
     return __json(200, { ok: false, fatal: true, stage: 'impl', error: 'impl.handler no encontrado' });
