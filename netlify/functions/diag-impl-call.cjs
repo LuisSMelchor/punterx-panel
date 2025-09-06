@@ -74,14 +74,17 @@ async function callImpl(event, context){
           return { statusCode: status, headers, body: JSON.stringify(payload) };
         }
       }
-      // body objeto -> devuélvelo tal cual (JSON) con normalización de forbidden->403
+      // body objeto -> devuélvelo tal cual (JSON) con normalización robusta forbidden/auth -> 403
 const obj = (res.body == null) ? { ok:true } : res.body;
 let outStatus = status;
 try {
-  const err = (obj && (obj.error || obj.raw || obj.stage));
+  const err   = String(obj && (obj.error ?? obj.raw ?? '')).toLowerCase();
+  const stage = String(obj && (obj.stage ?? '')).toLowerCase();
+  const reas  = String(obj && (obj.reason ?? '')).toLowerCase();
   const isForbidden =
-    (obj && (obj.error === 'forbidden' || obj.raw === 'Forbidden')) ||
-    (obj && obj.ok === false && String(obj.stage||'').toLowerCase() === 'auth');
+    err === 'forbidden' || err === 'forbidden' ||
+    (obj && obj.ok === false && stage === 'auth') ||
+    reas.includes('auth') || reas.includes('forbidden');
   if (isForbidden) outStatus = 403;
 } catch (_) {}
 return { statusCode: outStatus, headers, body: JSON.stringify(obj) };
@@ -89,12 +92,16 @@ return { statusCode: outStatus, headers, body: JSON.stringify(obj) };
 
     // No es Netlify-style: si es objeto, pásalo; si es primitivo, booleanízalo
 const payload = (res && typeof res === 'object') ? res : { ok: !!res };
-// Normalización forbidden/auth -> 403
+// Normalización robusta forbidden/auth -> 403
 let codeNL = 200;
 try {
+  const err   = String(payload && (payload.error ?? payload.raw ?? '')).toLowerCase();
+  const stage = String(payload && (payload.stage ?? '')).toLowerCase();
+  const reas  = String(payload && (payload.reason ?? '')).toLowerCase();
   const isForbidden =
-    (payload && (payload.error === 'forbidden' || payload.raw === 'Forbidden')) ||
-    (payload && payload.ok === false && String(payload.stage||'').toLowerCase() === 'auth');
+    err === 'forbidden' ||
+    (payload && payload.ok === false && stage === 'auth') ||
+    reas.includes('auth') || reas.includes('forbidden');
   if (isForbidden) codeNL = 403;
 } catch (_) {}
 return respond(payload, codeNL);
