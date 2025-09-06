@@ -119,3 +119,33 @@ jobs:
             echo "::error::SMOKE FAILED"
             exit 2
           fi
+      - name: Debug duro (bytes + codepoint)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # re-lee lo que exportaste en $GITHUB_ENV
+          SB="${SB_TRIM:-}"; DT="${DT_TRIM:-}"
+
+          echo "::group::[AF_DEBUG] bytes y codepoints"
+          echo "[AF_DEBUG] SITE_BASE bytes: $(printf '%s' "$SB" | wc -c)"
+          echo "[AF_DEBUG] DEBUG_TOKEN bytes: $(printf '%s' "$DT" | wc -c)"
+
+          # imprime el primer byte en hex/dec para saber QUÉ carácter es
+          sb_hex="$(printf '%s' "$SB" | head -c1 | od -An -t x1 | tr -d ' \n')"
+          dt_hex="$(printf '%s' "$DT" | head -c1 | od -An -t x1 | tr -d ' \n')"
+          sb_dec="$(printf '%s' "$SB" | head -c1 | od -An -t u1 | tr -d ' \n')"
+          dt_dec="$(printf '%s' "$DT" | head -c1 | od -An -t u1 | tr -d ' \n')"
+
+          echo "[AF_DEBUG] SITE_BASE first-byte: hex=$sb_hex dec=$sb_dec"
+          echo "[AF_DEBUG] DEBUG_TOKEN first-byte: hex=$dt_hex dec=$dt_dec"
+
+          # para URL, muestra los 8 primeros bytes hex (no sensibles)
+          echo "[AF_DEBUG] SITE_BASE head8 hex: $(printf '%s' "$SB" | head -c8 | od -An -t x1 | tr -s ' ' | tr ' ' '-')"
+          echo "::endgroup::"
+
+          # aborta si sigue siendo 1 byte (espacio=0x20, asterisco=0x2a, newline=0a, etc.)
+          sb_bytes="$(printf '%s' "$SB" | wc -c)"; dt_bytes="$(printf '%s' "$DT" | wc -c)"
+          if [ "$sb_bytes" -lt 10 ] || [ "$dt_bytes" -lt 8 ]; then
+            echo "::error::Secrets con bytes insuficientes (SB=$sb_bytes, DT=$dt_bytes)."
+            exit 2
+          fi
