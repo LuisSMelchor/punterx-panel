@@ -1,0 +1,12 @@
+name: Smoke GITHUB_TOKEN
+on: { workflow_dispatch: {} }
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Measure built-in GITHUB_TOKEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          b=$(printf '%s' "$GITHUB_TOKEN" | wc -c)
+          echo "[AF_DEBUG] INLINE GITHUB_TOKEN bytes=$b"
