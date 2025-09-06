@@ -23,13 +23,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           SB_RAW="${SITE_BASE:-}"
           DT_RAW="${DEBUG_TOKEN:-}"
+
           SB_TRIM="$(printf "%s" "$SB_RAW" | tr -d '\r\n')"
           DT_TRIM="$(printf "%s" "$DT_RAW" | tr -d '\r\n')"
 
+          echo "::group::[AF_DEBUG] Secrets lens"
           echo "[AF_DEBUG] SITE_BASE raw len=${#SB_RAW}  trim len=${#SB_TRIM}"
           echo "[AF_DEBUG] DEBUG_TOKEN raw len=${#DT_RAW} trim len=${#DT_TRIM}"
+          printf "%s" "$SB_TRIM" | wc -c | xargs echo "[AF_DEBUG] SITE_BASE wc -c:"
+          printf "%s" "$DT_TRIM" | wc -c | xargs echo "[AF_DEBUG] DEBUG_TOKEN wc -c:"
+          printf "%s" "$SB_TRIM" | head -c 16 | xxd -p -c 999 | xargs echo "[AF_DEBUG] SITE_BASE hex(16):"
+          printf "%s" "$DT_TRIM" | head -c 16 | xxd -p -c 999 | xargs echo "[AF_DEBUG] DEBUG_TOKEN hex(16):"
+          echo "::endgroup::"
 
           if [ -z "$SB_TRIM" ] || [ -z "$DT_TRIM" ]; then
             echo "::error::Secrets vacíos (tras trim). Revisa SITE_BASE/DEBUG_TOKEN"
@@ -51,8 +59,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           BASE="$SB_TRIM"
           TKN="$DT_TRIM"
+
           echo "[AF_DEBUG] BASE=$BASE"
           echo "[AF_DEBUG] DEBUG_TOKEN len (trim) = ${#TKN}"
 
@@ -60,28 +70,35 @@ jobs:
 
           smoke_fn () {
             local fn="$1"
-
-            # inspect -> 200 + hasHandler==true
             local code
+
+            echo "::group::[AF_DEBUG] $fn /inspect"
             code=$(curl -sS -o "/tmp/${fn}_i.json" -w '%{http_code}' \
               "$BASE/$fn?inspect=1&debug=1" \
-              -H "x-debug: 1" -H "x-debug-token: $TKN")
-            if [ "$code" = "200" ] && jq -e '.hasHandler==true' </tmp/"${fn}"_i.json >/dev/null 2>&1; then
+              -H "x-debug: 1" -H "x-debug-token: $TKN" || echo "curl_failed")
+            if [ "$code" = "curl_failed" ]; then
+              echo "::error::curl fallo en /inspect ($fn)"; pass=0
+            elif [ "$code" = "200" ] && jq -e '.hasHandler==true' "/tmp/${fn}_i.json" >/dev/null 2>&1; then
               echo "[AF_DEBUG] $fn inspect OK (200)"
             else
               echo "[AF_DEBUG] $fn inspect FAIL (code=$code)"; pass=0
               jq . "/tmp/${fn}_i.json" 2>/dev/null || cat "/tmp/${fn}_i.json" || true
             fi
-            # bypass -> 403
+            echo "::endgroup::"
+
+            echo "::group::[AF_DEBUG] $fn /bypass"
             code=$(curl -sS -o "/tmp/${fn}_b.json" -w '%{http_code}' \
               "$BASE/$fn?bypass=1&debug=1" \
-              -H "x-debug: 1" -H "x-debug-token: $TKN")
-            if [ "$code" = "403" ]; then
+              -H "x-debug: 1" -H "x-debug-token: $TKN" || echo "curl_failed")
+            if [ "$code" = "curl_failed" ]; then
+              echo "::error::curl fallo en /bypass ($fn)"; pass=0
+            elif [ "$code" = "403" ]; then
               echo "[AF_DEBUG] $fn bypass OK (403)"
             else
               echo "[AF_DEBUG] $fn bypass FAIL (code=$code)"; pass=0
               jq . "/tmp/${fn}_b.json" 2>/dev/null || cat "/tmp/${fn}_b.json" || true
             fi
+            echo "::endgroup::"
           }
 
           smoke_fn "diag-impl-call"
@@ -91,5 +108,5 @@ jobs:
             echo "[AF_DEBUG] SMOKE OK"
           else
             echo "::error::SMOKE FAILED"
-            exit 1
+            exit 2
           fi
