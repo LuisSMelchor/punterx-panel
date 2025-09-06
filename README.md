@@ -49,3 +49,29 @@ Todo corre 100% en Codespace, sin comandos externos.
 Los tests no requieren claves; si pones ODDS_API_KEY, algunos smoke usan la red.
 
 La telemetría en meta es mínima y segura: enrich_attempt, enrich_status.
+
+## API-Football (AF) — Operación y pruebas
+[AF_DOCS_V1]
+
+### Variables de entorno (nombres)
+- `API_FOOTBALL_KEY` | `APIFOOTBALL_KEY` | `API_FOOTBALL`
+- `AF_MATCH_PAD_DAYS`, `SIM_THR`, `MATCH_LEAGUE_WEIGHT`, `MATCH_COUNTRY_WEIGHT`, `AF_LEAGUE_MIN_SIM`, `AF_COUNTRY_MIN_SIM`, `AF_BTEAM_PENALTY`
+- `AF_DEBUG`, `AF_VERBOSE`
+
+### Setup rápido
+1. Copia `.env.example` a `.env` y coloca **solo** tu clave bajo `API_FOOTBALL_KEY` (sin comillas).
+2. Carga el entorno en tu shell:
+   `set -a; . ./.env; set +a`
+
+### Smoke reproducible
+`node scripts/af-smoke.js`
+- Pasa si: `status=200` y `counts.window>0` **o** `h2h.closest` en los 3 casos.
+
+### Logs de depuración
+- Usa `AF_DEBUG=1` para ver trazas con prefijo `[AF_DEBUG]`.
+- Sin `AF_DEBUG`, no se imprime ruido.
+
+### Notas
+- Handlers: `netlify/functions/diag-af-quick.cjs`, `netlify/functions/diag-af-windoweval.cjs`.
+- Cambios mínimos, con sentinelas e idempotentes.
+

@@ -98,6 +98,8 @@ function isDebug(event) {
   return q.debug === '1' || h['x-debug'] === '1';
 }
 
+
+
 function assertEnv() {
   const required = [
     'SUPABASE_URL','SUPABASE_KEY','OPENAI_API_KEY','TELEGRAM_BOT_TOKEN',
@@ -111,17 +113,35 @@ function assertEnv() {
   }
 }
 
+/* Helpers de envío (opcional / no-op en preview) */
+const SEND_DISABLED = (process.env.SEND_TELEGRAM === '0' || process.env.PUBLISH_PREVIEW_ONLY === '1');
+let send = null;
+if (!SEND_DISABLED) {
+  try {
+    const rq = eval('require');
+    send = rq('../send.js');
+  } catch (_) {
+    // no-op: seguimos con stub
+  }
+}
+if (!send) {
+  // no-op compatible: firma simple que devuelve ack
+  send = async function noopSend(/*...args*/) {
+    return { ok: true, dry: true, reason: 'send_disabled_or_missing' };
+  };
+}
+
 /* =============== CLIENTES =============== */
 let supabase = null; // __SANE_SUPABASE_INIT__
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-// Helpers de envío (debes tener netlify/functions/send.js con LIVE FREE/VIP)
-let send = null;
-try { send = require('../send.js'); }
-catch {
-  try { send = require('../send.js'); }
-  catch (e) { throw new Error("No se pudo cargar send.js (helpers LIVE)"); }
+let openai = null;
+async function ensureOpenAI(){
+  if (!openai) {
+    const OpenAI = await getOpenAI();
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openai;
 }
+// Helpers de envío (debes tener netlify/functions/send.js con LIVE FREE/VIP)}
 
 /* =============== Utils =============== */
 const PROB_MIN = 5;   // % mínimo IA
@@ -607,7 +627,7 @@ try { const q = (event && event.queryStringParameters) || {}; if (q.cron) { q.ma
 try {
     const q = (event && event.queryStringParameters) || {};
     const h = (event && event.headers) || {};
-    if ((q.debug === "1" || h["x-debug"] === "1") && q.ping === "1") {
+    if (isDebug(event) && q.ping === "1") {
       return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ send_report: __send_report,
 ok:true, stage:"early-ping" }) };
     }
@@ -623,7 +643,7 @@ ok:false, stage:"early-ping-error", err: String(e && (e.message || e)) }) };
   try {
     const raw = (event && event.headers) ? event.headers : {};
     // normaliza a minúsculas para acceso seguro
-    for (const k in raw) headers[k.toLowerCase()] = h[k];
+    for (const k in raw) headers[k.toLowerCase()] = raw[k];
     const q = (event && event.queryStringParameters) ? event.queryStringParameters : {};
     debug = (q.debug === '1') || (headers['x-debug'] === '1');
   } catch (e) {
@@ -1624,7 +1644,7 @@ function buildXgStatsFromAF(af) {
     const h = af.xg.home || {};
     const a = af.xg.away || {};
     return {
-      home: { xg_for: Number(h.for || h.xg_for || 0), xg_against: Number(h.against || h.xg_against || 0), n: Number(h.n || 5) },
+      home: { xg_for: Number((getHeaders(event).for) || (getHeaders(event).xg_for) || 0), xg_against: Number((getHeaders(event).against) || (getHeaders(event).xg_against) || 0), n: Number((getHeaders(event).n) || 5) },
       away: { xg_for: Number(a.for || a.xg_for || 0), xg_against: Number(a.against || a.xg_against || 0), n: Number(a.n || 5) }
     };
   } catch { return null; }
