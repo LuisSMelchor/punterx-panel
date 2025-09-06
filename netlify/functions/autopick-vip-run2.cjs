@@ -76,7 +76,7 @@ exports.handler = async (event, context) => {
   // Delegar al handler del impl
   
   // [IMPL_RESOLVER_V2] robust path resolver for impl
-  let impl = typeof impl !== 'undefined' ? impl : null;
+  /* reuse predeclared 'impl' from wrapper (no redeclare) */
   try {
     const candidates = [
       // Netlify empaquetado típico
