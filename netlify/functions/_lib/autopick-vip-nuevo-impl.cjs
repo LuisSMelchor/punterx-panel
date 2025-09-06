@@ -111,16 +111,24 @@ function assertEnv() {
   }
 }
 
+/* Helpers de envío (opcional / no-op en preview) */
+const SEND_DISABLED = (process.env.SEND_TELEGRAM === '0' || process.env.PUBLISH_PREVIEW_ONLY === '1');
+let send = null;
+if (!SEND_DISABLED) {
+  try { send = require('../send.js'); } catch(_) { /* ignore, fallback below */ }
+}
+if (!send) {
+  // no-op compatible: firma simple que devuelve ack
+  send = async function noopSend(/*...args*/) {
+    return { ok: true, dry: true, reason: 'send_disabled_or_missing' };
+  };
+}
 /* =============== CLIENTES =============== */
 let supabase = null; // __SANE_SUPABASE_INIT__
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // Helpers de envío (debes tener netlify/functions/send.js con LIVE FREE/VIP)
-let send = null;
-try { send = require('../send.js'); }
-catch {
-  try { send = require('../send.js'); }
-  catch (e) { throw new Error("No se pudo cargar send.js (helpers LIVE)"); }
+catch (e) { throw new Error("No se pudo cargar send.js (helpers LIVE)"); }
 }
 
 /* =============== Utils =============== */
