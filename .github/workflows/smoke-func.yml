@@ -2,9 +2,6 @@ name: Smoke Functions v2
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ "main" ]
-
 permissions:
   contents: read
   actions: write
