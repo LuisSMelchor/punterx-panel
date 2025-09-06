@@ -1,0 +1,11 @@
+name: EchoSecret
+on: { workflow_dispatch: {} }
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash
+        env: { CTRL: ${{ secrets.ECHO_TEST }} }
+        run: |
+          echo "[AF_DEBUG] CTRL bytes=$(printf '%s' "$CTRL" | wc -c)"
+          printf '%s' "$CTRL" | head -c1 | od -An -t x1 | tr -d ' \n' | xargs -I{} echo "[AF_DEBUG] CTRL first-byte-hex={}"
