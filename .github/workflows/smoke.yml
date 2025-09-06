@@ -11,8 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      SITE_BASE: ${{ secrets.SITE_BASE }}   # ej: https://punterx-panel-vip.netlify.app/.netlify/functions
-      DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }} # mismo que en Netlify (production)
+      SITE_BASE: ${{ secrets.SITE_BASE }}     # ej: https://punterx-panel-vip.netlify.app/.netlify/functions
+      DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }} # mismo valor que en Netlify (production)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
