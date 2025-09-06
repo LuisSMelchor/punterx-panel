@@ -20,12 +20,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show context
+      - name: Show context (raw vs trim)
         shell: bash
         run: |
+          set -euo pipefail
+          SB_RAW="${SITE_BASE:-}"
+          DT_RAW="${DEBUG_TOKEN:-}"
+          SB_TRIM="$(printf "%s" "$SB_RAW" | tr -d '\r\n')"
+          DT_TRIM="$(printf "%s" "$DT_RAW" | tr -d '\r\n')"
           echo "[AF_DEBUG] GITHUB_SHA=$GITHUB_SHA"
-          echo "[AF_DEBUG] SITE_BASE len=${#SITE_BASE}"
-          echo "[AF_DEBUG] DEBUG_TOKEN len=${#DEBUG_TOKEN}"
+          echo "[AF_DEBUG] SITE_BASE raw len=${#SB_RAW}  trim len=${#SB_TRIM}"
+          echo "[AF_DEBUG] DEBUG_TOKEN raw len=${#DT_RAW} trim len=${#DT_TRIM}"
 
       - name: Install jq & curl
         shell: bash
@@ -38,23 +43,21 @@ jobs:
           TOKEN_RAW: ${{ secrets.DEBUG_TOKEN }}
         run: |
           set -euo pipefail
-          BASE="${BASE:?missing SITE_BASE}"
-          TOKEN="$(printf "%s" "${TOKEN_RAW:?missing DEBUG_TOKEN}" | tr -d '\r\n')"
+          BASE_TRIM="$(printf "%s" "${BASE:-}" | tr -d '\r\n')"
+          TOKEN="$(printf "%s" "${TOKEN_RAW:-}" | tr -d '\r\n')"
 
-          echo "[AF_DEBUG] BASE=$BASE"
+          echo "[AF_DEBUG] BASE=$BASE_TRIM"
           echo "[AF_DEBUG] DEBUG_TOKEN len (trim) = ${#TOKEN}"
 
-          if [ -z "$TOKEN" ]; then
-            echo "::error::DEBUG_TOKEN vacío"; exit 1
-          fi
+          test -n "$BASE_TRIM" || { echo "::error::SITE_BASE vacío"; exit 1; }
+          test -n "$TOKEN"     || { echo "::error::DEBUG_TOKEN vacío"; exit 1; }
 
           pass=1
 
           smoke_inspect () {
-            local fn="$1"
-            local code
+            local fn="$1" code
             code=$(curl -sS -o "/tmp/${fn}_i.json" -w '%{http_code}' \
-              "$BASE/$fn?inspect=1&debug=1" \
+              "$BASE_TRIM/$fn?inspect=1&debug=1" \
               -H "x-debug: 1" -H "x-debug-token: $TOKEN")
             jq . "/tmp/${fn}_i.json" >/dev/null 2>&1 || true
             if [ "$code" = "200" ] && jq -e '.hasHandler==true' "/tmp/${fn}_i.json" >/dev/null 2>&1; then
@@ -65,10 +68,9 @@ jobs:
           }
 
           smoke_bypass () {
-            local fn="$1"
-            local code
+            local fn="$1" code
             code=$(curl -sS -o "/tmp/${fn}_b.json" -w '%{http_code}' \
-              "$BASE/$fn?bypass=1&debug=1" \
+              "$BASE_TRIM/$fn?bypass=1&debug=1" \
               -H "x-debug: 1" -H "x-debug-token: $TOKEN")
             echo "[AF_DEBUG] $fn bypass code=$code"
             jq . "/tmp/${fn}_b.json" || cat "/tmp/${fn}_b.json" || true
