@@ -38,7 +38,26 @@ exports.handler = async (event, context) => {
 
   // Carga diferida del impl real
   let impl;
+  
+  // [IMPL_RESOLVER_CLEAN]
   try {
+    const path = require('path');
+    const candidates = [
+      // dev local
+      path.join(__dirname, '_lib/autopick-vip-nuevo-impl.cjs'),
+      // layout netlify bundle
+      path.join(__dirname, 'netlify/functions/_lib/autopick-vip-nuevo-impl.cjs'),
+      // lambda task root
+      process.env.LAMBDA_TASK_ROOT ? path.join(process.env.LAMBDA_TASK_ROOT, 'netlify/functions/_lib/autopick-vip-nuevo-impl.cjs') : null,
+      // absolutos típicos en /var/task
+      '/var/task/netlify/functions/_lib/autopick-vip-nuevo-impl.cjs',
+      '/var/task/_lib/autopick-vip-nuevo-impl.cjs'
+    ].filter(Boolean);
+    for (const cand of candidates) {
+      try { impl = require(cand); if (impl) break; } catch(_) {}
+    }
+  } catch(_) {}
+try {
     const rq = eval('require');
     const path = rq('path');
     const fs = rq('fs');
@@ -75,40 +94,13 @@ exports.handler = async (event, context) => {
 
   // Delegar al handler del impl
   
-  // [IMPL_RESOLVER_V2] robust path resolver for impl
-  /* reuse predeclared 'impl' from wrapper (no redeclare) */
-  try {
-    const candidates = [
-      // Netlify empaquetado típico
-      path.join(__dirname, 'netlify/functions/_lib/autopick-vip-nuevo-impl.cjs'),
-      // Layout local (dev)
-      path.join(__dirname, '_lib/autopick-vip-nuevo-impl.cjs'),
-      // Legacy (mismo dir)
-      path.join(__dirname, 'autopick-vip-nuevo-impl.cjs'),
-      // Lambda root explícito
-      process.env.LAMBDA_TASK_ROOT ? path.join(process.env.LAMBDA_TASK_ROOT, 'netlify/functions/_lib/autopick-vip-nuevo-impl.cjs') : null,
-      process.env.LAMBDA_TASK_ROOT ? path.join(process.env.LAMBDA_TASK_ROOT, '_lib/autopick-vip-nuevo-impl.cjs') : null
-    ].filter(Boolean);
-
-    for (const c of candidates) {
-      try {
-        impl = require(c);
-        if (process.env.AF_DEBUG) console.log('[AF_DEBUG] impl resolved at', c);
-        break;
-      } catch (_) {}
-    }
-    if (!impl) throw new Error('impl not found in any candidate');
-  } catch(e) {
-    if (process.env.AF_DEBUG) console.log('[AF_DEBUG] impl resolver error:', (e && (e.stack||e.message)) || String(e));
-  }
-
-if (!impl || typeof impl.handler !== 'function') {
+  if (!impl || typeof impl.handler !== 'function') {
     return __json(200, { ok: false, fatal: true, stage: 'impl', error: 'impl.handler no encontrado' });
   }
   try {
     const res = await impl
   // [IMPL_RESOLVER_V1] robust path resolver for impl
-  let impl = null;
+  /* reuse predeclared impl */
   try {
     const path = require('path');
     const cand = [
