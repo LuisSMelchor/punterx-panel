@@ -8,6 +8,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "[AF_DEBUG] INLINE SITE_BASE bytes=$(printf '%s' "${{ secrets.SITE_BASE }}" | wc -c)"
-          echo "[AF_DEBUG] INLINE DEBUG_TOKEN bytes=$(printf '%s' "${{ secrets.DEBUG_TOKEN }}" | wc -c)"
-          echo "[AF_DEBUG] INLINE ECHO_TEST bytes=$(printf '%s' "${{ secrets.ECHO_TEST }}" | wc -c)"
+          sb_b=$(printf '%s' "${{ secrets.SITE_BASE }}" | wc -c)
+          dt_b=$(printf '%s' "${{ secrets.DEBUG_TOKEN }}" | wc -c)
+          ct_b=$(printf '%s' "${{ secrets.ECHO_TEST }}" | wc -c)
+          echo "[AF_DEBUG] INLINE SITE_BASE bytes=$sb_b"
+          echo "[AF_DEBUG] INLINE DEBUG_TOKEN bytes=$dt_b"
+          echo "[AF_DEBUG] INLINE ECHO_TEST bytes=$ct_b"
