@@ -131,8 +131,26 @@ exports.handler = async function(event, context){
 
   // 3) bypass (passthrough normalizado SIEMPRE JSON)
   if (("bypass" in q) && allowed) {
-    return await callImpl(event, context);
-  }
+  // Wrapper: ejecuta impl y re-map a 403 si body indica forbidden/auth
+  const res = await callImpl(event, context);
+  try {
+    const headers = Object.assign({ 'content-type':'application/json; charset=utf-8' }, (res && res.headers) || {});
+    const txt = (res && res.body != null) ? String(res.body) : '';
+    let obj = null;
+    try { obj = txt && txt.trim().startsWith('{') ? JSON.parse(txt) : null; } catch (_) { obj = null; }
+    const err   = String(obj && (obj.error ?? obj.raw ?? '')).toLowerCase();
+    const stage = String(obj && (obj.stage ?? '')).toLowerCase();
+    const reas  = String(obj && (obj.reason ?? '')).toLowerCase();
+    const isForbidden =
+      err === 'forbidden' ||
+      (obj && obj.ok === false && stage === 'auth') ||
+      (reas.includes('auth') || reas.includes('forbidden'));
+    if (isForbidden) {
+      return { statusCode: 403, headers, body: JSON.stringify(obj ?? {}) };
+    }
+  } catch (_){}
+  return res;
+}
 
   // 4) default -> 403 JSON
   return respond({ ok:false, error:'forbidden' }, 403);
