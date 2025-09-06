@@ -118,15 +118,17 @@ if (!SEND_DISABLED) {
   try {
     const rq = eval('require');
     send = rq('../send.js');
-  } catch (_) {}
+  } catch (_) {
+    // no-op: seguimos con stub
+  }
 }
 if (!send) {
+  // no-op compatible: firma simple que devuelve ack
   send = async function noopSend(/*...args*/) {
     return { ok: true, dry: true, reason: 'send_disabled_or_missing' };
   };
-};
-  };
 }
+
 /* =============== CLIENTES =============== */
 let supabase = null; // __SANE_SUPABASE_INIT__
 let openai = null;
