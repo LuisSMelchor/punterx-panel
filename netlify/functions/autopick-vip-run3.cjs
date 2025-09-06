@@ -88,9 +88,17 @@ return { statusCode: outStatus, headers, body: JSON.stringify(obj) };
     }
 
     // No es Netlify-style: si es objeto, pásalo; si es primitivo, booleanízalo
-    const payload = (res && typeof res === 'object') ? res : { ok: !!res };
-    return respond(payload, 200);
-  } catch (e) {
+const payload = (res && typeof res === 'object') ? res : { ok: !!res };
+// Normalización forbidden/auth -> 403
+let codeNL = 200;
+try {
+  const isForbidden =
+    (payload && (payload.error === 'forbidden' || payload.raw === 'Forbidden')) ||
+    (payload && payload.ok === false && String(payload.stage||'').toLowerCase() === 'auth');
+  if (isForbidden) codeNL = 403;
+} catch (_) {}
+return respond(payload, codeNL);
+} catch (e) {
     return respond({ ok:false, stage:'impl.call', error: (e && e.message) || String(e) }, 500);
   }
 }
