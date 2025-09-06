@@ -19,7 +19,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Show context (raw vs trim) + export
         shell: bash
         run: |
@@ -41,7 +40,6 @@ jobs:
             echo "SB_TRIM=$SB_TRIM"
             echo "DT_TRIM=$DT_TRIM"
           } >> "$GITHUB_ENV"
-
       - name: Install jq & curl
         shell: bash
         run: |
@@ -68,14 +66,12 @@ jobs:
             code=$(curl -sS -o "/tmp/${fn}_i.json" -w '%{http_code}' \
               "$BASE/$fn?inspect=1&debug=1" \
               -H "x-debug: 1" -H "x-debug-token: $TKN")
-
             if [ "$code" = "200" ] && jq -e '.hasHandler==true' </tmp/"${fn}"_i.json >/dev/null 2>&1; then
               echo "[AF_DEBUG] $fn inspect OK (200)"
             else
               echo "[AF_DEBUG] $fn inspect FAIL (code=$code)"; pass=0
               jq . "/tmp/${fn}_i.json" 2>/dev/null || cat "/tmp/${fn}_i.json" || true
             fi
-
             # bypass -> 403
             code=$(curl -sS -o "/tmp/${fn}_b.json" -w '%{http_code}' \
               "$BASE/$fn?bypass=1&debug=1" \
