@@ -15,6 +15,27 @@ const ODDS_API_BASE = process.env.ODDS_API_BASE || 'https://api.the-odds-api.com
 const SPORT_KEY     = process.env.ODDS_API_SPORT_KEY || 'soccer'; // p.ej. 'soccer' o 'soccer_epl'
 const MARKET_LIST   = process.env.ODDS_API_MARKETS   || 'h2h,totals,spreads'; // ajustar luego si hace falta
 const REGION        = process.env.ODDS_API_REGION    || 'eu'; // eu | uk | us | au
+
+
+
+try {
+
+
+  const LEAGUE_NAME = process.env.ODDS_LEAGUE_NAME || "";
+
+
+
+    if (g) SPORT_KEY = g;
+
+    if (process.env.LOG_VERBOSE === "1") {
+
+      console.log("[AF_DEBUG] fetch-odds: league→sport_key", { league: LEAGUE_NAME, sport_key: SPORT_KEY });
+
+    }
+
+
+} catch (_) { /* helper opcional: fallback limpio */ }
+
 const DATE_FROM_MIN = parseInt(process.env.WINDOW_FB_MIN_MIN || '45', 10); // ventana mínima (minutos)
 const DATE_TO_MIN   = parseInt(process.env.WINDOW_FB_MAX_MIN || '55', 10); // ventana máxima (minutos)
 
