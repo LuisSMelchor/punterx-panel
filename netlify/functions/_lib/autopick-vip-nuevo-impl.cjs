@@ -26,6 +26,23 @@ const { createLogger } = require('./_logger.cjs');
 const { resolveTeamsAndLeague } = require('./match-helper.cjs');
 const OpenAI = require('openai'); // __SANE_OAI_IMPORT__
 const { ensureSupabase } = require('./_supabase-client.cjs'); // __SANE_SUPABASE_IMPORT__
+// [SENTINEL_NEAR_PREFILTER]
+try {
+  const { fetchOddsEvents } = require("./fetch-odds.cjs");
+  const __pre = await fetchOddsEvents({ now: new Date() });
+  const __near_prefilter = (__pre?.events || []).slice(0, 10).map(e => {
+    const mins = e.ts ? Math.round((e.ts - Date.now())/60000) : null;
+    const home = e.home || "—", away = e.away || "—";
+    return { mins, label: `${home} vs ${away}` };
+  });
+  if (process.env.LOG_VERBOSE === "1" && __near_prefilter.length) {
+    console.log("[AF_DEBUG] near(prewindow)=", __near_prefilter);
+  }
+} catch(__e) {
+  if (process.env.LOG_VERBOSE === "1") {
+    console.log("[AF_DEBUG] near(prewindow) error:", __e?.message || String(__e));
+  }
+}
 
 // =============== ENV ===============
 const {
