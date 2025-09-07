@@ -27,7 +27,20 @@ try { __ai = require('./_lib/ai.cjs'); } catch (_) {}
 
 try { if (typeof global.callOpenAIOnce === 'undefined') global.callOpenAIOnce = callOpenAIOnce; } catch(e) {}
 
-exports.handler = async () => {
+exports.handler = async (event) => {
+    const q = (event && event.queryStringParameters) ? event.queryStringParameters : {};
+    const pick = (k)=> (process.env[k] ?? null);
+    const has  = (k)=> !!(process.env[k] && String(process.env[k]).length);
+
+    if (String(q.safe||"") === "1") {
+      const payload = {
+        TZ: pick("TZ"),
+        ODDS_API_REGION: pick("ODDS_API_REGION") || pick("ODDS_REGIONS"),
+        ODDS_API_MARKETS: pick("ODDS_API_MARKETS") || pick("ODDS_MARKETS"),
+        ODDS_API_KEY_SET: has("ODDS_API_KEY")
+      };
+      return { statusCode:200, headers:{"content-type":"application/json"}, body: JSON.stringify(payload) };
+    }
   const __send_report = (() => {
   const enabled = (String(process.env.SEND_ENABLED) === '1');
   const base = {
