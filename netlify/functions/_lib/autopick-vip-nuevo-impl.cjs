@@ -1,6 +1,4 @@
 // netlify/functions/autopick-vip-nuevo-impl.cjs
-let __matchNormalize=null; try { __matchNormalize = require("./match-normalize.cjs"); } catch(_) {}
-// netlify/functions/autopick-vip-nuevo-impl.cjs
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–55 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
 // + Corazonada IA integrada (helpers, cálculo, visualización y guardado en Supabase)
@@ -517,11 +515,6 @@ async function evaluateOddsEvent(oddsEvent, afLiveIndex){
   // 2) Enriquecer con API-FOOTBALL (match por nombres)
   const home = oddsEvent.home_team || "";
   const away = oddsEvent.away_team || "";
-    const normFn = (__matchNormalize && typeof __matchNormalize.normalizeTeam === "function") ? __matchNormalize.normalizeTeam : (s=>s);
-    const _home = normFn(home);
-    const _away = normFn(away);
-    const homeN = _home || home;
-    const awayN = _away || away;
   const key = `${home}||${away}`.toLowerCase();
   const fx = afLiveIndex.get(key);
   if (!fx) return; // sin minuto/score/fase, no seguimos
@@ -780,23 +773,6 @@ ok: false, reason:'oddsapi' }) };
     const eventos = await safeJson(resOdds) || [];
     resumen.recibidos = Array.isArray(eventos) ? eventos.length : 0;
     console.log(`ODDSAPI ok=true count=${resumen.recibidos} ms=${tOddsMs}`);
-// [SENTINEL_NEAR_PREFILTER]
-try {
-  const { fetchOddsEvents } = require("./fetch-odds.cjs");
-  const __pre = await fetchOddsEvents({ now: new Date() });
-  const __near_prefilter = (__pre?.events || []).slice(0, 10).map(e => {
-    const mins = e.ts ? Math.round((e.ts - Date.now())/60000) : null;
-    const home = e.home || "—", away = e.away || "—";
-    return { mins, label: ` vs ` };
-  });
-  if (process.env.LOG_VERBOSE === "1" && __near_prefilter.length) {
-    console.log("[AF_DEBUG] near(prewindow)=", __near_prefilter);
-  }
-} catch(__e) {
-  if (process.env.LOG_VERBOSE === "1") {
-    console.log("[AF_DEBUG] near(prewindow) error:", __e?.message || String(__e));
-  }
-}
 
     if (process.env.LOG_VERBOSE === '1') {
       const near = (Array.isArray(eventos) ? eventos : [])
@@ -805,16 +781,12 @@ try {
           const mins = Math.round((t - Date.now()) / 60000);
           const home = ev.home_team || (ev.teams && ev.teams.home && ev.teams.home.name) || '—';
           const away = ev.away_team || (ev.teams && ev.teams.away && ev.teams.away.name) || '—';
-          return { mins, label: ` vs ` };
+          return { mins, label: `${home} vs ${away}` };
         })
         .filter(x => Number.isFinite(x.mins))
         .sort((a,b) => a.mins - b.mins)
-// [SENTINEL_NEAR_USE_FINAL]
-const __near_source = (typeof __near_final !== 'undefined' && Array.isArray(__near_final) && __near_final.length)
-  ? __near_final
-  : near;
-      const __near8 = (Array.isArray(__near_source) ? __near_source : []).slice(0, 8);
-      __near8.forEach(n => console.log(`⏱️ ${n.mins}m → ${n.label}`));
+        .slice(0, 8);
+      near.forEach(n => console.log(`⏱️ ${n.mins}m → ${n.label}`));
     }
 
     // === 2) normalizar / filtrar ventana ===
@@ -867,24 +839,6 @@ const __near_source = (typeof __near_final !== 'undefined' && Array.isArray(__ne
           .filter(x => Number.isFinite(x.t) && x.t > Date.now())
           .map(x => ({ mins: Math.round((x.t - Date.now())/60000), label: `${x.home||'—'} vs ${x.away||'—'}` }))
           .sort((a,b) => a.mins - b.mins)[0];
-// [SENTINEL_NEAR_FINAL]
-let __near_final = near;
-try {
-  const { fetchOddsEvents } = require("./fetch-odds.cjs");
-  const __pre = await fetchOddsEvents({ now: new Date() });
-  const __alt = (__pre?.events || [])
-    .slice(0, 10)
-    .map(e => {
-      const mins = e.ts ? Math.round((e.ts - Date.now())/60000) : null;
-      const home = e.home || "—", away = e.away || "—";
-      return { mins, label: ` vs ` };
-    });
-  if (__alt.length > 0) __near_final = __alt;
-} catch(__e) {
-  /* silente en prod; visible solo en verbose */
-  if (process.env.LOG_VERBOSE === "1") console.log("[AF_DEBUG] near(final) prefilter error:", __e?.message || String(__e));
-}
-if (process.env.LOG_VERBOSE === "1") console.log("[AF_DEBUG] near(final)=", __near_final);
         if (nearest) console.log(`[ventana] Próximo fuera de rango: ~${nearest.mins}m → ${nearest.label}`);
       } catch(e) {}
       return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,

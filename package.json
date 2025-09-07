@@ -39,7 +39,8 @@
     "ci": "npm run -s ci:guard && npm run -s ci:unit && npm run -s ci:serve && npm run -s ci:dump && npm run -s ci:smoke",
     "ci:guard": "bash scripts/ci-no-hardcoded-entities.sh",
     "smoke": "BASE=\"https://punterx-panel-vip.netlify.app/.netlify/functions\" ./scripts/smoke-functions.sh",
-    "smoke:prod": "SMOKE_BASE_URL=https://punterx-panel-vip.netlify.app SMOKE_INCLUDE_RUN3=1 bash scripts/smoke-functions.sh"
+    "smoke:prod": "SMOKE_BASE_URL=https://punterx-panel-vip.netlify.app SMOKE_INCLUDE_RUN3=1 bash scripts/smoke-functions.sh",
+    "test:league-aliases": "node -e 'const {guessSportKeyFromLeague:g}=require(\"./netlify/functions/_lib/odds-helpers.cjs\"); const want=[[\"LaLiga EA Sports\",\"soccer_spain_la_liga\"],[\"La Liga EA Sports\",\"soccer_spain_la_liga\"],[\"EPL\",\"soccer_epl\"]]; let ok=true; for(const [inp,exp] of want){ const got=g(inp)||\"\"; const pass=(got===exp); console.log((pass?\"OK\":\"MISS\"), inp, \"=>\", got||\"(no match)\", \"expected:\", exp); if(!pass) ok=false; } if(!ok) console.log(\"(warn) faltan sinónimos en LEAGUE_MAP\");'"
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
