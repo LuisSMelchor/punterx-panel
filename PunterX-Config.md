@@ -59,3 +59,10 @@ Antes de crear un archivo o función nueva, verifica si existe una implementaci�
 - Los mensajes VIP podrán **evolucionar** para incluir: Top-3 bookies (con etiquetas/enlaces), valor de momio (decimal/americano/fraccional), límites de stake, rango de EV y notas de riesgo.  
 - El formato final se revisará antes del go-live; versionar plantillas y reflejar cambios en la **gestión de usuarios** (trail/premium, caducidad, CTA de upgrade, multi-idioma).  
 - Mantener compatibilidad con `parse_mode: "HTML"` y evitar romper el layout en Telegram.
+
+## Flujo de matching → generación de pick
+- (1) **OddsAPI**: obtener *toda* la agenda global de partidos apostables + mercados/cuotas base.
+- (2) **APISport**: enriquecer cada partido con alineaciones confirmadas, árbitro, lesiones/sanciones, xG, tiros/esquinas, probables goleadores, clima, forma, etc.
+- (3) **Matching**: normalización canónica (equipos/liga/país/fecha) + comparador (tokens/Jaccard) dentro de la ventana **T-40 a T-55 min** antes del inicio (esperando alineaciones) → `decision.same=true`.
+- (4) **Generación del pick**: aplicar criterios propios (EV, límites de stake, riesgo) y producir **apuesta directa** + **apuestas sugeridas** (amarillas, corners, goleadores, hándicaps) apoyadas en señales de APISport.
+- (5) **Maximizar valor de APIs de pago**: cache/dedupe agresivo, uso de todos los campos disponibles. Si faltan alineaciones o señales críticas, **aplazar o descartar** el pick.
