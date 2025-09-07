@@ -1,6 +1,28 @@
 // netlify/functions/_lib/match-compare.cjs
 'use strict';
 
+
+/* __PX_COERCE_STARTMS__ :: coacciona fecha a ms desde start_ts|commence|kickoff (ISO o num) */
+function __pxCoerceStartMs(o){
+  if (!o || typeof o!=='object') return;
+  let v = (o.start_ts ?? o.commence ?? o.kickoff ?? null);
+  if (v==null) return;
+  let ms = null;
+  if (typeof v==='string') {
+    // intenta ISO; si no, castea numérico
+    const parsed = Date.parse(v);
+    if (!Number.isNaN(parsed)) { ms = parsed; }
+    else {
+      const n = Number(v);
+      if (Number.isFinite(n)) ms = n;
+    }
+  } else if (typeof v==='number') {
+    ms = v;
+  }
+  if (ms==null || !Number.isFinite(ms)) return;
+  if (ms < 1e12) ms *= 1000;         // segundos → ms
+  o.start_ts = ms;
+}
 const Lib = require('./match-normalize.cjs');
 const { canonicalTeamName, canonicalLeagueName, normalizeFixture } = Lib;
 
@@ -54,6 +76,7 @@ function countryMatch(cA, cB) {
 }
 
 function compareFixtures(A, B) {
+  try { __pxCoerceStartMs(A); __pxCoerceStartMs(B); } catch {}
   const na = normalizeFixture(A);
   const nb = normalizeFixture(B);
 
