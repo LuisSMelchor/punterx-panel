@@ -3,7 +3,7 @@
 
 
 /* __PX_COERCE_STARTMS__ :: coacciona fecha a ms desde start_ts|commence|kickoff (ISO o num) */
-function __pxCoerceStartMs(o){ try{ if(process.env.DEBUG_MATCH_NORM){ console.debug("[coerce.in]", JSON.stringify(o)); } }catch{};
+function __pxCoerceStartMs(o){ try{ if(process.env.DEBUG_MATCH_NORM){ console.log("[coerce.in]", JSON.stringify(o)); } }catch{};
   if (!o || typeof o!=='object') return;
   let v = (o.start_ts ?? o.commence ?? o.kickoff ?? null);
   if (v==null) return;
@@ -21,7 +21,7 @@ function __pxCoerceStartMs(o){ try{ if(process.env.DEBUG_MATCH_NORM){ console.de
   }
   if (ms==null || !Number.isFinite(ms)) return;
   if (ms < 1e12) ms *= 1000;         // segundos → ms
-  o.start_ts=ms; try{ if(process.env.DEBUG_MATCH_NORM){ console.debug("[coerce.out]", ms); } }catch{};
+  o.start_ts=ms; try{ if(process.env.DEBUG_MATCH_NORM){ console.log("[coerce.out]", ms); } }catch{};
 }
 const Lib = require('./match-normalize.cjs');
 const { canonicalTeamName, canonicalLeagueName, normalizeFixture } = Lib;
@@ -142,9 +142,15 @@ module.exports = { compareFixtures, decide };
     const mod = module.exports || exports || {};
     const orig = (mod.normalizeFixture || (typeof normalizeFixture==='function' ? normalizeFixture : null));
     if (typeof orig==='function') {
-      const wrapped = function(fx){ try { __pxCoerceStartMs(fx); } catch {} return orig.call(this, fx); };
+      const wrapped = function(fx){ try { __pxCoerceStartMs(fx); } catch {} 
+  const out = orig.call(this, fx) || {};
+  try { if (!out.start_ts && fx && fx.start_ts) { out.start_ts = new Date(fx.start_ts).toISOString(); } } catch {}
+  return out;
+} /* __PX_ENSURE_OUT_TS__ */;
       mod.normalizeFixture = wrapped;
       module.exports = mod;
     }
   } catch {}
 })();
+
+/* __PX_LOG_SWITCHED__ */
