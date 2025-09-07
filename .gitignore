@@ -31,3 +31,6 @@ netlify/functions.bak.*/
 *.funcbak.*
 *.bak.*
 *.bak
+netlify/functions/_lib/*.bak*
+netlify/functions/_lib/*lazy*
+scripts/smoke-functions.js.*[0-9]*
