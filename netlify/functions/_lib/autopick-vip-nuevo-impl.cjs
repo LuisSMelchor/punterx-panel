@@ -730,6 +730,21 @@ ok:true, skipped:true, reason:'dist_lock' }) };
 
     // === 1) OddsAPI ===
     // [SENTINEL_FETCH_ODDS_WIRED]
+    // [SENTINEL_FETCH_ODDS_SAMPLE]
+    try {
+      const { fetchOddsEvents } = require("./fetch-odds.cjs");
+      const __pre = await fetchOddsEvents({ now: new Date() });
+      if (process.env.LOG_VERBOSE === "1") {
+        console.log("[AF_DEBUG] prewindow odds count=", __pre?.count || 0);
+        const __s = (__pre?.events || []).slice(0, 3).map(e => {
+          const mins = e.ts ? Math.round((e.ts - Date.now())/60000) : null;
+          return { mins, league: e.league, label: (e.home||"?") + " vs " + (e.away||"?") };
+        });
+        if (__s.length) console.log("[AF_DEBUG] prewindow sample=", __s);
+      }
+    } catch(__e) {
+      if (process.env.LOG_VERBOSE === "1") console.log("[AF_DEBUG] prewindow odds error:", __e?.message || String(__e));
+    }
     try {
       const { fetchOddsEvents } = require("./fetch-odds.cjs");
       const __pre = await fetchOddsEvents({ now: new Date() });

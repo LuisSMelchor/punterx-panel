@@ -38,7 +38,8 @@
     "ci:smoke": "bash scripts/smoke-resolveEvt.sh",
     "ci": "npm run -s ci:guard && npm run -s ci:unit && npm run -s ci:serve && npm run -s ci:dump && npm run -s ci:smoke",
     "ci:guard": "bash scripts/ci-no-hardcoded-entities.sh",
-    "smoke": "BASE=\"https://punterx-panel-vip.netlify.app/.netlify/functions\" ./scripts/smoke-functions.sh"
+    "smoke": "BASE=\"https://punterx-panel-vip.netlify.app/.netlify/functions\" ./scripts/smoke-functions.sh",
+    "smoke:prod": "SMOKE_BASE_URL=https://punterx-panel-vip.netlify.app SMOKE_INCLUDE_RUN3=1 bash scripts/smoke-functions.sh"
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",

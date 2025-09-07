@@ -1,0 +1,8 @@
+{
+  "home": "Liverpool",
+  "away": "Chelsea",
+  "league": "Premier League",
+  "country": "ENG",
+  "start_ts": "2025-09-08T19:00:00Z",
+  "odds": { "1x2": { "home": 1.9, "draw": 3.6, "away": 3.8 } }
+}
