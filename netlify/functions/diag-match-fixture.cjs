@@ -61,5 +61,13 @@ exports.handler = async (event) => {
   if (qbool(qs.debug)) out.debug = { team_stopwords_size: TEAM_STOPWORDS.size };
   out.ok = true;
   out.source = source;
+  
+/* __PX_FX_RETURN__ :: devolver normalizado (coacción commence/kickoff→start_ts) */
+{
+  const out = normalizeFixture(payload || {});
+  // conserva flags útiles
+  try { out.ok = true; out.source = source; } catch {}
   return __json(200, out);
+}
+
 };
