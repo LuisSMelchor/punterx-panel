@@ -122,6 +122,19 @@ function decide(score, parts, opts = {}) {
 }
 
 module.exports = { compareFixtures, decide };
+/* __PX_EXPORT_NORM_FORCE__ :: forzar export normalizeFixture con coacción previa */
+(function(){
+  try {
+    const Lib = (typeof loadLib==='function') ? loadLib() : null;
+    const base = (Lib && typeof Lib.normalizeFixture==='function') ? Lib.normalizeFixture : null;
+    if (base && (!module.exports.normalizeFixture || !module.exports.normalizeFixture.__px_forced)){
+      function __pxForcedNormalize(fx){ try{ __pxCoerceStartMs(fx); }catch{}; return base(fx); }
+      __pxForcedNormalize.__px_forced = true;
+      module.exports.normalizeFixture = __pxForcedNormalize;
+    }
+  } catch {}
+}());
+
 
 /* __PX_WRAP_NORMALIZE_FIXTURE__ */
 (function(){
