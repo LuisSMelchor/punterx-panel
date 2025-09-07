@@ -64,7 +64,6 @@ exports.handler = async (event) => {
   
 /* __PX_FX_RETURN__ :: devolver normalizado (coacción commence/kickoff→start_ts) */
 {
-  const out = normalizeFixture(payload || {});
   // conserva flags útiles
   try { out.ok = true; out.source = source; } catch {}
   
