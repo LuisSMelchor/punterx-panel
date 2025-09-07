@@ -856,6 +856,24 @@ try {
           .filter(x => Number.isFinite(x.t) && x.t > Date.now())
           .map(x => ({ mins: Math.round((x.t - Date.now())/60000), label: `${x.home||'—'} vs ${x.away||'—'}` }))
           .sort((a,b) => a.mins - b.mins)[0];
+// [SENTINEL_NEAR_FINAL]
+let __near_final = near;
+try {
+  const { fetchOddsEvents } = require("./fetch-odds.cjs");
+  const __pre = await fetchOddsEvents({ now: new Date() });
+  const __alt = (__pre?.events || [])
+    .slice(0, 10)
+    .map(e => {
+      const mins = e.ts ? Math.round((e.ts - Date.now())/60000) : null;
+      const home = e.home || "—", away = e.away || "—";
+      return { mins, label: `${home} vs ${away}` };
+    });
+  if (__alt.length > 0) __near_final = __alt;
+} catch(__e) {
+  /* silente en prod; visible solo en verbose */
+  if (process.env.LOG_VERBOSE === "1") console.log("[AF_DEBUG] near(final) prefilter error:", __e?.message || String(__e));
+}
+if (process.env.LOG_VERBOSE === "1") console.log("[AF_DEBUG] near(final)=", __near_final);
         if (nearest) console.log(`[ventana] Próximo fuera de rango: ~${nearest.mins}m → ${nearest.label}`);
       } catch(e) {}
       return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
