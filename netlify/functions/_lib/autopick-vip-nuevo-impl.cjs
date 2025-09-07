@@ -729,6 +729,16 @@ ok:true, skipped:true, reason:'dist_lock' }) };
     }
 
     // === 1) OddsAPI ===
+    // [SENTINEL_FETCH_ODDS_WIRED]
+    try {
+      const { fetchOddsEvents } = require("./fetch-odds.cjs");
+      const __pre = await fetchOddsEvents({ now: new Date() });
+      if (process.env.LOG_VERBOSE === "1") {
+        console.log("[AF_DEBUG] prewindow odds count=", __pre?.count || 0);
+      }
+    } catch(__e) {
+      if (process.env.LOG_VERBOSE === "1") console.log("[AF_DEBUG] prewindow odds error:", __e?.message || String(__e));
+    }
     const base = 'https://api.the-odds-api.com/v4/sports/' + SPORT_KEY + '/odds';
     const url =
       base +
