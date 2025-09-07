@@ -38,17 +38,29 @@ exports.handler = async (event, context) => {
 
   // Carga diferida del impl real
   let impl;
-  try {
-    const rq = eval('require');
-    const path = rq('path');
-    const fs = rq('fs');
-    let implPath = path.join(__dirname, '_lib/autopick-vip-nuevo-impl.cjs');
-    if (!fs.existsSync(implPath) && process.env.LAMBDA_TASK_ROOT) {
-      const alt = path.join(process.env.LAMBDA_TASK_ROOT, 'netlify/functions', '_lib/autopick-vip-nuevo-impl.cjs');
-      if (fs.existsSync(alt)) implPath = alt;
-    }
-    impl = rq(implPath);
-  } catch (e) {
+try {
+  const rq = eval('require');
+  const p = rq('path');
+  const fsx = rq('fs');
+
+  const candidates = [];
+  const implRel = '_lib/autopick-vip-nuevo-impl.cjs';
+
+  // __dirname/_lib
+  candidates.push(p.join(__dirname, implRel));
+  // __dirname/netlify/functions/_lib
+  candidates.push(p.join(__dirname, 'netlify/functions', implRel));
+  // LAMBDA_TASK_ROOT/_lib
+  if (process.env.LAMBDA_TASK_ROOT) {
+    candidates.push(p.join(process.env.LAMBDA_TASK_ROOT, '_lib/autopick-vip-nuevo-impl.cjs'));
+    // LAMBDA_TASK_ROOT/netlify/functions/_lib
+    candidates.push(p.join(process.env.LAMBDA_TASK_ROOT, 'netlify/functions', implRel));
+  }
+
+  let implPath = candidates.find(fsx.existsSync);
+  if (!implPath) throw new Error('impl not found in: ' + JSON.stringify(candidates));
+  impl = rq(implPath);
+} catch (e) {
     if (debug) console.log('[AF_DEBUG] require impl error:', e && (e.message || e));
     return __json(200, { ok: false, fatal: true, stage: 'require(impl)', error: (e && e.message) || String(e) });
   }
