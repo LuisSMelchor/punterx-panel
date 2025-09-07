@@ -122,3 +122,16 @@ function decide(score, parts, opts = {}) {
 }
 
 module.exports = { compareFixtures, decide };
+
+/* __PX_WRAP_NORMALIZE_FIXTURE__ */
+(function(){
+  try {
+    const mod = module.exports || exports || {};
+    const orig = (mod.normalizeFixture || (typeof normalizeFixture==='function' ? normalizeFixture : null));
+    if (typeof orig==='function') {
+      const wrapped = function(fx){ try { __pxCoerceStartMs(fx); } catch {} return orig.call(this, fx); };
+      mod.normalizeFixture = wrapped;
+      module.exports = mod;
+    }
+  } catch {}
+})();
