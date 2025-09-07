@@ -623,7 +623,12 @@ ok:false, stage:"early-ping-error", err: String(e && (e.message || e)) }) };
   try {
     const raw = (event && event.headers) ? event.headers : {};
     // normaliza a minúsculas para acceso seguro
-    for (const k in raw) headers[k.toLowerCase()] = h[k];
+    for (const k in raw) {
+  try {
+    const v = raw[k];
+    headers[k.toLowerCase()] = Array.isArray(v) ? v[0] : v;
+  } catch {}
+}
     const q = (event && event.queryStringParameters) ? event.queryStringParameters : {};
     debug = (q.debug === '1') || (headers['x-debug'] === '1');
   } catch (e) {

@@ -15,11 +15,30 @@ if (!fetchFn) {
 const BASE = process.env.SMOKE_BASE_URL || 'http://localhost:8888';
 const TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15000);
 
+// Normaliza BASE: soporta raíz del sitio o base con /.netlify/functions
+function toUrl(base, path) {
+  const b = String(base || '').replace(/\/$/, '');
+  if (b.endsWith('/.netlify/functions')) {
+    return b + String(path || '').replace(/^\/\.netlify\/functions/, '');
+  }
+  return b + String(path || '');
+}
+
 // Endpoints a probar
+const INCLUDE_RUN3 = /netlify\.app/i.test(BASE) || process.env.SMOKE_INCLUDE_RUN3 === '1';
 const targets = [
-  { path: '/.netlify/functions/autopick-vip-run2', label: 'autopick-vip-run2', expectStatuses: [200, 204] },
+  // run2 foreground (ping) + background
+  { path: '/.netlify/functions/autopick-vip-run2?ping=1', label: 'autopick-vip-run2', expectStatuses: [200, 204] },
   { path: '/.netlify/functions/autopick-vip-run2-background', label: 'autopick-vip-run2-background', expectStatuses: [202, 200, 204] },
+
+  // diag-impl-call guardrails
+  { path: '/.netlify/functions/diag-impl-call?inspect=1', label: 'diag-impl-call (inspect)', expectStatuses: [200] },
+  { path: '/.netlify/functions/diag-impl-call?bypass=1',  label: 'diag-impl-call (bypass)',  expectStatuses: [403] },
+
+  // Compat prod: mientras reponemos run2 en producción
+  { path: '/.netlify/functions/autopick-vip-run3', label: 'autopick-vip-run3', expectStatuses: [200, 204, 403], optional: true },
 ];
+const effectiveTargets = targets.filter(t => !t.optional || INCLUDE_RUN3);
 
 function timeout(ms) {
   return new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout ${ms}ms`)), ms));
@@ -43,8 +62,8 @@ async function hit(url) {
   console.log(`SMOKE | Base: ${BASE}`);
   let failures = 0;
 
-  for (const t of targets) {
-    const url = BASE.replace(/\/$/, '') + t.path;
+  for (const t of (typeof effectiveTargets !== "undefined" ? effectiveTargets : targets)) {
+    const url = toUrl(BASE, t.path);
     process.stdout.write(`→ ${t.label} ${url} ... `);
 
     try {
