@@ -1,4 +1,5 @@
 // netlify/functions/autopick-vip-nuevo-impl.cjs
+// netlify/functions/autopick-vip-nuevo-impl.cjs
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–55 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
 // + Corazonada IA integrada (helpers, cálculo, visualización y guardado en Supabase)
@@ -806,8 +807,8 @@ try {
 const __near_source = (typeof __near_final !== 'undefined' && Array.isArray(__near_final) && __near_final.length)
   ? __near_final
   : near;
-        .slice(0, 8);
-      __near_source.forEach(n => console.log(`⏱️ ${n.mins}m → ${n.label}`));
+      const __near8 = (Array.isArray(__near_source) ? __near_source : []).slice(0, 8);
+      __near8.forEach(n => console.log(`⏱️ ${n.mins}m → ${n.label}`));
     }
 
     // === 2) normalizar / filtrar ventana ===
