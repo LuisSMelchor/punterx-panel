@@ -35,25 +35,102 @@ try {
     const away = (q.away || "").trim();
     const kickoff = (q.commence || "").trim();
 
-    const sport = (q.sport && String(q.sport).trim()) || guessSportKeyFromLeague(league);
-    if (process.env.LOG_VERBOSE === "1") console.log("[AF_DEBUG] diag-odds-events sport=", sport);
-    if (!process.env.ODDS_API_KEY || !sport) {
-      return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ send_report: __send_report,
-sport, hasKey: !!process.env.ODDS_API_KEY, events_len: 0, sample: null })};
-    }
+    // Parametrización auxiliar
+const meta = String(q.meta || "") === "1";
 
-    const url = `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(sport)}/events?apiKey=${encodeURIComponent(process.env.ODDS_API_KEY)}&dateFormat=iso`;
-    const arr = await _get(url);
-      if (String(q.raw||"")==="1") {
-        const out = Array.isArray(arr) ? arr : [];
-        return { statusCode:200, headers:{"content-type":"application/json"}, body: JSON.stringify(out) };
-      }
-    return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+// Resolver sport: query -> league helper -> (opcional) fallback env
+let sport =
+  (q.sport && String(q.sport).trim()) ||
+  guessSportKeyFromLeague(league) ||
+  "";
+if (!sport && String(q.fallback || "") === "1") {
+  sport = String(process.env.ODDS_SPORT_KEY || "");
+}
+
+if (process.env.LOG_VERBOSE === "1") {
+  console.log("[AF_DEBUG] diag-odds-events sport=", sport);
+}
+
+// Validaciones duras y consistentes con diag
+if (!process.env.ODDS_API_KEY) {
+  return {
+    statusCode: 200,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
       send_report: __send_report,
-sport, hasKey: !!process.env.ODDS_API_KEY,
-      events_len: Array.isArray(arr) ? arr.length : 0,
-      first: Array.isArray(arr) ? arr.slice(0,3) : null
-    }, null, 2) };
+      sport: sport || null,
+      hasKey: !!process.env.ODDS_API_KEY,
+      events_len: 0,
+      sample: null,
+      error: "missing_odds_key"
+    })
+  };
+}
+
+if (!sport) {
+  return {
+    statusCode: 400,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      send_report: __send_report,
+      error: "missing_sport",
+      hint: "pass ?sport=<odds_key> or ?league=<name>"
+    })
+  };
+}
+
+// Fetch de eventos
+const url = `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(
+  sport
+)}/events?apiKey=${encodeURIComponent(
+  process.env.ODDS_API_KEY
+)}&dateFormat=iso`;
+const arr = await _get(url);
+const events = Array.isArray(arr) ? arr : [];
+
+// meta=1 => objeto con metadata SIEMPRE
+if (meta) {
+  return {
+    statusCode: 200,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      send_report: __send_report,
+      sport,
+      hasKey: !!process.env.ODDS_API_KEY,
+      len: events.length,
+      sample: events.slice(0, 3),
+      events
+    })
+  };
+}
+
+// raw=1 (sin meta) => array puro
+if (String(q.raw || "") === "1") {
+  return {
+    statusCode: 200,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(events)
+  };
+}
+
+// Respuesta compacta por defecto (compat)
+return {
+  statusCode: 200,
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify(
+    {
+      send_report: __send_report,
+      sport,
+      hasKey: !!process.env.ODDS_API_KEY,
+      events_len: events.length,
+      first: events.slice(0, 3)
+    },
+    null,
+    2
+  )
+};
+// FIN bloque patch
+
   } catch (e) {
     return { statusCode: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ send_report: __send_report,
 error: e?.message || String(e) }) };
