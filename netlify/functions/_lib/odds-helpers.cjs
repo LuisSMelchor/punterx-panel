@@ -63,21 +63,6 @@ const LEAGUE_MAP = new Map([
 ]);
 
 function guessSportKeyFromLeague(league='') {
-// __PX_ALIAS_INJECT__ (no romper API): normaliza alias sin cambiar firma ni contratos
-try {
-  const raw = (league||'').toString().trim();
-  const low = raw.toLowerCase();
-  const alias = new Map([
-    // España
-    ['laliga ea sports','laliga'],
-    ['la liga ea sports','laliga'],
-    // Inglaterra
-    ['epl','premier league'],
-    ['english prem','premier league'],
-  ]);
-  if (alias.has(low)) league = alias.get(low);
-} catch(_) {}
-
   return LEAGUE_MAP.get(_norm(league)) || null;
 }
 
