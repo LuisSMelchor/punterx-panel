@@ -41,6 +41,9 @@ function teamLikeMatch(evt, home, away) {
 
 // Mapa rápido de ligas → sport_key
 const LEAGUE_MAP = new Map([
+  ['laliga ea sports','soccer_spain_la_liga'],
+  ['la liga ea sports','soccer_spain_la_liga'],
+  ['epl','soccer_epl'],
   ['la liga', 'soccer_spain_la_liga'],
   ['laliga', 'soccer_spain_la_liga'],
   ['spain la liga', 'soccer_spain_la_liga'],
