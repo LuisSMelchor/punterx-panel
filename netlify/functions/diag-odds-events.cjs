@@ -30,12 +30,13 @@ exports.handler = async (event) => {
 })();
 try {
     const q = event?.queryStringParameters || {};
-    const league = q.league || 'Major League Soccer';
-    const home = q.home || 'Charlotte FC';
-    const away = q.away || 'New York Red Bulls';
-    const kickoff = q.commence || new Date(Date.now()+6*60*60*1000).toISOString();
+    const league = (q.league || "").trim();
+    const home = (q.home || "").trim();
+    const away = (q.away || "").trim();
+    const kickoff = (q.commence || "").trim();
 
-    const sport = guessSportKeyFromLeague(league);
+    const sport = (q.sport && String(q.sport).trim()) || guessSportKeyFromLeague(league);
+    if (process.env.LOG_VERBOSE === "1") console.log("[AF_DEBUG] diag-odds-events sport=", sport);
     if (!process.env.ODDS_API_KEY || !sport) {
       return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ send_report: __send_report,
 sport, hasKey: !!process.env.ODDS_API_KEY, events_len: 0, sample: null })};
@@ -43,6 +44,10 @@ sport, hasKey: !!process.env.ODDS_API_KEY, events_len: 0, sample: null })};
 
     const url = `https://api.the-odds-api.com/v4/sports/${encodeURIComponent(sport)}/events?apiKey=${encodeURIComponent(process.env.ODDS_API_KEY)}&dateFormat=iso`;
     const arr = await _get(url);
+      if (String(q.raw||"")==="1") {
+        const out = Array.isArray(arr) ? arr : [];
+        return { statusCode:200, headers:{"content-type":"application/json"}, body: JSON.stringify(out) };
+      }
     return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({
       send_report: __send_report,
 sport, hasKey: !!process.env.ODDS_API_KEY,
