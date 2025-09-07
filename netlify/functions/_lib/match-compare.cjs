@@ -3,7 +3,7 @@
 
 
 /* __PX_COERCE_STARTMS__ :: coacciona fecha a ms desde start_ts|commence|kickoff (ISO o num) */
-function __pxCoerceStartMs(o){
+function __pxCoerceStartMs(o){ try{ if(process.env.DEBUG_MATCH_NORM){ console.debug("[coerce.in]", JSON.stringify(o)); } }catch{};
   if (!o || typeof o!=='object') return;
   let v = (o.start_ts ?? o.commence ?? o.kickoff ?? null);
   if (v==null) return;
@@ -21,7 +21,7 @@ function __pxCoerceStartMs(o){
   }
   if (ms==null || !Number.isFinite(ms)) return;
   if (ms < 1e12) ms *= 1000;         // segundos → ms
-  o.start_ts = ms;
+  o.start_ts=ms; try{ if(process.env.DEBUG_MATCH_NORM){ console.debug("[coerce.out]", ms); } }catch{};
 }
 const Lib = require('./match-normalize.cjs');
 const { canonicalTeamName, canonicalLeagueName, normalizeFixture } = Lib;
