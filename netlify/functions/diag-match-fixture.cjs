@@ -67,7 +67,14 @@ exports.handler = async (event) => {
   const out = normalizeFixture(payload || {});
   // conserva flags útiles
   try { out.ok = true; out.source = source; } catch {}
+  
+/* __PX_FORCE_LIB_NORM__ :: usar normalizeFixture exportado (commence/kickoff→start_ts; sec→ms) */
+{
+  const out = normalizeFixture(payload || {});
+  try { out.ok = true; out.source = source; } catch {}
   return __json(200, out);
+}
+
 }
 
 };
