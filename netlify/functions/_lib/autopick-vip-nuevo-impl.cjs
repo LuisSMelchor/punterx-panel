@@ -1,4 +1,5 @@
 // netlify/functions/autopick-vip-nuevo-impl.cjs
+let __matchNormalize=null; try { __matchNormalize = require("./match-normalize.cjs"); } catch(_) {}
 // netlify/functions/autopick-vip-nuevo-impl.cjs
 // PunterX · Autopick v4 — Cobertura mundial fútbol con ventana 45–55 (fallback 35–70), backpressure,
 // modelo OpenAI 5 con fallback y reintento, guardrail inteligente para picks inválidos.
@@ -516,6 +517,11 @@ async function evaluateOddsEvent(oddsEvent, afLiveIndex){
   // 2) Enriquecer con API-FOOTBALL (match por nombres)
   const home = oddsEvent.home_team || "";
   const away = oddsEvent.away_team || "";
+    const normFn = (__matchNormalize && typeof __matchNormalize.normalizeTeam === "function") ? __matchNormalize.normalizeTeam : (s=>s);
+    const _home = normFn(home);
+    const _away = normFn(away);
+    const homeN = _home || home;
+    const awayN = _away || away;
   const key = `${home}||${away}`.toLowerCase();
   const fx = afLiveIndex.get(key);
   if (!fx) return; // sin minuto/score/fase, no seguimos
@@ -781,7 +787,7 @@ try {
   const __near_prefilter = (__pre?.events || []).slice(0, 10).map(e => {
     const mins = e.ts ? Math.round((e.ts - Date.now())/60000) : null;
     const home = e.home || "—", away = e.away || "—";
-    return { mins, label: `${home} vs ${away}` };
+    return { mins, label: ` vs ` };
   });
   if (process.env.LOG_VERBOSE === "1" && __near_prefilter.length) {
     console.log("[AF_DEBUG] near(prewindow)=", __near_prefilter);
@@ -799,7 +805,7 @@ try {
           const mins = Math.round((t - Date.now()) / 60000);
           const home = ev.home_team || (ev.teams && ev.teams.home && ev.teams.home.name) || '—';
           const away = ev.away_team || (ev.teams && ev.teams.away && ev.teams.away.name) || '—';
-          return { mins, label: `${home} vs ${away}` };
+          return { mins, label: ` vs ` };
         })
         .filter(x => Number.isFinite(x.mins))
         .sort((a,b) => a.mins - b.mins)
@@ -871,7 +877,7 @@ try {
     .map(e => {
       const mins = e.ts ? Math.round((e.ts - Date.now())/60000) : null;
       const home = e.home || "—", away = e.away || "—";
-      return { mins, label: `${home} vs ${away}` };
+      return { mins, label: ` vs ` };
     });
   if (__alt.length > 0) __near_final = __alt;
 } catch(__e) {
