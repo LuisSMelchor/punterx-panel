@@ -802,8 +802,12 @@ try {
         })
         .filter(x => Number.isFinite(x.mins))
         .sort((a,b) => a.mins - b.mins)
+// [SENTINEL_NEAR_USE_FINAL]
+const __near_source = (typeof __near_final !== 'undefined' && Array.isArray(__near_final) && __near_final.length)
+  ? __near_final
+  : near;
         .slice(0, 8);
-      near.forEach(n => console.log(`⏱️ ${n.mins}m → ${n.label}`));
+      __near_source.forEach(n => console.log(`⏱️ ${n.mins}m → ${n.label}`));
     }
 
     // === 2) normalizar / filtrar ventana ===
