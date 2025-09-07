@@ -1,6 +1,10 @@
 // netlify/functions/_lib/af-resolver.cjs
 'use strict';
 
+
+// [AF_SENTINEL_DBG_V1]
+const __AF_DBG__ = !!process.env.AF_DEBUG;
+const dlog = (...xs)=>{ if (__AF_DBG__) dlog('[AF_DEBUG]', ...xs); };
 /**
  * Resolución de IDs contra API-FOOTBALL sin hardcodes:
  * - Liga/temporada vía /leagues?search=
@@ -72,7 +76,7 @@ async function afFetch(pathAndQuery) {
   let j = null;
   try { j = await res.json(); } catch { j = null; }
   const results = j?.results ?? (Array.isArray(j?.response) ? j.response.length : 0);
-  if (AF_DEBUG) console.log('[AF_DEBUG]', res.status, pathAndQuery, 'results=', results);
+  dlog('[AF_DEBUG]', res.status, pathAndQuery, 'results=', results);
   return { ok: res.ok, status: res.status, ...(j || {}), response: j?.response || [] };
 }
 
@@ -143,7 +147,7 @@ async function pickTeamId(_afApiIgnored, rawName, { leagueHint, commence } = {})
     const score = sim(name, tname);
     if (score > best.score) best = { id: it?.team?.id || null, score, name: tname };
   }
-  if (AF_DEBUG) console.log('[AF_DEBUG] pickTeamId', { leagueId, season, q: name, best });
+  dlog('[AF_DEBUG] pickTeamId', { leagueId, season, q: name, best });
 
   if (best.id && best.score >= SIM_THR) return best.id;
   return null;
@@ -166,7 +170,7 @@ async function resolveTeamsAndLeague(evt = {}, opts = {}) {
     const dayUTC = commence ? isoDay(commence) : null;
     const year = commence ? new Date(commence).getUTCFullYear() : null;
 
-    if (AF_DEBUG) console.log('[AF_DEBUG] resolve start', { home, away, leagueHint, dayUTC, SIM_THR });
+    dlog('[AF_DEBUG] resolve start', { home, away, leagueHint, dayUTC, SIM_THR });
 
     // Liga/temporada
     const { leagueId, leagueName, season } = await findLeagueSeason(leagueHint || null, year);
@@ -196,7 +200,7 @@ async function resolveTeamsAndLeague(evt = {}, opts = {}) {
           };
         }
       }
-      if (AF_DEBUG) console.log('[AF_DEBUG] fixtures scanned', { count: fChecked, best: best.score });
+      dlog('[AF_DEBUG] fixtures scanned', { count: fChecked, best: best.score });
 
       if (best.fixture_id && best.score >= SIM_THR) {
         fixturePick = best;
@@ -234,7 +238,7 @@ async function resolveTeamsAndLeague(evt = {}, opts = {}) {
       } : undefined
     };
 
-    if (AF_DEBUG) console.log('[AF_DEBUG] resolve done', { ok: out.ok, method: out.method, fixture_id: out.fixture_id, homeId: out.homeId, awayId: out.awayId });
+    dlog('[AF_DEBUG] resolve done', { ok: out.ok, method: out.method, fixture_id: out.fixture_id, homeId: out.homeId, awayId: out.awayId });
     return out;
   } catch (e) {
     if (AF_DEBUG) console.warn('[AF_DEBUG] resolver error', e?.message || e);

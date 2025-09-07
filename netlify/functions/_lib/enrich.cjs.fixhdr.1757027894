@@ -1,9 +1,5 @@
 'use strict';
 
-
-// [AF_SENTINEL_DBG_V1]
-const __AF_DBG__ = !!process.env.AF_DEBUG;
-const dlog = (...xs)=>{ if (__AF_DBG__) dlog('[AF_DEBUG]', ...xs); };
 // OddsAPI (real) - import tolerante
 let fetchOddsForFixture = null;
 try {
@@ -103,11 +99,11 @@ async function __fetchOddsForFixtureStub__ (/* fixture */) { return null; }
 async function _maybeFetchOdds(fixture) {
   if (!process.env.ODDS_API_KEY) return null;
   var __SPORT_KEY = (typeof __SPORT_KEY!=="undefined" && __SPORT_KEY) || (process.env.SPORT_KEY || process.env.ODDS_SPORT_KEY || "soccer_epl");
-  try { dlog("[ENRICH.sport]", __SPORT_KEY); } catch(_){ }
+  try { console.log("[ENRICH.sport]", __SPORT_KEY); } catch(_){ }
   if (typeof fetchOddsForFixture !== 'function') return null;
   try { return await fetchOddsForFixture(fixture); } catch { return null; }
-  try { dlog("[ENRICH.res]", (res && res.status) || res?.statusCode || "(no status)"); } catch(_){}
-  try { dlog("[ENRICH.res]", (res && res.status) || res?.statusCode || "(no status)"); } catch(_){}
+  try { console.log("[ENRICH.res]", (res && res.status) || res?.statusCode || "(no status)"); } catch(_){}
+  try { console.log("[ENRICH.res]", (res && res.status) || res?.statusCode || "(no status)"); } catch(_){}
 }
 
 async function enrichFixtureUsingOdds({ fixture, oddsRaw }) {
@@ -184,7 +180,7 @@ function composeOneShotPrompt(payload = {}) {
 
 /** exports ÚNICO **/
 /** shim: garantiza mercados_top3 desde fixture/oddsRaw **/
-async function ensureMarketsWithOddsAPI({ fixture = {}, oddsRaw = null, payload = {} } = {}) {
+/* dedup: removed ensureMarketsWithOddsAPI */ = {}) {
   // --- status guard: cuenta mercados antes ---
   payload = payload || {}; payload.meta = (payload.meta && typeof payload.meta==="object") ? payload.meta : {};
   payload.markets = (payload.markets && typeof payload.markets==="object") ? payload.markets : {};
@@ -194,12 +190,12 @@ async function ensureMarketsWithOddsAPI({ fixture = {}, oddsRaw = null, payload 
   try {
     const _k = String(process.env.ODDS_API_KEY||"");
     const _canon = String(process.env.ODDS_MARKETS_CANON||"");
-    dlog("[ENRICH.cfg] key=***"+_k.slice(-4)+" canon="+_canon);
+    console.log("[ENRICH.cfg] key=***"+_k.slice(-4)+" canon="+_canon);
   } catch(_) {}
   try {
     const _k = (process.env.ODDS_API_KEY||"");
     const _m = (process.env.ODDS_MARKETS_CANON||"");
-    dlog("[ENRICH.cfg] key=***" + _k.slice(-4) + " canon=" + _m);
+    console.log("[ENRICH.cfg] key=***" + _k.slice(-4) + " canon=" + _m);
   } catch(_) {}
   try {
     const enriched = await enrichFixtureUsingOdds({ fixture, oddsRaw });

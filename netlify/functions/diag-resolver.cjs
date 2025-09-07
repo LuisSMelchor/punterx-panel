@@ -1,41 +1,36 @@
-"use strict";
+'use strict';
+const af = require('./_lib/resolver-af.cjs');
 
 exports.handler = async (event) => {
-  // Reporte de envío protegido (sin ReferenceError por globals)
-  const enabled = String(process.env.SEND_ENABLED) === '1';
-  const sendBase = {
-    enabled,
-    results: (typeof send_report !== 'undefined' && send_report && Array.isArray(send_report.results))
-      ? send_report.results
-      : []
-  };
-  if (enabled && typeof message_vip  !== 'undefined' && message_vip  && !process.env.TG_VIP_CHAT_ID)  sendBase.missing_vip_id  = true;
-  if (enabled && typeof message_free !== 'undefined' && message_free && !process.env.TG_FREE_CHAT_ID) sendBase.missing_free_id = true;
+  try {
+    const qs = (event && event.queryStringParameters) || {};
+    const req = {
+      home: (qs.home || qs.h || '').trim(),
+      away: (qs.away || qs.a || '').trim(),
+      league_hint: (qs.league_hint || qs.l || '').trim(),
+      country_hint: (qs.country_hint || qs.c || '').trim(),
+      when_text: (qs.when_text || qs.d || '').trim()
+    };
+    const out = await (af && af.resolveTeamsAndLeague
+      ? af.resolveTeamsAndLeague(req, { verbose: 1 })
+      : Promise.resolve({}));
 
-  // ENV visibles para diagnóstico
-  const {
-    AF_DEBUG = 0,
-    AF_METRICS = 0,
-    MATCH_RESOLVE_CONFIDENCE = 0.80,
-    SIM_THR = 0.60,
-    TIME_PAD_MIN = 90,
-  } = process.env;
-
-  return {
-    statusCode: 200,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({
-      name: 'diag-resolver',
-      ok: true,
-      send_report: sendBase,
-      env: {
-        AF_DEBUG: Number(AF_DEBUG),
-        AF_METRICS: Number(AF_METRICS),
-        MATCH_RESOLVE_CONFIDENCE: Number(MATCH_RESOLVE_CONFIDENCE),
-        SIM_THR: Number(SIM_THR),
-        TIME_PAD_MIN: Number(TIME_PAD_MIN),
-      },
-      ts: new Date().toISOString(),
-    }),
-  };
+    return {
+      statusCode: 200,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({
+        fixture_id: out && (out.fixture_id || null),
+        league: out && (out.league || null),
+        country: out && (out.country || null),
+        when_text: out && (out.when_text || null),
+        _debug: out && out._debug ? out._debug : null
+      })
+    };
+  } catch (e) {
+    return {
+      statusCode: 500,
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+      body: String((e && e.stack) || (e && e.message) || e || 'internal error')
+    };
+  }
 };

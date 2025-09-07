@@ -37,7 +37,8 @@
     "ci:dump": "bash scripts/ci-make-dump.sh",
     "ci:smoke": "bash scripts/smoke-resolveEvt.sh",
     "ci": "npm run -s ci:guard && npm run -s ci:unit && npm run -s ci:serve && npm run -s ci:dump && npm run -s ci:smoke",
-    "ci:guard": "bash scripts/ci-no-hardcoded-entities.sh"
+    "ci:guard": "bash scripts/ci-no-hardcoded-entities.sh",
+    "smoke": "BASE=\"https://punterx-panel-vip.netlify.app/.netlify/functions\" ./scripts/smoke-functions.sh"
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",

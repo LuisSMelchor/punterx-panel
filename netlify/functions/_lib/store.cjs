@@ -1,11 +1,15 @@
 'use strict';
 
+
+// [AF_SENTINEL_DBG_V1]
+const __AF_DBG__ = !!process.env.AF_DEBUG;
+const dlog = (...xs)=>{ if (__AF_DBG__) dlog('[AF_DEBUG]', ...xs); };
 async function savePickToSupabase(row = {}) {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_KEY; // anon/service, según tu despliegue
   if (!url || !key) {
     if (Number(process.env.DEBUG_TRACE)) {
-      console.log('[STORE] faltan SUPABASE_URL/SUPABASE_KEY, skip');
+      dlog('[STORE] faltan SUPABASE_URL/SUPABASE_KEY, skip');
     }
     return { ok: false, reason: 'missing-env' };
   }

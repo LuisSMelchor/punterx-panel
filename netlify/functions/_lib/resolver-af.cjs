@@ -1,10 +1,14 @@
 "use strict";
+
+// [AF_SENTINEL_DBG_V1]
+const __AF_DBG__ = !!process.env.AF_DEBUG;
+const dlog = (...xs)=>{ if (__AF_DBG__) dlog('[AF_DEBUG]', ...xs); };
 /** Resolver AF genérico (sin listas fijas) */
 const _norm = require("./normalize.cjs");
 const AF_BASE = "https://v3.football.api-sports.io";
 
 // Logger controlado por AF_VERBOSE (1=on)
-const DBG = (...a)=>{ try{ if(Number(process.env.AF_VERBOSE ?? 0)) console.log('[AF_DEBUG]', ...a); }catch(_){} };
+const DBG = (...a)=>{ try{ if((Number(process.env.AF_VERBOSE ?? 0) || Number(process.env.AF_DEBUG ?? 0))) dlog('[AF_DEBUG]', ...a); }catch(_){} };
 
 const get = (o,p,d)=>{try{return p.split(".").reduce((x,k)=>(x??{})[k],o)}catch(_){return d}};
 const nz  = v => v!==undefined && v!==null && v!=="";
@@ -19,6 +23,18 @@ function scoreNameMatch(a,b){
   const Sb=new Set(B.split(/\s+/).filter(Boolean));
   const inter=[...Sa].filter(w=>Sb.has(w)).length;
   return inter ? Math.min(0.8, inter/Math.min(Sa.size,Sb.size)) : 0;
+}
+
+function _afIsBTeamName(name){
+  try{
+    const raw = String(name||'').toLowerCase();
+    const toks = String(process.env.AF_BTEAM_WORDS || 'B,II,U19,U20,U21,U23,Reserves,Castilla,B-Team,B Team')
+      .toLowerCase()
+      .split(/[,|]/)
+      .map(t => t.trim())
+      .filter(Boolean);
+    return toks.some(t => raw.includes(t));
+  }catch(_){ return false; }
 }
 async function afFetch(path, params, key){
   const url = new URL(AF_BASE + path);
@@ -79,16 +95,70 @@ async function findFixtureByDateAll({ dateISO, homeName, awayName, leagueHint, c
   const THR = Number(process.env.SIM_THR ?? 0.60);
   let best=null, bs=-1;
   for(const it of list){
-    const h = it?.teams?.home?.name || ""; const a = it?.teams?.away?.name || "";
-    const L = it?.league?.name || ""; const C = it?.league?.country || "";
-    const sH = scoreNameMatch(wantHome, h); const sA = scoreNameMatch(wantAway, a);
-    if (sH < THR || sA < THR) continue;
-    const sL = wantLeague?  scoreNameMatch(wantLeague,  L) : 0.5;
-    const sC = wantCountry? scoreNameMatch(wantCountry, C) : 0.5;
-    const s = sH*0.40 + sA*0.40 + sL*0.10 + sC*0.10;
-    if (s>bs){ best=it; bs=s; }
-  }
+  const h = it?.teams?.home?.name || "";
+  const a = it?.teams?.away?.name || "";
+  const L = it?.league?.name || "";
+  const C = it?.league?.country || "";
+
+  let sH = scoreNameMatch(wantHome, h);
+  let sA = scoreNameMatch(wantAway, a);
+
+  // Penalización filiales si el candidato parece filial y el buscado no
+  try{
+    const pen = Number(process.env.AF_BTEAM_PENALTY || 0);
+    if (pen > 0){
+      const isBHome   = _afIsBTeamName(h);
+      const isBAway   = _afIsBTeamName(a);
+      const wantHomeB = _afIsBTeamName(wantHome);
+      const wantAwayB = _afIsBTeamName(wantAway);
+      if (isBHome && !wantHomeB) sH = Math.max(0, sH - pen);
+      if (isBAway && !wantAwayB) sA = Math.max(0, sA - pen);
+    }
+  }catch(_){}
+
+  const sL = wantLeague  ? scoreNameMatch(wantLeague,  L) : 0.5;
+  const sC = wantCountry ? scoreNameMatch(wantCountry, C) : 0.5;
+
+  // Mínimos cuando hay hint explícito
+  const Lmin = Number(process.env.AF_LEAGUE_MIN_SIM || 0);
+  const Cmin = Number(process.env.AF_COUNTRY_MIN_SIM || 0);
+  if (wantLeague  && Lmin && sL < Lmin) continue;
+  if (wantCountry && Cmin && sC < Cmin) continue;
+
+  // Umbral general de nombres
+  if (sH < THR || sA < THR) continue;
+
+  const sTot = sH*0.40 + sA*0.40 + sL*0.10 + sC*0.10;
+  if (sTot>bs){ best=it; bs=sTot; }
+}
   if (verbose && best){ best.__match_debug = { mode:"dateAll", score:bs, thr:THR, wantHome, wantAway, wantLeague, wantCountry }; }
+  return best || null;
+}
+
+
+async function findFixtureByH2H({ dateISO, homeId, awayId, key, verbose }){
+  if(!homeId || !awayId) return null;
+  const pad = Number(process.env.AF_MATCH_PAD_DAYS||4);
+  const base = new Date(dateISO+'T00:00:00Z');
+  const from = new Date(base); from.setUTCDate(from.getUTCDate()-pad);
+  const to   = new Date(base); to.setUTCDate(to.getUTCDate()+pad);
+  const day  = d => d.toISOString().slice(0,10);
+  const url = new URL('https://v3.football.api-sports.io/fixtures/headtohead');
+  url.searchParams.set('h2h', String(homeId)+'-'+String(awayId));
+  url.searchParams.set('from', day(from));
+  url.searchParams.set('to',   day(to));
+  url.searchParams.set('timezone','UTC');
+  const r = await fetch(url, { headers: { 'x-apisports-key': key }});
+  const j = await r.json().catch(()=> ({}));
+  const list = Array.isArray(j && j.response) ? j.response : [];
+  // elegir el más cercano a dateISO
+  let best=null, bestGap=1e9;
+  for(const it of list){
+    const d = (it?.fixture?.date||'').slice(0,10);
+    const gap = Math.abs(new Date(d)-new Date(dateISO));
+    if(gap < bestGap){ best=it; bestGap=gap; }
+  }
+  if(verbose && best){ best.__match_debug = { mode:'h2hWindow', gap:bestGap }; }
   return best || null;
 }
 async function resolveTeamsAndLeague(evt, opts={}){
@@ -116,6 +186,23 @@ async function resolveTeamsAndLeague(evt, opts={}){
   }
   if(!fx){
     fx = await findFixtureByDateAll({ dateISO, homeName: home, awayName: away, leagueHint, countryHint, key, verbose });
+  }
+  if(!fx && th?.id){
+    const ta = await findTeamIdBySearch(away, countryHint, key);
+    if(ta?.id){
+      fx = await findFixtureByH2H({ dateISO, homeId: th.id, awayId: ta.id, key, verbose });
+    }
+  }
+
+  // Fallback H2H dentro de ventana si conocemos ambos IDs
+  if(!fx && th?.id){
+    try{
+      const aw = await findTeamIdBySearch(away, countryHint, key);
+      if(aw?.id){
+        const h2 = await findFixtureByH2H({ dateISO, homeId: th.id, awayId: aw.id, key, verbose });
+        if(h2) fx = h2;
+      }
+    }catch(_){}
   }
   if(!fx){
     return { fixture_id:null, league:null, country:null, when_text:dateISO,
