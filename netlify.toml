@@ -16,3 +16,10 @@
 # --- override solo para autopick-outrights (resolver parser de zisi) ---
 [functions."autopick-outrights"]
   node_bundler = "esbuild"
+[functions."autopick-vip-run2"]
+  node_bundler = "zisi"
+  included_files = ["_lib/autopick-vip-nuevo-impl.cjs","netlify/functions/_lib/autopick-vip-nuevo-impl.cjs"]
+
+[functions."autopick-vip-run2-background"]
+  node_bundler = "zisi"
+  included_files = ["_lib/autopick-vip-nuevo-impl.cjs","netlify/functions/_lib/autopick-vip-nuevo-impl.cjs"]
