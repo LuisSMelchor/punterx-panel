@@ -1,6 +1,19 @@
 // netlify/functions/diag-match-fixture.cjs
 'use strict';
 
+// Wrapper: usa export canónico; fallback a Lib.normalizeFixture si existiera
+function __pxNormFixture(payload, LibRef){
+  try { return pxNormalize(payload || {}); } catch(e){}
+  try {
+    const f = (LibRef && typeof LibRef.normalizeFixture==='function') ? LibRef.normalizeFixture : null;
+    if (f) return f(payload || {});
+  } catch(e){}
+  return payload || {};
+}
+
+
+// __PX_USE_COMPARE_NORM__: importar normalizador canónico con coacción de fecha
+const { normalizeFixture: pxNormalize } = require('./_lib/match-compare.cjs');
 const __json = (code, obj) => ({
   statusCode: code,
   headers: { 'content-type': 'application/json' },
@@ -57,7 +70,7 @@ exports.handler = async (event) => {
     return __json(400, { ok:false, error:'no-fixture', hint:"POST JSON o usa ?file=demo-1.json o ?sample=1" });
   }
 
-  const out = normalizeFixture(payload);
+  const out = __pxNormFixture(payload);
   if (qbool(qs.debug)) out.debug = { team_stopwords_size: TEAM_STOPWORDS.size };
   out.ok = true;
   out.source = source;
@@ -69,7 +82,7 @@ exports.handler = async (event) => {
   
 /* __PX_FORCE_LIB_NORM__ :: usar normalizeFixture exportado (commence/kickoff→start_ts; sec→ms) */
 {
-  const out = normalizeFixture(payload || {});
+  const out = __pxNormFixture(payload || {});
   try { out.ok = true; out.source = source; } catch {}
   return __json(200, out);
 }
@@ -77,3 +90,4 @@ exports.handler = async (event) => {
 }
 
 };
+/* __PX_USE_COMPARE_NORM__ */
