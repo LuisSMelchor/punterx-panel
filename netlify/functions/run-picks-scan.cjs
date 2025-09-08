@@ -13,7 +13,64 @@ exports.handler = async (event, context) => {
   // 2) Intenta parsear body
   let payload;
   try { payload = JSON.parse(base.body || '{}'); } catch { payload = {}; }
-    // __FALLBACK_BATCH__: si el scan cliente no generó batch.results,
+    // __FALLBACK_BATCH__
+    /* __SCAN_EVENTS_FROM_ODDSAPI__: si no hay batch, construye uno básico desde OddsAPI */
+    try {
+      const qs = (event && event.queryStringParameters) || {};
+      if (!payload || !payload.batch || !Array.isArray(payload.batch.results)) {
+        const rq = eval('require');
+        const https = rq('https');
+        const path = rq('path');
+        const { guessSportKeyFromLeague } = rq('./_lib/odds-helpers.cjs');
+
+        const key    = process.env.ODDS_API_KEY || '';
+        const sport  = String(qs.sport || guessSportKeyFromLeague(qs.league || process.env.LEAGUE_NAME) || process.env.SPORT_KEY || '').trim();
+        const days   = Math.max(1, Number(qs.days || process.env.ODDS_SCAN_DAYS || 2));
+        const limit  = Math.max(1, Number(qs.limit || 250));
+
+        if (key && sport) {
+          const url = new URL(`https://api.the-odds-api.com/v4/sports/${encodeURIComponent(sport)}/events`);
+          url.searchParams.set('apiKey', key);
+          url.searchParams.set('dateFormat', 'iso');
+
+          const fetchJSON = (u) => new Promise((resolve) => {
+            const req = https.get(u.toString(), (res) => {
+              let data = "";
+              res.on('data', (ch)=> data += ch);
+              res.on('end', ()=>{
+                try { resolve(JSON.parse(data)); } catch { resolve([]); }
+              });
+            });
+            req.on('error', _=> resolve([]));
+            req.end();
+          });
+
+          const events = await fetchJSON(url);
+          const arr = Array.isArray(events) ? events.slice(0, limit) : [];
+          const results = arr.map(e => ({
+            evt: {
+              provider: 'oddsapi',
+              sport,
+              id: e && e.id,
+              commence_time: e && e.commence_time,
+              home_team: e && e.home_team,
+              away_team: e && e.away_team,
+              sport_title: e && (e.sport_title || null)
+            },
+            status: 'scanned'
+          }));
+
+          payload = payload || {};
+          payload.batch = payload.batch || {};
+          payload.batch.results = Array.isArray(payload.batch.results) ? payload.batch.results : [];
+          results.forEach(r => payload.batch.results.push(r));
+          payload.batch.source = 'oddsapi_events';
+          payload.batch.meta = Object.assign({}, payload.batch.meta||{}, { sport, days, limit });
+        }
+      }
+    } catch (_) { /* no-op */ }
+
+: si el scan cliente no generó batch.results,
     // construimos un batch mínimo usando oneShotPayload (canónico _lib/enrich.cjs).
     try {
       const qs = (event && event.queryStringParameters) || {};
