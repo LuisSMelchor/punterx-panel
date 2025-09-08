@@ -1,51 +1,9 @@
 [build]
-  publish = "."
+  command = "npm run build || echo 'no build step'"
   functions = "netlify/functions"
 
-# (opcional) build command dummy por si no hay frontend
-[build.environment]
-  NODE_VERSION = "22"
-
-[functions."admin-grant-vip"]
-  node_bundler = "zisi"
-
-# --- override solo para autopick-live (resolver parser de zisi) ---
-[functions."autopick-live"]
-  node_bundler = "esbuild"
-
-# --- override solo para autopick-outrights (resolver parser de zisi) ---
-[functions."autopick-outrights"]
-  node_bundler = "esbuild"
-[functions."autopick-vip-run2"]
-  node_bundler = "zisi"
-  included_files = ["_lib/autopick-vip-nuevo-impl.cjs","netlify/functions/_lib/autopick-vip-nuevo-impl.cjs"]
-
-[functions."autopick-vip-run2-background"]
-  node_bundler = "zisi"
-  included_files = ["_lib/autopick-vip-nuevo-impl.cjs","netlify/functions/_lib/autopick-vip-nuevo-impl.cjs"]
-[functions."diag-lib-scan"]
-  node_bundler = "zisi"
-  included_files = ["_lib/**","netlify/functions/_lib/**"]
-[functions."diag-match-fixture"]
-  node_bundler = "zisi"
-  included_files = [
-    "tests/matching-fixtures/**",
-    "_lib/match-normalize.cjs",
-    "netlify/functions/_lib/match-normalize.cjs"
-  ]
-[functions."diag-match-batch"]
-  node_bundler = "zisi"
-  included_files = [
-    "tests/matching-fixtures/**",
-    "_lib/match-normalize.cjs",
-    "netlify/functions/_lib/match-normalize.cjs"
-  ]
-[functions."diag-match-compare"]
-  node_bundler = "zisi"
-  included_files = [
-  "tests/matching-fixtures/**",
-  "_lib/match-compare.cjs",
-  "_lib/match-normalize.cjs",
-  "netlify/functions/_lib/match-compare.cjs",
-  "netlify/functions/_lib/match-normalize.cjs"
-]
+[[redirects]]
+  from = "/api/window"
+  to   = "/.netlify/functions/window-log"
+  status = 200
+  force = true

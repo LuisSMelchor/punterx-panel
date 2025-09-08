@@ -43,6 +43,7 @@
     "test:league-aliases": "node -e 'const {guessSportKeyFromLeague:g}=require(\"./netlify/functions/_lib/odds-helpers.cjs\"); const want=[[\"LaLiga EA Sports\",\"soccer_spain_la_liga\"],[\"La Liga EA Sports\",\"soccer_spain_la_liga\"],[\"EPL\",\"soccer_epl\"]]; let ok=true; for(const [inp,exp] of want){ const got=g(inp)||\"\"; const pass=(got===exp); console.log((pass?\"OK\":\"MISS\"), inp, \"=>\", got||\"(no match)\", \"expected:\", exp); if(!pass) ok=false; } if(!ok) console.log(\"(warn) faltan sinónimos en LEAGUE_MAP\");'"
   },
   "dependencies": {
+    "@netlify/blobs": "^10.0.10",
     "@netlify/functions": "^2.8.2",
     "@supabase/supabase-js": "^2.56.0",
     "dayjs": "^1.11.13",
@@ -58,5 +59,6 @@
     "esprima": "^4.0.1",
     "netlify-cli": "^17.38.1",
     "typescript": "^5.9.2"
-  }
+  },
+  "type": "module"
 }
