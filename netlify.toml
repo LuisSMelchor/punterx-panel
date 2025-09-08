@@ -7,3 +7,7 @@
   to   = "/.netlify/functions/window-log"
   status = 200
   force = true
+
+[functions]
+  # Anclamos el impl para que esté presente en /.netlify/functions del deploy
+  included_files = ["netlify/functions/_lib/autopick-vip-nuevo-impl.cjs"]

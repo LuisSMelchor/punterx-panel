@@ -13,6 +13,18 @@ exports.handler = async (event, context) => {
   // 2) Intenta parsear body
   let payload;
   try { payload = JSON.parse(base.body || '{}'); } catch { payload = {}; }
+    // __FALLBACK_BATCH__: si el scan cliente no generó batch.results,
+    // construimos un batch mínimo usando oneShotPayload (canónico _lib/enrich.cjs).
+    try {
+      const qs = (event && event.queryStringParameters) || {};
+      if (!payload || !payload.batch || !Array.isArray(payload.batch.results)) {
+        const gen = await oneShotPayload({ qs, env: process.env });
+        if (gen && gen.batch && Array.isArray(gen.batch.results)) {
+          payload = gen; // sustituimos payload vacío por el generado canónicamente
+        }
+      }
+    } catch (_) { /* no-op: devolvemos tal cual si falla */ }
+
 
   try {
     const qs = (event && event.queryStringParameters) || {};
