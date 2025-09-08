@@ -26,7 +26,7 @@ const ENRICH_CONC       = Number(process.env.ODDS_ENRICH_CONC)||4;
 
 /* --- simple in-memory cache for enrich --- */
 var __ENRICH_CACHE = (globalThis.__ENRICH_CACHE ||= new Map());
-var ENRICH_CACHE_TTL_MS = (globalThis.__ENRICH_CACHE_TTL_MS ??= (Number(process.env.ODDS_ENRICH_CACHE_TTL_MS)||60000));
+var ENRICH_CACHE_TTL_MS = ((function(){ if (typeof globalThis.__ENRICH_CACHE_TTL_MS==='undefined' || globalThis.__ENRICH_CACHE_TTL_MS===null) globalThis.__ENRICH_CACHE_TTL_MS=(Number(process.env.ODDS_ENRICH_CACHE_TTL_MS); return globalThis.__ENRICH_CACHE_TTL_MS; })()||60000));
 function __stableStringify(x){
   const t = typeof x;
   if (x === null || t === "number" || t === "boolean") return JSON.stringify(x);
@@ -49,6 +49,7 @@ function __cacheGet(evt){
 }
 function __cachePut(evt,bm){ try{ __ENRICH_CACHE.set(__cacheKey(evt), { at: Date.now(), bm }); }catch(_){} }
 /* --- /cache --- */
+/* __NO_COMPOUND_ASSIGN__: sintaxis legacy compatible con bundler */
 
 function __withTimeout(ms){
   const ac = (typeof AbortController!=="undefined") ? new AbortController() : null;
