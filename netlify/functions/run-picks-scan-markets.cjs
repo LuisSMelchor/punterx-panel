@@ -25,8 +25,23 @@ const ENRICH_MAX        = Number(process.env.ODDS_ENRICH_MAX)||10;
 const ENRICH_CONC       = Number(process.env.ODDS_ENRICH_CONC)||4;
 
 /* --- simple in-memory cache for enrich --- */
-var __ENRICH_CACHE = (globalThis.__ENRICH_CACHE ||= new Map());
-var ENRICH_CACHE_TTL_MS = ((function(){ if (typeof globalThis.__ENRICH_CACHE_TTL_MS==='undefined' || globalThis.__ENRICH_CACHE_TTL_MS===null) globalThis.__ENRICH_CACHE_TTL_MS=(Number(process.env.ODDS_ENRICH_CACHE_TTL_MS); return globalThis.__ENRICH_CACHE_TTL_MS; })()||60000));
+var __ENRICH_CACHE = (function(){
+  try { if (typeof globalThis!=='undefined' && globalThis.__ENRICH_CACHE) return globalThis.__ENRICH_CACHE; } catch(_){ }
+  var m = new Map();
+  try { if (typeof globalThis!=='undefined') globalThis.__ENRICH_CACHE = m; } catch(_){ }
+  return m;
+})();
+var ENRICH_CACHE_TTL_MS = (function(){
+  var v = Number(process.env.ODDS_ENRICH_CACHE_TTL_MS);
+  if (!(v >= 0)) v = 60000; // default
+  try {
+    if (typeof globalThis!=='undefined' && (typeof globalThis.__ENRICH_CACHE_TTL_MS==='undefined' || globalThis.__ENRICH_CACHE_TTL_MS===null)) {
+      globalThis.__ENRICH_CACHE_TTL_MS = v;
+    }
+    if (typeof globalThis!=='undefined' && typeof globalThis.__ENRICH_CACHE_TTL_MS!=='undefined') return globalThis.__ENRICH_CACHE_TTL_MS;
+  } catch(_){ }
+  return v;
+})();
 function __stableStringify(x){
   const t = typeof x;
   if (x === null || t === "number" || t === "boolean") return JSON.stringify(x);
