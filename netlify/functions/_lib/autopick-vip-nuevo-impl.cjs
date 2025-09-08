@@ -7,7 +7,18 @@
 'use strict';
 
 
-const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./enrich.cjs');
+// __FIX_REQUIRE_ENRICH__: resolver robusto para Netlify Lambda
+const __p = require('path');
+let __enrich;
+try { __enrich = require('./enrich.cjs'); }
+catch(_){
+  try { __enrich = require(__p.join(__dirname, 'enrich.cjs')); }
+  catch(__e2){
+    const RT = (process && process.env && process.env.LAMBDA_TASK_ROOT) ? process.env.LAMBDA_TASK_ROOT : '/var/task';
+    __enrich = require(__p.join(RT, '_lib', 'enrich.cjs'));
+  }
+}
+const { ensureMarketsWithOddsAPI, oneShotPayload } = __enrich;
 /* ============ Blindaje runtime ============ */
 try { if (typeof fetch === 'undefined') global.fetch = require('node-fetch'); } catch (_) {}
 try {
