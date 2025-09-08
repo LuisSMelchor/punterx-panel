@@ -3,13 +3,65 @@
 
 // [AF_SENTINEL_DBG_V1]
 const __AF_DBG__ = !!process.env.AF_DEBUG;
-const dlog = (...xs)=>{ if (__AF_DBG__) dlog('[AF_DEBUG]', ...xs); };
+const dlog = (...xs)=>{ if (__AF_DBG__) console.log('[AF_DEBUG]', ...xs); };
 // OddsAPI (real) - import tolerante
 let fetchOddsForFixture = null;
 try {
   const __m = require('./odds-helpers.cjs');
   fetchOddsForFixture = (__m && (__m.fetchOddsForFixture || (__m.default && __m.default.fetchOddsForFixture))) || null;
 } catch (_) { fetchOddsForFixture = null; } // __SANE_ENRICH_IMPORT__
+
+
+/** PIPE ALPHA (opcional): emite snapshots NDJSON desde el lib si EV_PIPE_ALPHA=1 */
+function __pipeAlphaMaybe__(payload){
+  try{
+    if (!process || !process.env || process.env.EV_PIPE_ALPHA!=='1') return;
+    const fs = require('fs');
+    const EV_MKT = process.env.EV_MKT || '/tmp/_ev.market.ndjson';
+    const EV_OUT = process.env.EV_OUT || '/tmp/_ev.decisions.ndjson';
+
+    // helpers seguros
+    const normStr = (x)=> (x==null? null : String(x));
+    const safeAppend = (file, line) => {
+      try { fs.appendFileSync(file, line.endsWith('\n')? line : line+'\n'); } catch(_){}
+    };
+
+    // intenta leer campos desde distintas formas de payload o fixture
+    const sport = normStr(payload?.match?.sport_key || payload?.evt?.sport_key || payload?.sport || null);
+    const key   = normStr(payload?.match?.key || payload?.evt?.key || payload?.evt?.id || payload?.fixture_id || `alpha_${Date.now()}`);
+    const start = (payload?.kickoff || payload?.match?.start_iso || payload?.evt?.start_iso || new Date().toISOString());
+
+    // minutesUntil existe arriba; si no, cae en null
+    let mins = null; try{ mins = minutesUntil(start); }catch(_){}
+
+    // market snapshot canónico vacío (sin H2H todavía)
+    const lineMkt = {
+      sport, key, start_iso: start, mins_to_start: mins,
+      best_price: { home:null, draw:null, away:null },
+      p_mkt: {}
+    };
+
+    // línea minimal de decisiones (no activa picks)
+    const lineOut = {
+      sport, key, start_iso: start, mins_to_start: mins,
+      p_mkt: {}, p_model: null, pick: null, status: 'skip_no_h2h'
+    };
+
+    // escribe NDJSON
+    safeAppend(EV_MKT, JSON.stringify(lineMkt));
+    safeAppend(EV_OUT, JSON.stringify(lineOut));
+  } catch(_){}
+}
+
+/** Wrapper seguro: respeta ausencia de ODDS_API_KEY */
+async function __safeFetchOddsForFixture__(fixture){
+  try {
+    if (!process.env || !process.env.ODDS_API_KEY) return null;
+    if (typeof fetchOddsForFixture !== 'function') return null;
+    return await fetchOddsForFixture(fixture);
+  } catch (_){ return null; }
+}
+
 
 
 /** utilidades básicas **/
@@ -217,6 +269,9 @@ module.exports = { enrichFixtureUsingOdds,
   oneShotPayload,
   formatMarketsTop3,
   composeOneShotPrompt, ensureMarketsWithOddsAPI }
+// asegurar puntero seguro
+try{ module.exports.fetchOddsForFixture = __safeFetchOddsForFixture__; }catch(_){ }
+
 
 // === [/* dedup: pruned AUTO-INJECT tail */
 
@@ -224,3 +279,38 @@ module.exports = { enrichFixtureUsingOdds,
 try{ module.exports.composeOneShotPrompt=composeOneShotPrompt; }catch(_){ }
 try{ module.exports.oneShotPayload=oneShotPayload; }catch(_){ }
 try{ module.exports.ensureMarketsWithOddsAPI=ensureMarketsWithOddsAPI; }catch(_){ }
+
+
+// __pipe_alpha_wrap_done__
+try{
+  const __origEnsure = module.exports && module.exports.ensureMarketsWithOddsAPI;
+  if (typeof __origEnsure === 'function'){
+    module.exports.ensureMarketsWithOddsAPI = async function(...args){
+      const res = await __origEnsure.apply(this, args);
+      /* legacy wrap disabled */
+      return res;
+    };
+  }
+}catch(_){}
+
+
+// __pipe_alpha_args_fallback__
+try{
+  const __maybeWrapped = module.exports && module.exports.ensureMarketsWithOddsAPI;
+  if (typeof __maybeWrapped === 'function' && !__maybeWrapped.__pipe_alpha_args_fallback__){
+    const __orig2 = __maybeWrapped;
+    const __wrapped = async function(...args){
+      const res = await __orig2.apply(this, args);
+      try {
+        // si res es falsy (impl void), usa args[0].payload o el propio args[0]
+        const p = res || (args && args[0] && (args[0].payload || args[0])) || null;
+        __pipeAlphaMaybe__(p);
+      } catch(_){}
+      return res;
+    };
+    __wrapped.__pipe_alpha_args_fallback__ = true;
+    module.exports.ensureMarketsWithOddsAPI = __wrapped;
+  }
+}catch(_){}
+
+try{ module.exports.__pipeAlphaMaybe__ = __pipeAlphaMaybe__; }catch(_){}

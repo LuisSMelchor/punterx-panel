@@ -12,7 +12,7 @@ const fetch = global.fetch || ((...a)=>import('node-fetch').then(m=>m.default(..
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY; // <- placeholder
 const ODDS_API_BASE = process.env.ODDS_API_BASE || 'https://api.the-odds-api.com/v4';
-const SPORT_KEY     = process.env.ODDS_API_SPORT_KEY || 'soccer'; // p.ej. 'soccer' o 'soccer_epl'
+let SPORT_KEY     = process.env.ODDS_API_SPORT_KEY || 'soccer'; // p.ej. 'soccer' o 'soccer_epl'
 const MARKET_LIST   = process.env.ODDS_API_MARKETS   || 'h2h,totals,spreads'; // ajustar luego si hace falta
 const REGION        = process.env.ODDS_API_REGION    || 'eu'; // eu | uk | us | au
 
