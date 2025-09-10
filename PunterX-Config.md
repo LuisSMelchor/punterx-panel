@@ -1,3 +1,4 @@
+[PunterX-Config-UPDATED.md](https://github.com/user-attachments/files/22265242/PunterX-Config-UPDATED.md)
 # PunterX — Documento de referencia
 
 ## Objetivo
@@ -30,7 +31,7 @@ Desarrollar un sistema integral que genere **picks mágicos** para todos los par
 ## Cron y reporting
 - `cron-run2` programa la ejecución del impl cada X minutos/hora con `auth` inyectado para picks.  
 - `cron-match-log` (o `cron-match-log.cjs`) registra en Function Logs cada 15 min las claves y bandas de partidos procesados (monitor de salud).  
-- Los reportes semanales (pendientes) se generarán desde los picks almacenados; contarán W/L/P, yield y EV medio y se enviarán al VIP.
+
 
 ## Regla “No duplicar”
 Antes de crear un archivo o función nueva, verifica si existe una implementación en el repositorio. Actualiza o mejora la existente en vez de duplicarla. Mantén las librerías (`_lib`) como fuente de verdad y reutiliza helpers (`send.js`, normalizadores, comparadores, Supabase/TG helpers).
@@ -57,7 +58,7 @@ Antes de crear un archivo o función nueva, verifica si existe una implementaci�
 
 ## Mensajes VIP (ajustes previstos)
 - Los mensajes VIP podrán **evolucionar** para incluir: Top-3 bookies (con etiquetas/enlaces), valor de momio (decimal/americano/fraccional), límites de stake, rango de EV y notas de riesgo.  
-- El formato final se revisará antes del go-live; versionar plantillas y reflejar cambios en la **gestión de usuarios** (trail/premium, caducidad, CTA de upgrade, multi-idioma).  
+
 - Mantener compatibilidad con `parse_mode: "HTML"` y evitar romper el layout en Telegram.
 
 ## Flujo de matching → generación de pick
@@ -66,3 +67,29 @@ Antes de crear un archivo o función nueva, verifica si existe una implementaci�
 - (3) **Matching**: normalización canónica (equipos/liga/país/fecha) + comparador (tokens/Jaccard) dentro de la ventana **T-40 a T-55 min** antes del inicio (esperando alineaciones) → `decision.same=true`.
 - (4) **Generación del pick**: aplicar criterios propios (EV, límites de stake, riesgo) y producir **apuesta directa** + **apuestas sugeridas** (amarillas, corners, goleadores, hándicaps) apoyadas en señales de APISport.
 - (5) **Maximizar valor de APIs de pago**: cache/dedupe agresivo, uso de todos los campos disponibles. Si faltan alineaciones o señales críticas, **aplazar o descartar** el pick.
+
+
+## Mensajería VIP y Embudo de Usuarios
+
+- Los **picks VIP** se dividen en niveles según el porcentaje de ganancia esperado (EV): Competitivo, Avanzado, Élite Mundial, Ultra Élite.
+- Cada mensaje VIP incluye:
+  - **Valor del momio/cuota** de la apuesta principal.
+  - **Hora de inicio** expresada como: *“comienza aprox en 45 min”*, para mantener consistencia sin depender de zonas horarias.
+  - **Top 3 bookies** con las mejores cuotas disponibles, y adicionalmente se pueden sugerir **bookies latinas** relevantes.
+  - **Apuesta principal** (con mayor EV) más **apuestas extra** sugeridas por la IA (corners, faltas, tarjetas, goleadores, props, etc.), todas con su **porcentaje estimado de éxito**.
+  - **Dato de corazonada**, como señal complementaria del sistema.
+- La IA aprovecha toda la información disponible de API-FOOTBALL (alineaciones, clima, árbitro, estadísticas de jugadores, etc.) para enriquecer las apuestas sugeridas.
+- El objetivo es detectar el **pick mágico**, es decir, apuestas ocultas de gran valor que parecen improbables pero ofrecen oportunidades excepcionales.
+- **Outrights (apuestas futuras)** están integradas al sistema.  
+- **Apuestas en vivo**: por ahora pausadas debido a consumo de recursos, con opción de habilitarlas más adelante.
+- **Autoaprendizaje**: el sistema aprende de aciertos y errores pasados, usando la base de datos histórica para mejorar predicciones.
+- **Informe semanal**: se genera y envía al grupo VIP con estadísticas (ROI, tasa de acierto, EV promedio).
+- **Embudo de usuarios**:
+  - Todo usuario comienza en el **canal gratuito**, donde recibe picks informativos y CTA para unirse al VIP.
+  - El bot gestiona la transición: entrega link al **grupo VIP** con **15 días de prueba gratis**.
+  - La gestión de estados (trial, premium, expirado) se hace de forma **automatizada** por el bot y la IA.
+  - Al finalizar el trial, se integra la lógica de **pagos automáticos** para activar la suscripción VIP.
+
+## Investigación adicional
+
+- Como línea exploratoria, el sistema busca identificar posibles **picks escondidos o perdidos** que puedan generar ganancias casi seguras: apuestas normales con cuotas extraordinarias que normalmente pasarían desapercibidas.
