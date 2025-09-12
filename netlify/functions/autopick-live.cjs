@@ -59,9 +59,9 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // Helpers de envío (debes tener netlify/functions/send.cjs con LIVE FREE/VIP)
 let send = null;
-try { send = require("./send"); }
+try { send = require("./send.cjs"); }
 catch {
-  try { send = require('./send'); }
+  try { send = require('./send.cjs'); }
   catch (e) { throw new Error("No se pudo cargar send.cjs (helpers LIVE)"); }
 }
 
