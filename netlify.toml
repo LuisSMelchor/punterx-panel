@@ -9,7 +9,7 @@
   force = true
 
 [functions]
-  # Anclamos el impl para que esté presente en /.netlify/functions del deploy
+  # Trae los helpers del impl a todos los zips
   included_files = ["netlify/functions/_lib/*.cjs"]
 
 [functions."autopick-vip-run2"]
@@ -18,3 +18,13 @@
 
 [functions."autopick-vip-run2-background"]
   external_node_modules = ["openai"]
+
+[functions."cron-run2"]
+  external_node_modules = ["openai"]
+
+[functions."cron-run2-now"]
+  external_node_modules = ["openai"]
+
+# (opcional si tu grep lo usa)
+#[functions."autopick-vip-run3"]
+#  external_node_modules = ["openai"]
