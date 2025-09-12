@@ -10,7 +10,7 @@
     "out": "node netlify/functions/autopick-outrights.cjs",
     "live": "node netlify/functions/autopick-live.cjs --loop",
     "check:syntax": "node -e \"const fs=require('fs');const p='netlify/functions';(function walk(d){for(const f of fs.readdirSync(d)){const fp=d+'/'+f;const s=fs.statSync(fp);if(s.isDirectory()) walk(fp); else if(/\\.(cjs|js)$/.test(fp)){ try{ new Function(fs.readFileSync(fp,'utf8')); } catch(e){ if(e.code==='ENOENT') continue; throw e; } } }})(p); console.log('Syntax OK');\"",
-    "test:send-report": "node tests/send_report.smoke.js",
+    "test:send-report": "node tests/send_report.smoke.cjs",
     "lint:send-report": "bash tests/check_send_report_grep.sh",
     "verify:send-report": "npm run lint:send-report && npm run test:send-report && npm run test:send-report-edges",
     "test:send-report-edges": "node tests/send_report.edges.js",
@@ -48,7 +48,7 @@
     "@supabase/supabase-js": "^2.56.0",
     "dayjs": "^1.11.13",
     "dotenv": "^16.6.1",
-    "node-fetch": "^2.7.0",
+    "node-fetch": "2.7.0",
     "openai": "^4.104.0"
   },
   "devDependencies": {
