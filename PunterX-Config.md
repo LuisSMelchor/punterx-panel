@@ -9,6 +9,7 @@ Desarrollar un sistema integral que genere **picks mágicos** para todos los par
 4. **Dividir picks** en categorías (Competitivo, Avanzado, Élite, Ultra) y enviarlos a Telegram (grupos VIP y canal Free).  
 5. **Almacenar picks** para reportes semanales y autoaprendizaje.  
 6. Mantener **flujo de usuarios** (prueba VIP de 15 días, premium, expirado) y gestionar expiraciones con Supabase.
+7. La prioridad esencial del proyecto es asegurar que los **picks automatizados se generen y se envíen correctamente a Telegram**, mediante funciones y cron jobs de Netlify; la URL no será utilizada, por lo que todo el foco debe estar en validar que las automatizaciones funcionen bien, incluyendo la revisión de logs y ventanas de ejecución.
 
 ## Normalización y matching
 - No se utilizan listas de nombres fijos; la función `match-normalize.cjs` aplica slugificación, elimina acentos y stopwords (artículos, conectores, sufijos genéricos) y genera una clave única `YYYY-MM-DD_home_vs_away`.  
