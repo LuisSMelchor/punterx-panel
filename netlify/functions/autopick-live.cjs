@@ -5,7 +5,7 @@
 // - Alias para claves antiguas CONMEBOL → claves correctas v4.
 // - Enriquecimiento con API-FOOTBALL (minuto, marcador, fase).
 // - IA sólo si pasa el prefiltro (top-3 bookies, gap consenso vs mejor, etc.). EV + validaciones.
-// - Telegram (mensajes LIVE ya definidos en send.js). Supabase (histórico).
+// - Telegram (mensajes LIVE ya definidos en send.cjs). Supabase (histórico).
 // - CommonJS, Node 20, sin top-level await.
 
 "use strict";
@@ -57,12 +57,12 @@ function assertEnv() {
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// Helpers de envío (debes tener netlify/functions/send.js con LIVE FREE/VIP)
+// Helpers de envío (debes tener netlify/functions/send.cjs con LIVE FREE/VIP)
 let send = null;
 try { send = require("./send"); }
 catch {
   try { send = require('./send'); }
-  catch (e) { throw new Error("No se pudo cargar send.js (helpers LIVE)"); }
+  catch (e) { throw new Error("No se pudo cargar send.cjs (helpers LIVE)"); }
 }
 
 /* ============ Utils ============ */

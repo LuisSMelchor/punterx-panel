@@ -70,7 +70,7 @@ exports.handler = async (event, context) => {
       }
     } catch (_) { /* no-op */ }
 
-: si el scan cliente no generó batch.results,
+// si el scan cliente no generó batch.results,
     // construimos un batch mínimo usando oneShotPayload (canónico _lib/enrich.cjs).
     try {
       const qs = (event && event.queryStringParameters) || {};

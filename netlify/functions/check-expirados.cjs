@@ -30,7 +30,7 @@ let tgHelpers = null;
 function getTG() {
   if (!tgHelpers) {
     // send.js exporta tgSendDM y expulsarUsuarioVIP
-    tgHelpers = require('./send.js');
+    tgHelpers = require('./send.cjs');
   }
   return tgHelpers;
 }

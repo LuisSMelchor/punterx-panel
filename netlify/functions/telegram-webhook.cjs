@@ -1,7 +1,7 @@
 const { ensureMarketsWithOddsAPI, oneShotPayload } = require('./_lib/enrich.cjs');
 // netlify/functions/telegram-webhook.cjs
 const { supabase } = require('./_lib/_supabase-client.cjs');
-const { tgSendMessage, tgCreateInviteLink } = require('./send.js');
+const { tgSendMessage, tgCreateInviteLink } = require('./send.cjs');
 
 const VERSION = 'telegram-webhook v5.0-chatid-only';
 

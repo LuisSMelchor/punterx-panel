@@ -2,7 +2,7 @@
 'use strict';
 
 const { grantVipByTgId, revokeVipByTgId, getUserIdByTgId } = require('./_lib/_users.cjs');
-const { tgSendDM } = require('./send.js');
+const { tgSendDM } = require('./send.cjs');
 
 // __send_report_base es opcional: si no existe, usamos stub local
 function __send_report_stub() {

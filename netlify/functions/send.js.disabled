@@ -1,0 +1,12 @@
+// Shim de compatibilidad para runners que hacen require('./send.cjs')
+// Reexporta la implementación real de send.cjs sin duplicar lógica.
+import * as impl from './send.cjs';
+export default (impl && impl.default) ? impl.default : impl;
+// Exponer también nombrados por si algún require los usa
+export const {
+  formatMessage,
+  formatPick,
+  sendMessage,
+  sendVIP,
+  sendFree
+} = impl;
