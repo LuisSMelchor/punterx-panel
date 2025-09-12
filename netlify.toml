@@ -14,3 +14,7 @@
 
 [functions."autopick-vip-run2"]
   included_files = ["netlify/functions/_lib/**","netlify/functions/send.cjs"]
+  external_node_modules = ["openai"]
+
+[functions."autopick-vip-run2-background"]
+  external_node_modules = ["openai"]
