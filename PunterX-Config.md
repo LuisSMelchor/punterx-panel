@@ -10,6 +10,9 @@ Desarrollar un sistema integral que genere **picks mágicos** para todos los par
 5. **Almacenar picks** para reportes semanales y autoaprendizaje.  
 6. Mantener **flujo de usuarios** (prueba VIP de 15 días, premium, expirado) y gestionar expiraciones con Supabase.
 7. La prioridad esencial del proyecto es asegurar que los **picks automatizados se generen y se envíen correctamente a Telegram**, mediante funciones y cron jobs de Netlify; la URL no será utilizada, por lo que todo el foco debe estar en validar que las automatizaciones funcionen bien, incluyendo la revisión de logs y ventanas de ejecución.
+8. Arquitectura de entrega (GitHub → Netlify)
+El repositorio vive en GitHub y el despliegue de producción se hace en Netlify. Antes de cualquier trabajo, es obligatorio verificar que el último commit en la rama activa haya construido y desplegado correctamente en Netlify (build OK y estado “Published”), con variables de entorno completas y Scheduled Functions habilitadas.
+La prioridad es la operación correcta de las funciones y del cron (*/15) en Netlify; la URL o diagnósticos por URL no son foco. Toda la observabilidad debe verse en las ventanas de Function Logs del cron y funciones relacionadas.
 
 ## Normalización y matching
 - No se utilizan listas de nombres fijos; la función `match-normalize.cjs` aplica slugificación, elimina acentos y stopwords (artículos, conectores, sufijos genéricos) y genera una clave única `YYYY-MM-DD_home_vs_away`.  
@@ -31,8 +34,34 @@ Desarrollar un sistema integral que genere **picks mágicos** para todos los par
 
 ## Cron y reporting
 - `cron-run2` programa la ejecución del impl cada X minutos/hora con `auth` inyectado para picks.  
-- `cron-match-log` (o `cron-match-log.cjs`) registra en Function Logs cada 15 min las claves y bandas de partidos procesados (monitor de salud).  
+- `cron-match-log.cjs` es el monitor de salud: cada 15 min debe escribir en Netlify → Function Logs un resumen operativo del ciclo:
+  • timestamp del run,
+  • número de partidos evaluados por banda,
+  • estado de las APIs (OddsAPI/APISport: latencia, códigos/errores y uso de fallback),
+  • picks generados y enviados a Telegram,
+  • minutos restantes para los siguientes partidos dentro de la ventana T-40/T-55.
+  Si no aparecen logs:
+  (1) verifica que la función esté deployada y que el Scheduled Function (*/15) esté activo,
+  (2) confirma que estás mirando el sitio correcto en Netlify (Site → Functions → cron-match-log),
+  (3) valida variables de entorno requeridas por la función,
+  (4) habilita temporalmente logs `[AF_DEBUG]` en dev para trazas finas (luego desactivarlos).
 
+## Visibilidad del estado (sin crear archivos nuevos)
+- El estado completo del ciclo (cada 15 min) debe verse en Function Logs vía `cron-match-log.cjs`. Ese es el punto de verdad para:
+  - Salud de OddsAPI/APISport (incluyendo fallback si aplica),
+  - Conteo/bandas de partidos procesados,
+  - Picks generados y enviados a Telegram,
+  - Tiempo restante hacia los próximos partidos en ventana T-40/T-55.
+- No se crearán nuevos “archivos de estado”: si se requiere más detalle, se incrementa la verbosidad de `cron-match-log.cjs` y/o se apoya puntualmente en `diag-*` existentes (local/temporal) sin dejar residuos en producción.
+- El archivo de diagnóstico vía URL (si existiera) queda al final de la cola; la observabilidad oficial vive en Netlify Function Logs.
+
+## Checklist Operativo Netlify
+1) Commit y build: último commit en rama activa → build OK → deploy “Published”.
+2) Scheduled Functions: expresión */15 configurada y activa para `cron-match-log.cjs` (y `cron-run2` si aplica).
+3) Variables de entorno: presentes y sin secretos en logs.
+4) Function Logs: verificar salida de `cron-match-log.cjs` cada 15 min (timestamp, APIS status/fallback, conteos, picks, countdown).
+5) Telegram: confirmar eventos de envío (OK/errores) en logs del ciclo.
+6) `[AF_DEBUG]` solo en dev: habilitar para trazas finas temporalmente y retirar después.
 
 ## Regla “No duplicar”
 Antes de crear un archivo o función nueva, verifica si existe una implementación en el repositorio. Actualiza o mejora la existente en vez de duplicarla. Mantén las librerías (`_lib`) como fuente de verdad y reutiliza helpers (`send.js`, normalizadores, comparadores, Supabase/TG helpers).
@@ -68,7 +97,6 @@ Antes de crear un archivo o función nueva, verifica si existe una implementaci�
 - (3) **Matching**: normalización canónica (equipos/liga/país/fecha) + comparador (tokens/Jaccard) dentro de la ventana **T-40 a T-55 min** antes del inicio (esperando alineaciones) → `decision.same=true`.
 - (4) **Generación del pick**: aplicar criterios propios (EV, límites de stake, riesgo) y producir **apuesta directa** + **apuestas sugeridas** (amarillas, corners, goleadores, hándicaps) apoyadas en señales de APISport.
 - (5) **Maximizar valor de APIs de pago**: cache/dedupe agresivo, uso de todos los campos disponibles. Si faltan alineaciones o señales críticas, **aplazar o descartar** el pick.
-
 
 ## Mensajería VIP y Embudo de Usuarios
 
