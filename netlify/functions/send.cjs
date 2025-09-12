@@ -1,13 +1,19 @@
 'use strict';
 
 /**
- * STUB de envío para entorno local/preview.
- * - Compatibilidad con Netlify v2 (Fetch): return Response.
- * - Mantiene helpers (tgSendMessage, sendVIP, etc.) como props del default export.
- * - Respeta SEND_TELEGRAM y PUBLISH_PREVIEW_ONLY.
+ * send.cjs — STUB de envío para entorno local/preview (Netlify Dev)
+ * Compatibilidad:
+ *   - Netlify Dev (lambda-local): exports.handler(event) -> {statusCode, body}
+ *   - Bundlers v2: module.exports.default = handler (mismo handler)
+ * Helpers expuestos como props del handler: tgSendMessage, tgSendDM, tgCreateInviteLink,
+ * sendVIP, sendFree, formatMessage, formatPick, expulsarUsuarioVIP.
+ * Respeta: SEND_TELEGRAM y PUBLISH_PREVIEW_ONLY (por defecto: no publica).
  */
 
-const asBool = (v) => v === '1' || v === 'true' || v === 'yes';
+const asBool = (v) => {
+  const s = (v == null ? '' : String(v)).trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes';
+};
 
 function formatMessage({ title, text, html, ev } = {}) {
   return {
@@ -23,86 +29,98 @@ function formatPick(pick = {}) {
   return { league, match, market, odds, ev: (ev != null ? Number(ev) : null) };
 }
 
-// Simulación básica de envío (no publica en local/preview)
+// Simulación básica de envío (no publica en local/preview salvo que SEND_TELEGRAM=1 y PUBLISH_PREVIEW_ONLY=0)
 async function _send({ channel, text, html, title, ev, previewNote } = {}) {
   const SEND_TELEGRAM = asBool(process.env.SEND_TELEGRAM || '0');
   const PREVIEW_ONLY  = asBool(process.env.PUBLISH_PREVIEW_ONLY || '1');
 
-  const payload = { ok: true, channel, title: title || null, text: text || null, html: html || null };
+  const payload = {
+    ok: true,
+    channel: channel || 'free',
+    title: title || null,
+    text: text || null,
+    html: html || null,
+  };
   if (ev != null) payload.ev = Number(ev);
 
-  if (!SEND_TELEGRAM || PREVIEW_ONLY) {
-    payload.preview = true;
-    payload.note = previewNote || 'no publish (local/preview)';
-    return payload;
-  }
+  // En dev/preview, devolvemos preview:true
+  payload.preview = (!SEND_TELEGRAM || PREVIEW_ONLY);
+  if (previewNote) payload.note = previewNote;
 
-  // Aquí iría el envío real a Telegram.
-  payload.sent = true;
-  payload.provider = 'telegram';
+  // Aquí podrías integrar realmente Telegram si quisieras en local.
   return payload;
 }
 
+// --- Helpers (mantenemos nombres esperados por el impl) ---
 async function tgSendMessage({ channel = 'free', text, html, title, ev } = {}) {
   return _send({ channel, text, html, title, ev, previewNote: 'tgSendMessage' });
 }
 
-async function tgSendDM({ userId, text, html, title } = {}) {
-  return _send({ channel: `dm:${userId}`, text, html, title, previewNote: 'tgSendDM' });
+async function tgSendDM(user, { text, html, title, ev } = {}) {
+  const note = `tgSendDM(${user || 'unknown'})`;
+  return _send({ channel: 'dm', text, html, title, ev, previewNote: note });
 }
 
-async function tgCreateInviteLink({ expire_seconds = 3600 } = {}) {
+async function tgCreateInviteLink({ ttlSeconds = 3600, memberLimit = 1 } = {}) {
+  // Stub de invitación
+  const preview = (!asBool(process.env.SEND_TELEGRAM || '0') || asBool(process.env.PUBLISH_PREVIEW_ONLY || '1'));
   return {
     ok: true,
-    preview: true,
-    invite_link: `https://t.me/+stub_${Date.now()}`,
-    expire_seconds,
+    preview,
+    invite_link: 'https://t.me/+stub_invite',
+    ttl: Number(ttlSeconds) || 3600,
+    limit: Number(memberLimit) || 1,
   };
 }
 
-async function expulsarUsuarioVIP({ userId } = {}) {
-  return { ok: true, preview: true, action: 'kick', userId };
+async function expulsarUsuarioVIP(userIdOrUsername) {
+  const preview = (!asBool(process.env.SEND_TELEGRAM || '0') || asBool(process.env.PUBLISH_PREVIEW_ONLY || '1'));
+  return { ok: true, preview, kicked: String(userIdOrUsername || '') };
 }
 
-async function sendVIP ({ text, html, title, ev } = {}) { return tgSendMessage({ channel: 'vip',  text, html, title, ev }); }
-async function sendFree({ text, html, title, ev } = {}) { return tgSendMessage({ channel: 'free', text, html, title, ev }); }
-
-// ================= Handler Netlify v2 (Fetch) =================
-function jres(obj, status=200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
+async function sendVIP({ text, html, title, ev } = {}) {
+  return _send({ channel: 'vip', text, html, title, ev, previewNote: 'sendVIP' });
 }
 
-async function httpHandler(request) {
+async function sendFree({ text, html, title, ev } = {}) {
+  return _send({ channel: 'free', text, html, title, ev, previewNote: 'sendFree' });
+}
+
+// --- Handler HTTP clásico (compatible con Netlify Dev / lambda-local) ---
+async function httpHandler(event /*, context */) {
+  let body = {};
   try {
-    if (request.method === 'GET') {
-      return jres({ ok: true, ping: 'send.cjs', preview: asBool(process.env.PUBLISH_PREVIEW_ONLY || '1') });
-    }
-    if (request.method !== 'POST') {
-      return jres({ ok: false, error: 'method-not-allowed' }, 405);
-    }
+    if (event && event.body) body = JSON.parse(event.body);
+  } catch (_) { body = {}; }
 
-    let body = {};
-    try { body = await request.json(); } catch { body = {}; }
+  const msg = formatMessage(body || {});
+  const channel = (body && body.channel) || 'free';
 
-    const { channel = 'free', text, html, title, ev } = body || {};
-    const res = await tgSendMessage({ channel, text, html, title, ev });
-    return jres(res, 200);
-  } catch (e) {
-    return jres({ ok: false, error: e && (e.message || String(e)) }, 500);
-  }
+  const res = await tgSendMessage({ channel, ...msg });
+
+  return {
+    statusCode: 200,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(res),
+  };
 }
 
-// Export default = handler con helpers como props (para require('../send.cjs'))
-httpHandler.formatMessage       = formatMessage;
-httpHandler.formatPick          = formatPick;
-httpHandler.tgSendMessage       = tgSendMessage;
-httpHandler.tgSendDM            = tgSendDM;
-httpHandler.tgCreateInviteLink  = tgCreateInviteLink;
-httpHandler.expulsarUsuarioVIP  = expulsarUsuarioVIP;
-httpHandler.sendVIP             = sendVIP;
-httpHandler.sendFree            = sendFree;
+// Export dual: CommonJS (exports.handler) y default (para bundlers que miran default)
+const handler = httpHandler;
 
-module.exports = httpHandler;
+// Adjuntar helpers como propiedades del handler (para require('../send.cjs') en otros módulos)
+Object.assign(handler, {
+  tgSendMessage,
+  tgSendDM,
+  tgCreateInviteLink,
+  expulsarUsuarioVIP,
+  sendVIP,
+  sendFree,
+  formatMessage,
+  formatPick,
+});
+
+module.exports = handler;
+module.exports.handler = handler;
+module.exports.default = handler;
+exports.handler = handler;
