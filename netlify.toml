@@ -11,3 +11,6 @@
 [functions]
   # Anclamos el impl para que esté presente en /.netlify/functions del deploy
   included_files = ["netlify/functions/_lib/*.cjs"]
+
+[functions."autopick-vip-run2"]
+  included_files = ["netlify/functions/_lib/**","netlify/functions/send.cjs"]

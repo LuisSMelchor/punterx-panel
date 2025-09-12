@@ -35,7 +35,7 @@ const { afApi, resolveFixtureFromList } = require('./af-resolver.cjs');
 const { computeCorazonada } = require('./_corazonada.cjs');
 const { createLogger } = require('./_logger.cjs');
 const { resolveTeamsAndLeague } = require('./match-helper.cjs');
-const OpenAI = require('openai'); // __SANE_OAI_IMPORT__
+const OpenAI = (global.__OPENAI_SINGLETON__ ||= require('openai')); // __SANE_OAI_IMPORT__
 const { ensureSupabase } = require('./_supabase-client.cjs'); // __SANE_SUPABASE_IMPORT__
 
 // =============== ENV ===============
@@ -126,15 +126,86 @@ function assertEnv() {
 let supabase = null; // __SANE_SUPABASE_INIT__
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// Helpers de envío (debes tener netlify/functions/send.js con LIVE FREE/VIP)
-let send = null;
-try { send = require('../send.js'); }
-catch {
-  try { send = require('../send.js'); }
-  catch (e) { throw new Error("No se pudo cargar send.js (helpers LIVE)"); }
-}
+  // --- ensureOpenAI (idempotente) ---
+  function ensureOpenAI(){
+    if (typeof openai !== "undefined" && openai) return openai;
+    if (global.__OPENAI_CLIENT__) return global.__OPENAI_CLIENT__;
+    const OpenAI = (global.__OPENAI_SINGLETON__ ||= require("openai"));
+    global.__OPENAI_CLIENT__ = new OpenAI({ apiKey: OPENAI_API_KEY });
+    return global.__OPENAI_CLIENT__;
+  }
 
+
+// Helpers de envío (debes tener netlify/functions/send.js con LIVE FREE/VIP)
+  let send = null;
+  try { send = require("./send.cjs"); } catch (_) {}
+  if (!send) { try { send = require("../send.cjs"); } catch (_) {} }
+  if (!send) { try { const p = require("path").join(__dirname, "send.cjs"); send = require(p); } catch (_) {} }
+  if (!send) { throw new Error("No se pudo cargar helpers de envío (send.cjs)"); }
 /* =============== Utils =============== */
+
+  // --- normalizador de eventos (idempotente para dev/local) ---
+  function normalizeOddsEvent(raw){
+    var evt = raw || {};
+    function pick(o, ks){ for (var i=0;i<ks.length;i++){ var k=ks[i]; if (o && o[k] !== undefined && o[k] !== null && o[k] !== "") return o[k]; } return null; }
+    var fixture = evt.fixture || {};
+    var teams   = evt.teams   || fixture.teams || {};
+    var league  = evt.league  || fixture.league || {};
+    var id = pick(evt, ["id","event_id","eventId","game_id","key","fixture_id"]) || fixture.id || (evt.id_str || (evt.key ? String(evt.key) : null));
+    var t = pick(evt, ["commence_time","start_time","startTime","kickoff","ts","timestamp"]) || fixture.timestamp || null;
+    var startMs = (typeof t === "number" && t > 1e12) ? t : (typeof t === "number" ? t*1000 : (t ? Date.parse(t) : null));
+    var sport = evt.sport_key || evt.sport || league.sport || null;
+    var home  = pick(evt, ["home_team","home","homeName","ht"]) || (teams.home && (teams.home.name || teams.home)) || null;
+    var away  = pick(evt, ["away_team","away","awayName","at"]) || (teams.away && (teams.away.name || teams.away)) || null;
+    if (!home && fixture.teams && fixture.teams.home) home = fixture.teams.home.name || fixture.teams.home;
+    if (!away && fixture.teams && fixture.teams.away) away = fixture.teams.away.name || fixture.teams.away;
+    var competition = evt.league || evt.competition || league.name || null;
+    var country = evt.country || league.country || (fixture.country || null);
+    var bookmakers = evt.bookmakers || evt.bookies || evt.odds || evt.markets || [];
+    return {
+      id: id || ("ev-" + Math.random().toString(36).slice(2)),
+      startMs: startMs || Date.now(),
+      sport: sport || null,
+      league: competition || null,
+      country: country || null,
+      home: home || null,
+      away: away || null,
+      teams: { home: home || null, away: away || null },
+      bookmakers: Array.isArray(bookmakers) ? bookmakers : [],
+      raw: evt
+    };
+  }
+  try{ if(!global.normalizeOddsEvent) global.normalizeOddsEvent = normalizeOddsEvent; }catch(_){ }
+
+
+  // --- fetch helpers (idempotentes para dev/local) ---
+  function ensureFetch(){
+    if (typeof fetch === "function") return fetch;
+    try { return (globalThis.fetch ||= require("node-fetch")); } catch(_) { throw new Error("fetch unavailable"); }
+  }
+  async function fetchWithRetry(url, opts = {}, cfg = {}){
+    const { retries = 2, baseDelay = 150, timeout = 10000 } = cfg;
+    const doFetch = ensureFetch();
+    let lastErr;
+    for (let i=0;i<=retries;i++){
+      const ac = (typeof AbortController!=="undefined") ? new AbortController() : null;
+      const t  = setTimeout(() => { try{ac&&ac.abort();}catch(_){ } }, timeout);
+      try {
+        const res = await doFetch(url, Object.assign({}, opts, { signal: ac ? ac.signal : undefined }));
+        clearTimeout(t);
+        return res;
+      } catch(e){
+        clearTimeout(t);
+        lastErr = e;
+        if (e && (e.name === "AbortError" || e.code === "ABORT_ERR")) break;
+        const sleep = baseDelay * (1 + Math.random()) * (i+1);
+        await new Promise(r=>setTimeout(r, sleep));
+      }
+    }
+    throw lastErr;
+  }
+  const __fetch = ensureFetch();
+
 const PROB_MIN = 5;   // % mínimo IA
 const PROB_MAX = 85;  // % máximo IA
 const GAP_MAX  = 15;  // p.p. IA vs implícita
@@ -710,6 +781,14 @@ ok:false, stage: 'runtime', req: REQ_ID })
   };
 
   let gotLock = false;
+  // --- bypass dist_lock para dev/manual ---
+  const __q = (event && event.queryStringParameters) || {};
+  const __hdr = (event && event.headers) || {};
+  const __nolock = (__q.nolock === "1") || (__q.unlock === "1") ||
+                   (__hdr["x-dev-nolock"] === "1") || (__hdr["x-no-lock"] === "1") ||
+                   (process.env.DEV_NOLOCK === "1");
+  if (__nolock) { gotLock = true; }
+
   try {
     // === inicio ciclo (logs amigables) ===
     logger.section('CICLO PunterX');
@@ -728,12 +807,12 @@ ok:true, skipped:true, reason:'mem_lock' }) };
 
     // === lock distribuido ===
     try {
-      gotLock = await acquireDistributedLock(120);
+      if (!__nolock) { gotLock = await acquireDistributedLock(120); } else { gotLock = true; }
     } catch (e) {
       console.warn('acquireDistributedLock error:', e?.message || e);
       gotLock = false;
     }
-    if (!gotLock) {
+    if (!gotLock && !__nolock) {
       console.warn('LOCK distribuido activo → salto ciclo');
       return { statusCode: 200, body: JSON.stringify({ send_report: __send_report,
 ok:true, skipped:true, reason:'dist_lock' }) };

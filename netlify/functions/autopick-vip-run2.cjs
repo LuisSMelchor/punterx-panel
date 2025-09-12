@@ -1,6 +1,11 @@
 // netlify/functions/autopick-vip-run2.cjs
 // PunterX · Autopick VIP Run2 — wrapper con rutas ping/ls/lsroot y delegación al impl
 'use strict';
+// __force_send_inclusion__: mantener send.cjs cerca del wrapper en dev
+try{ require('./send.cjs'); }catch(_){ }
+
+// Fuerza a incluir send.cjs en el bundle (impl se carga dinámico y no se detecta)
+try{ require('./send.cjs'); }catch(_){}
 
 const __json = (code, obj) => ({
   statusCode: code,
