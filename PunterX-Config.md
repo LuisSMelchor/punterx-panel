@@ -62,6 +62,7 @@ La prioridad es la operación correcta de las funciones y del cron (*/15) en Net
 4) Function Logs: verificar salida de `cron-match-log.cjs` cada 15 min (timestamp, APIS status/fallback, conteos, picks, countdown).
 5) Telegram: confirmar eventos de envío (OK/errores) en logs del ciclo.
 6) `[AF_DEBUG]` solo en dev: habilitar para trazas finas temporalmente y retirar después.
+7) **CI/CD — Workflows de GitHub**: en `.github/workflows/*.yml` ya existen varios archivos; antes de crear uno nuevo, revisa y reutiliza los que ya están. Estos workflows deben funcionar como “preflight”: ejecutar lint/syntax y build en seco; si pasa en verde, gatillar el deploy a Netlify (vía hook o integración). No reemplazan a Netlify: no programan cron, no envían a Telegram ni hacen side-effects de producción. Está prohibido que hagan auto-commit o auto-push; su función es validar y autorizar el deploy. La verificación final siempre ocurre en Netlify (Deploys “Published” + Function Logs).
 
 ## Regla “No duplicar”
 Antes de crear un archivo o función nueva, verifica si existe una implementación en el repositorio. Actualiza o mejora la existente en vez de duplicarla. Mantén las librerías (`_lib`) como fuente de verdad y reutiliza helpers (`send.js`, normalizadores, comparadores, Supabase/TG helpers).
