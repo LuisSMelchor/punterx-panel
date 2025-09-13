@@ -9,22 +9,31 @@
   force = true
 
 [functions]
-  # Trae los helpers del impl a todos los zips
-  included_files = ["netlify/functions/_lib/*.cjs"]
+included_files = ["node_modules/openai/**", "node_modules/node-fetch/**", "node_modules/@supabase/**", "netlify/functions/_lib/*.cjs"]
+external_node_modules = ["openai","@supabase/supabase-js","node-fetch","whatwg-url","tr46","webidl-conversions"]
 
 [functions."autopick-vip-run2"]
   included_files = ["netlify/functions/_lib/**","netlify/functions/send.cjs"]
-  external_node_modules = ["openai"]
+  external_node_modules = ["openai","node-fetch","whatwg-url","tr46","webidl-conversions"]
 
 [functions."autopick-vip-run2-background"]
-  external_node_modules = ["openai"]
+  external_node_modules = ["openai","node-fetch","whatwg-url","tr46","webidl-conversions"]
 
 [functions."cron-run2"]
-  external_node_modules = ["openai"]
+  schedule = "*/15 * * * *"
+  external_node_modules = ["openai","node-fetch","whatwg-url","tr46","webidl-conversions"]
 
 [functions."cron-run2-now"]
-  external_node_modules = ["openai"]
+  schedule = "*/15 * * * *"
+  external_node_modules = ["openai","node-fetch","whatwg-url","tr46","webidl-conversions"]
 
 # (opcional si tu grep lo usa)
 #[functions."autopick-vip-run3"]
-#  external_node_modules = ["openai"]
+#  external_node_modules = ["openai","node-fetch","whatwg-url","tr46","webidl-conversions"]
+[build]
+  command = "bash scripts/netlify-entry.sh"
+[functions]
+  node_bundler = "esbuild"
+
+[functions.""]
+  schedule = ""
