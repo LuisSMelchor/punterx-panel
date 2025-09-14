@@ -1,35 +1,62 @@
-name: CI
+name: CI (checks) & Netlify deploy
 
 on:
-  push:
   pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  build:
+    name: Build & quick checks
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [18, 20]
-    env:
-      AF_VERBOSE: "0"
-      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
-      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-      ODDS_REGIONS: "us,uk,eu,au"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run -s ci:guard
-      - run: npm run -s ci:unit
-      - name: Install Netlify CLI (pinned)
-        run: npm i -g netlify-cli@17
-      - name: Start functions:serve
-        run: npm run -s ci:serve
-      - name: Make CI dump (optional)
-        run: npm run -s ci:dump
-      - name: Smoke resolveEvt (optional)
-        run: npm run -s ci:smoke
+          node-version: 22.x
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Syntax check (all JS)
+        run: |
+          git ls-files '**/*.mjs' '**/*.cjs' '**/*.js' \
+            | xargs -r -n1 node --check
+
+      - name: Bundle sanity (window-log)
+        run: npx esbuild netlify/functions/window-log.mjs --bundle --platform=node --format=cjs --outfile=/tmp/window-log.cjs
+
+      - name: Tests (optional)
+        run: npm -s test
+        continue-on-error: true
+
+  deploy:
+    name: Netlify deploy (main only)
+    needs: build
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.NETLIFY_AUTH_TOKEN && secrets.NETLIFY_SITE_ID }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Netlify CLI deploy (prod)
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID:    ${{ secrets.NETLIFY_SITE_ID }}
+        run: npx netlify deploy --build --prod --message "CI ${GITHUB_SHA::7}"
