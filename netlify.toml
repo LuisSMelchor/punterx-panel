@@ -1,20 +1,11 @@
 [build]
-  command = "npm run build || echo 'no build step'"
-  functions = "netlify/functions"
+  publish = "punterx-panel"
 
 [functions]
-  node_bundler = "esbuild"
-  included_files = ["netlify/functions/_lib/*.cjs", "netlify/functions/send.cjs"]
-  external_node_modules = ["openai","@supabase/supabase-js","node-fetch","whatwg-url","tr46","webidl-conversions"]
+  directory = "netlify/functions"
 
-[[redirects]]
-  from = "/api/window"
-  to   = "/.netlify/functions/window-log"
-  status = 200
-  force = true
-
-[functions."cron-run2"]
-  schedule = "*/15 * * * *"
-
-[functions."cron-match-log"]
-  schedule = "*/15 * * * *"
+[dev]
+  framework = "#static"
+  port = 8888
+  autoLaunch = false
+  publish = "punterx-panel"
