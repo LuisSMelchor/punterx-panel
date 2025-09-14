@@ -43,8 +43,8 @@ export function diagWindow(info={}){
   const bets = Array.isArray(info.bets) ? info.bets : [];
   const mkt  = Array.isArray(info.mkt)  ? info.mkt  : [];
   const counts = { bets: bets.length, mkt: mkt.length, matched:0, coveragePct:0, inWindow:0, inWindowPct:0, oddsHas:0, oddsPct:0 };
-  return { ok:true, nowISO:new Date().toISOString(), byStatus:{}, upcoming:[], inside:[], counts, ...info };
-}; }
+  return { ok:true, nowISO:new Date().toISOString(), byStatus:{}, upcoming:[], inside:[], counts, readyPct:(info.readyPct ?? 0), ...info };
+};
 export async function loadWindowNdjson(kind='mkt'){
   const e=process.env||{};
   const url = kind==='bets'? e.EV_BETS_URL : e.EV_MKT_URL;
