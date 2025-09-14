@@ -1,5 +1,5 @@
 [build]
-  publish = "punterx-panel"
+  publish = "."
 
 [functions]
   directory = "netlify/functions"
@@ -8,4 +8,4 @@
   framework = "#static"
   port = 8888
   autoLaunch = false
-  publish = "punterx-panel"
+  publish = "."
