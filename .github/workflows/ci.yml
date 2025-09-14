@@ -20,23 +20,21 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22.x
-          cache: npm
+          node-version: '22.x'
+          cache: 'npm'
 
       - name: Install
         run: npm ci
 
-      - name: Syntax check (all JS)
+      - name: Syntax check (JS/ESM/CJS)
         run: |
-          git ls-files '**/*.mjs' '**/*.cjs' '**/*.js' \
-            | xargs -r -n1 node --check
+          files="$(git ls-files '**/*.mjs' '**/*.cjs' '**/*.js' || true)"
+          if [ -n "$files" ]; then
+            echo "$files" | xargs -r -n1 node --check
+          fi
 
       - name: Bundle sanity (window-log)
         run: npx esbuild netlify/functions/window-log.mjs --bundle --platform=node --format=cjs --outfile=/tmp/window-log.cjs
-
-      - name: Tests (optional)
-        run: npm -s test
-        continue-on-error: true
 
   deploy:
     name: Netlify deploy (main only)
@@ -45,18 +43,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22.x
-          cache: npm
-
-      - name: Install
-        run: npm ci
-
+          node-version: '22.x'
+          cache: 'npm'
+      - run: npm ci
       - name: Netlify CLI deploy (prod)
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID:    ${{ secrets.NETLIFY_SITE_ID }}
-        run: npx netlify deploy --build --prod --message "CI ${GITHUB_SHA::7}"
+        run: npx netlify deploy --build --prod --message "CI $GITHUB_SHA"
