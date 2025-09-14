@@ -39,7 +39,7 @@ jobs:
   deploy:
     name: Netlify deploy (main only)
     needs: build
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.NETLIFY_AUTH_TOKEN && secrets.NETLIFY_SITE_ID }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.NETLIFY_AUTH_TOKEN != '' && secrets.NETLIFY_SITE_ID != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,4 +52,4 @@ jobs:
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID:    ${{ secrets.NETLIFY_SITE_ID }}
-        run: npx netlify deploy --build --prod --message "CI $GITHUB_SHA"
+        run: npx netlify deploy --build --prod --message "CI ${GITHUB_SHA::7}"
