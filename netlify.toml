@@ -3,13 +3,10 @@
 
 [functions]
   directory = "netlify/functions"
+  included_files = ["netlify/functions/_lib/**", "_lib/**"]
 
 [dev]
   framework = "#static"
   port = 8888
   autoLaunch = false
   publish = "."
-
-[functions]
-directory = "netlify/functions"
-included_files = ["netlify/functions/_lib/**", "_lib/**"]
