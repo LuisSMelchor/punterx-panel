@@ -36,3 +36,14 @@ netlify/functions/_lib/*lazy*
 scripts/smoke-functions.js.*[0-9]*
 .netlify-dev.log
 .netlify-dev.pid
+# Backups y artefactos pesados (no versionar)
+netlify/functions/_lib._hold/
+netlify/functions._hold/*.disabled
+tmp-backups-keep/
+logs/
+*.tgz
+*.list
+*.BAD
+*.clean
+*.prestub_*
+*.broken_*
