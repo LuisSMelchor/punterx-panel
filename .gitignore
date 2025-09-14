@@ -38,3 +38,4 @@ scripts/smoke-functions.js.*[0-9]*
 .netlify-dev.pid
 logs/
 netlify/functions._hold/
+.env
